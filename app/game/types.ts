@@ -3,6 +3,8 @@ export const WORLD_HEIGHT = 48;
 export const SEA_LEVEL = 18;
 export const SAVE_VERSION = 1;
 
+export type GameMode = "survival" | "creative";
+
 export enum BlockId {
   Air = 0,
   Turf = 1,
@@ -47,6 +49,14 @@ export enum BlockId {
   CopperBlock = 40,
   Cinnabar = 41,
   SulfurStone = 42,
+  MoonshardOre = 43,
+  Mossstone = 44,
+  RuinStone = 45,
+  RelicCache = 46,
+  Thornvine = 47,
+  MoonshardBlock = 48,
+  WayfinderBrazier = 49,
+  AshGlass = 50,
 }
 
 export type ItemId =
@@ -57,11 +67,20 @@ export type ItemId =
   | "tool:hatchet"
   | "tool:spade"
   | "tool:blade"
+  | "tool:stone-spear"
+  | "tool:copper-saber"
+  | "tool:aether-repeater"
   | "part:copper-ingot"
   | "part:flux-coil"
   | "part:logic-wafer"
   | "part:gear"
-  | "food:starfruit";
+  | "part:moonshard"
+  | "part:carapace"
+  | "part:cinder-core"
+  | "ammo:aether-bolt"
+  | "food:starfruit"
+  | "food:glowcut"
+  | "consumable:mender-tonic";
 
 export interface Vec3Data {
   x: number;
@@ -93,12 +112,14 @@ export interface DroppedItemState {
 
 export interface MobState {
   id: string;
-  kind: "mireling" | "glowgrazer" | "cinderling";
+  kind: "mireling" | "glowgrazer" | "cinderling" | "thornback" | "nightwisp";
   position: Vec3Data;
   velocity: Vec3Data;
   health: number;
   yaw: number;
   targetTimer: number;
+  attackTimer?: number;
+  hurtTimer?: number;
 }
 
 export type MutationTuple = [number, number, number, BlockId];
@@ -107,6 +128,7 @@ export interface WorldSave {
   version: number;
   createdAt: number;
   seed: string;
+  mode?: GameMode;
   player: {
     position: Vec3Data;
     yaw: number;
@@ -115,10 +137,11 @@ export interface WorldSave {
     hunger: number;
     stamina: number;
     inventory: Inventory;
-    hotbar: ItemId[];
+    hotbar: Array<ItemId | null>;
     selectedSlot: number;
   };
   timeOfDay: number;
+  dayCount?: number;
   mutations: MutationTuple[];
   machines: Array<[string, MachineState]>;
   drops: DroppedItemState[];
@@ -183,6 +206,7 @@ export interface GameSettings {
   leftHanded: boolean;
   touchOpacity: number;
   showFps: boolean;
+  autoJump: boolean;
 }
 
 export interface HudState {
@@ -190,7 +214,7 @@ export interface HudState {
   hunger: number;
   stamina: number;
   selectedSlot: number;
-  hotbar: ItemId[];
+  hotbar: Array<ItemId | null>;
   inventory: Inventory;
   targetedBlock: BlockId | null;
   miningProgress: number;
@@ -200,6 +224,10 @@ export interface HudState {
   fps: number;
   networkStatus: string;
   objective: string;
+  gameMode: GameMode;
+  timeLabel: string;
+  dayCount: number;
+  targetedMob: { name: string; health: number; maxHealth: number } | null;
   toast?: string;
 }
 
@@ -232,4 +260,5 @@ export const DEFAULT_SETTINGS: GameSettings = {
   leftHanded: false,
   touchOpacity: 0.72,
   showFps: false,
+  autoJump: false,
 };

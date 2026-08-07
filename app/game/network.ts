@@ -1,5 +1,5 @@
 import { strFromU8, strToU8, zlibSync, unzlibSync } from "fflate";
-import { BlockId, MachineState, PlayerSnapshot, WorldSave } from "./types";
+import { BlockId, DroppedItemState, ItemId, MachineState, MobState, PlayerSnapshot, WorldSave } from "./types";
 
 export type NetworkMessage =
   | { type: "snapshot"; save: WorldSave }
@@ -8,6 +8,10 @@ export type NetworkMessage =
   | { type: "request-block"; x: number; y: number; z: number; id: BlockId }
   | { type: "machine"; key: string; state: MachineState }
   | { type: "player"; player: PlayerSnapshot }
+  | { type: "mob-state"; mobs: MobState[]; drops: DroppedItemState[]; timeOfDay: number; dayCount: number }
+  | { type: "request-mob-hit"; mobId: string; item: ItemId | null }
+  | { type: "damage"; amount: number; source: string }
+  | { type: "give-item"; item: ItemId; count: number }
   | { type: "peer-left"; playerId: string }
   | { type: "toast"; text: string };
 
@@ -251,4 +255,3 @@ export class NetworkSession {
     this.onStatus?.("Offline");
   }
 }
-

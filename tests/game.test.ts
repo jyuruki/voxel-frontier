@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { AutomationSystem } from "../app/game/automation";
 import { itemForBlock } from "../app/game/blocks";
+import { weaponStats } from "../app/game/combat";
+import { mobIntersectsSolid, moveMobWithCollision, resolveMobPenetration } from "../app/game/mobs";
 import { PlayerPhysics } from "../app/game/physics";
 import { decodeWorldKey, encodeWorldKey } from "../app/game/save";
-import { BlockId, InputFrame, SAVE_VERSION, WorldSave } from "../app/game/types";
+import { BlockId, CHUNK_SIZE, InputFrame, MobState, SAVE_VERSION, WorldSave } from "../app/game/types";
 import { VoxelWorld } from "../app/game/world";
 
 test("procedural terrain is deterministic for a seed", () => {
@@ -50,6 +52,8 @@ test("player collision stops cleanly at walls without high-speed tunneling", () 
   const input: InputFrame = {
     forward: 1,
     strafe: 0,
+    lookX: 0,
+    lookY: 0,
     jump: false,
     sprint: true,
     crouch: false,
@@ -69,6 +73,7 @@ test("portable world keys round-trip and detect corruption", () => {
     version: SAVE_VERSION,
     createdAt: 123456,
     seed: "portable frontier",
+    mode: "survival",
     player: {
       position: { x: 1.5, y: 21, z: -3.5 },
       yaw: 0.5,
@@ -81,6 +86,7 @@ test("portable world keys round-trip and detect corruption", () => {
       selectedSlot: 0,
     },
     timeOfDay: 0.72,
+    dayCount: 4,
     mutations: [[2, 22, 3, BlockId.FluxWire]],
     machines: [],
     drops: [],
@@ -89,9 +95,90 @@ test("portable world keys round-trip and detect corruption", () => {
   const key = encodeWorldKey(save);
   assert.ok(key.startsWith("VF1."));
   assert.deepEqual(decodeWorldKey(key), save);
+  const legacySave = { ...save };
+  delete legacySave.mode;
+  delete legacySave.dayCount;
+  assert.deepEqual(decodeWorldKey(encodeWorldKey(legacySave)), legacySave, "v1 keys without Stage 2 fields remain compatible");
   const parts = key.split(".");
   const damaged = `${parts[0]}.${parts[1]}x.${parts[2]}`;
   assert.throws(() => decodeWorldKey(damaged), /damaged|integrity/i);
+});
+
+test("mobile auto-jump clears a full one-block rise", () => {
+  const world = new VoxelWorld("auto jump bench");
+  for (let x = -2; x <= 5; x += 1) {
+    for (let z = -2; z <= 2; z += 1) world.setBlock(x, 40, z, BlockId.Stone);
+  }
+  world.setBlock(2, 41, 0, BlockId.Stone);
+  const player = new PlayerPhysics({ x: 0.5, y: 41, z: 0.5 });
+  player.yaw = -Math.PI / 2;
+  const input: InputFrame = {
+    forward: 1, strafe: 0, lookX: 0, lookY: 0, jump: false, sprint: false,
+    crouch: false, mine: false, place: false, interact: false,
+  };
+  for (let frame = 0; frame < 95; frame += 1) player.update(1 / 30, input, world, undefined, true);
+  assert.ok(player.position.x > 2.4, `auto-jump did not clear the rise; x=${player.position.x}`);
+});
+
+test("mob collision prevents clipping into placed walls and repairs embedded saves", () => {
+  const world = new VoxelWorld("mob collision bench");
+  for (let x = -2; x <= 5; x += 1) {
+    for (let z = -2; z <= 2; z += 1) world.setBlock(x, 40, z, BlockId.Stone);
+  }
+  world.setBlock(2, 41, 0, BlockId.EmberwoodLog);
+  world.setBlock(2, 42, 0, BlockId.EmberwoodLog);
+  const mob: MobState = {
+    id: "collision-grazer",
+    kind: "glowgrazer",
+    position: { x: 0.5, y: 41.01, z: 0.5 },
+    velocity: { x: 0, y: 0, z: 0 },
+    health: 28,
+    yaw: -Math.PI / 2,
+    targetTimer: 1,
+  };
+  for (let frame = 0; frame < 100; frame += 1) moveMobWithCollision(world, mob, 1 / 30, 3, 0);
+  assert.ok(mob.position.x <= 1.602, `mob entered the wall at x=${mob.position.x}`);
+  assert.equal(mobIntersectsSolid(world, mob), false);
+
+  mob.position = { x: 2.5, y: 41.01, z: 0.5 };
+  assert.equal(mobIntersectsSolid(world, mob), true);
+  assert.equal(resolveMobPenetration(world, mob), true);
+  assert.equal(mobIntersectsSolid(world, mob), false);
+});
+
+test("combat equipment has distinct reach, damage, ammo, and timing", () => {
+  const fist = weaponStats(null);
+  const spear = weaponStats("tool:stone-spear");
+  const saber = weaponStats("tool:copper-saber");
+  const repeater = weaponStats("tool:aether-repeater");
+  assert.ok(spear.reach > fist.reach);
+  assert.ok(saber.damage > spear.damage);
+  assert.equal(repeater.ammo, "ammo:aether-bolt");
+  assert.ok(repeater.reach > spear.reach * 3);
+  assert.ok(repeater.cooldown > saber.cooldown);
+});
+
+test("Wayfarer ruins generate deterministically with an interactable Relic Cache", () => {
+  const first = new VoxelWorld("ruin survey");
+  let cache: { x: number; y: number; z: number } | null = null;
+  for (let cx = -6; cx <= 6 && !cache; cx += 1) {
+    for (let cz = -6; cz <= 6 && !cache; cz += 1) {
+      const blocks = first.getChunk(cx, cz).blocks;
+      const index = blocks.indexOf(BlockId.RelicCache);
+      if (index < 0) continue;
+      const layer = CHUNK_SIZE * CHUNK_SIZE;
+      const y = Math.floor(index / layer);
+      const local = index % layer;
+      cache = {
+        x: cx * CHUNK_SIZE + (local % CHUNK_SIZE),
+        y,
+        z: cz * CHUNK_SIZE + Math.floor(local / CHUNK_SIZE),
+      };
+    }
+  }
+  assert.ok(cache, "expected at least one deterministic ruin in the survey area");
+  const second = new VoxelWorld("ruin survey");
+  assert.equal(second.getBlock(cache.x, cache.y, cache.z), BlockId.RelicCache);
 });
 
 test("logic signals attenuate through conduits and activate a lamp", () => {

@@ -1,19 +1,24 @@
 # Voxel Frontier
 
-Voxel Frontier is an original, mobile-friendly procedural voxel survival and automation game that runs entirely in the browser. Mine a seeded world, build factories, route attenuating logic signals, power machines, craft tools, encounter creatures, and carry the world between devices as a portable `VF1` save key.
+Voxel Frontier is an original, mobile-friendly procedural voxel survival, exploration, combat, and automation game that runs entirely in the browser. Begin empty-handed or build freely, explore a seeded world, survive the night, uncover ruins, automate factories, and carry the world between devices as a portable `VF1` save key.
 
 **Play:** [jyuruki.github.io/voxel-frontier](https://jyuruki.github.io/voxel-frontier/)
 
-> Automation Alpha — the first substantial release deliberately goes deepest on logic circuits, machinery, and logistics. The broader survival roadmap is tracked in [the feature matrix](docs/FEATURE_MATRIX.md).
+> Frontiers & Nightfall (Stage 2) expands the Automation Alpha foundation with full Survival and Creative starts, exploration, combat, ruins, hostile nights, animated first-person feedback, and collision-safe creatures. The broader roadmap is tracked in [the feature matrix](docs/FEATURE_MATRIX.md).
 
 ## Highlights
 
-- Deterministic, endless-by-chunk terrain with five climate regions, caves, water, trees, ores, and underground strata
-- 42 original block types rendered from a procedurally painted texture atlas—no borrowed textures, models, music, or sound effects
+- Deterministic, endless-by-chunk terrain with six climate regions, caves, water, trees, rare Moonshard seams, and ancient Wayfarer ruins
+- 50 original block types with individually designed procedural pixel textures, plus bespoke illustrated inventory art for every block, tool, weapon, part, food, and consumable
+- Survival starts with an empty pack; Creative supplies the complete infinite catalog, near-instant mining, and immunity from survival damage
 - Smooth capsule-like player controller with acceleration, friction, coyote time, jump buffering, step-up handling, swimming, crouching, and sprinting
+- Optional mobile auto-jump for full one-block rises
 - Attenuating 0–15 logic network with toggle relays, AND/OR/NOT matrices, pulse delay, daylight/night/player sensors, and lamps
 - Energy networks with thermal dynamos, flux cells, drills, conveyors, furnaces, fabricators, collector funnels, crates, and linear rams
-- Mining, building, tool tiers, recipes, inventory/hotbar, survival meters, day/night, drops, and original roaming creatures
+- Animated first-person hand and held item, mining swings, attack/place/use motion, and seven progressive block-crack textures
+- Five original creature species, melee and ranged combat, weapon reach/cooldowns/knockback/ammo, health targeting, loot, food, medicine, and night spawning
+- A visible eight-minute day/night orbit with stars, sun, moon, twilight, lighting changes, clock, and day counter
+- Real creature AABB collision, gravity, step-up, obstacle avoidance, crowd separation, and recovery for mobs embedded by an older save
 - Local autosave every 18 seconds plus compressed, checksummed, copyable world keys
 - Host-authoritative WebRTC rooms that work from static GitHub Pages through an invite/answer-key handshake
 - Responsive touch controls, left-handed layout, graphics presets, render distance, FOV, sensitivity, volume controls, and synthesized audio
@@ -29,9 +34,9 @@ The game needs a browser with WebGL and WebRTC. Current Chrome, Edge, Firefox, a
 | `Space` | Jump |
 | `Shift` | Sprint |
 | `Ctrl` or `C` | Crouch |
-| Left mouse | Mine |
-| Right mouse | Place |
-| `F` | Use or configure |
+| Left mouse | Mine or attack |
+| Right mouse | Place or use held food/medicine |
+| `F` | Interact or configure |
 | `R` | Rotate targeted machine |
 | `E` | Inventory and crafting |
 | `G` | Engineering guide |
@@ -44,11 +49,11 @@ The game needs a browser with WebGL and WebRTC. Current Chrome, Edge, Firefox, a
 2. The guest pastes that invite under **Join a host** and sends the generated answer back.
 3. The host pastes the answer and accepts it. The host's world snapshot synchronizes automatically.
 
-The connection is peer-to-peer; no account or custom game server is required. A restrictive corporate network may block direct WebRTC routes because this alpha uses public STUN but no paid TURN relay.
+The connection is peer-to-peer; no account or custom game server is required. The host owns terrain, machines, time, creature simulation, combat validation, damage, and loot so Stage 2 encounters stay synchronized. A restrictive corporate network may block direct WebRTC routes because this release uses public STUN but no paid TURN relay.
 
 ## Portable world keys
 
-Open **Pause → Save & world key → Generate current key**. A `VF1` key includes the seed, player state, changed blocks, inventory, machines, loose items, creatures, and time of day. It is compressed and protected by an integrity checksum. Paste it on the title screen to reconstruct the world.
+Open **Pause → Save & world key → Generate current key**. A `VF1` key includes the seed, game mode, day and time, player state, changed blocks, inventory, machines, loose items, and creatures. It is compressed and protected by an integrity checksum. Paste it on the title screen to reconstruct the world.
 
 Local saves use browser storage. Export a key before clearing site data or changing devices.
 
@@ -68,7 +73,7 @@ npm test
 # GitHub Pages output is written to out/
 ```
 
-The test suite covers deterministic generation, negative chunk coordinates, save-key round trips and corruption detection, signal attenuation, gate behavior, and a powered drill production loop. Every push to `main` reruns linting, tests, a production export, and GitHub Pages deployment.
+The 11-test suite covers deterministic terrain and ruin generation, negative chunk coordinates, save-key mode/day round trips and corruption detection, smooth player collision, mobile auto-jump, mob wall collision and embedded-save recovery, weapon differentiation, signal attenuation, gate behavior, and a powered drill production loop. Every push to `main` reruns linting, tests, a production export, and GitHub Pages deployment.
 
 ## Architecture
 

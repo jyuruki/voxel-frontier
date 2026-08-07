@@ -194,6 +194,37 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
     hardness: 1.6,
     emissive: 0.08,
   }),
+  [BlockId.MoonshardOre]: block(BlockId.MoonshardOre, "Moonshard Seam", "#596487", "Rare night-blue crystal threaded through deep rock.", {
+    hardness: 3.8,
+    emissive: 0.24,
+  }),
+  [BlockId.Mossstone]: block(BlockId.Mossstone, "Mossbound Stone", "#66735d", "Ancient masonry reclaimed by the wild.", {
+    hardness: 1.9,
+  }),
+  [BlockId.RuinStone]: block(BlockId.RuinStone, "Wayfarer Masonry", "#6d6b68", "Weathered stone cut by an unknown frontier culture.", {
+    hardness: 2.3,
+  }),
+  [BlockId.RelicCache]: block(BlockId.RelicCache, "Relic Cache", "#765234", "A sealed cache hidden among old ruins.", {
+    hardness: 1.1,
+    tool: "axe",
+  }),
+  [BlockId.Thornvine]: block(BlockId.Thornvine, "Thornvine", "#476143", "Dense living thorns that slow careless travelers.", {
+    opaque: false,
+    hardness: 0.3,
+    tool: "axe",
+  }),
+  [BlockId.MoonshardBlock]: block(BlockId.MoonshardBlock, "Moonshard Tile", "#6475a7", "Polished crystal masonry that glows after dusk.", {
+    hardness: 3.2,
+    emissive: 0.42,
+  }),
+  [BlockId.WayfinderBrazier]: block(BlockId.WayfinderBrazier, "Wayfinder Brazier", "#d47b42", "An old beacon that still burns without fuel.", {
+    hardness: 1.6,
+    emissive: 0.95,
+  }),
+  [BlockId.AshGlass]: block(BlockId.AshGlass, "Ashglass", "#9aa7ad", "Smoky translucent glass fused in volcanic heat.", {
+    opaque: false,
+    hardness: 0.45,
+  }),
 };
 
 export const BLOCK_IDS = Object.values(BlockId).filter(
@@ -202,8 +233,8 @@ export const BLOCK_IDS = Object.values(BlockId).filter(
 
 export const itemForBlock = (id: BlockId): ItemId => `block:${id}`;
 
-export function blockForItem(item: ItemId): BlockId | null {
-  if (!item.startsWith("block:")) return null;
+export function blockForItem(item: ItemId | null): BlockId | null {
+  if (!item?.startsWith("block:")) return null;
   const id = Number(item.slice(6));
   return Number.isInteger(id) && BLOCKS[id as BlockId]
     ? (id as BlockId)
@@ -217,12 +248,26 @@ export const ITEM_NAMES: Record<string, string> = {
   "tool:hatchet": "Emberwood Hatchet",
   "tool:spade": "Field Spade",
   "tool:blade": "Frontier Blade",
+  "tool:stone-spear": "Roughstone Spear",
+  "tool:copper-saber": "Copper Saber",
+  "tool:aether-repeater": "Aether Repeater",
   "part:copper-ingot": "Copper Ingot",
   "part:flux-coil": "Flux Coil",
   "part:logic-wafer": "Logic Wafer",
   "part:gear": "Drive Gear",
+  "part:moonshard": "Moonshard",
+  "part:carapace": "Thornback Carapace",
+  "part:cinder-core": "Cinder Core",
+  "ammo:aether-bolt": "Aether Bolt",
   "food:starfruit": "Starfruit",
+  "food:glowcut": "Glowgrazer Cut",
+  "consumable:mender-tonic": "Mender Tonic",
 };
+
+export const ALL_ITEMS: ItemId[] = [
+  ...BLOCK_IDS.filter((id) => id !== BlockId.Air).map(itemForBlock),
+  ...(Object.keys(ITEM_NAMES) as ItemId[]),
+];
 
 export function itemName(item: ItemId): string {
   const blockId = blockForItem(item);
@@ -231,10 +276,19 @@ export function itemName(item: ItemId): string {
 
 export const RECIPES: Recipe[] = [
   { id: "planks", name: "Cut Planks", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodLog)]: 1 }, output: { item: itemForBlock(BlockId.EmberwoodPlanks), count: 4 }, description: "Shape one log into four building planks." },
+  { id: "stone-spear", name: "Roughstone Spear", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2, [itemForBlock(BlockId.Stone)]: 1 }, output: { item: "tool:stone-spear", count: 1 }, description: "An early reach weapon for surviving the first night." },
   { id: "workbench", name: "Tinker Bench", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 4 }, output: { item: itemForBlock(BlockId.Workbench), count: 1 }, description: "Required for engineered components." },
   { id: "rough-pick", name: "Roughstone Pick", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2, [itemForBlock(BlockId.Stone)]: 3 }, output: { item: "tool:rough-pick", count: 1 }, description: "Mines stone and basic ores efficiently." },
+  { id: "hatchet", name: "Emberwood Hatchet", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2, [itemForBlock(BlockId.Stone)]: 2 }, output: { item: "tool:hatchet", count: 1 }, description: "Fells timber and clears thornvine quickly." },
+  { id: "spade", name: "Field Spade", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2, [itemForBlock(BlockId.Stone)]: 1 }, output: { item: "tool:spade", count: 1 }, description: "Moves soil, sand and snow efficiently." },
+  { id: "frontier-blade", name: "Frontier Blade", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 1, [itemForBlock(BlockId.Stone)]: 2 }, output: { item: "tool:blade", count: 1 }, description: "A compact defensive blade." },
   { id: "copper-ingot", name: "Smelt Copper", station: "furnace", inputs: { [itemForBlock(BlockId.CopperOre)]: 1 }, output: { item: "part:copper-ingot", count: 1 }, description: "Refine conductive copper." },
   { id: "copper-pick", name: "Copper Pick", station: "workbench", inputs: { "part:copper-ingot": 3, [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, output: { item: "tool:copper-pick", count: 1 }, description: "Reaches crystal-bearing depths." },
+  { id: "copper-saber", name: "Copper Saber", station: "workbench", inputs: { "part:copper-ingot": 3, [itemForBlock(BlockId.EmberwoodPlanks)]: 1 }, output: { item: "tool:copper-saber", count: 1 }, description: "A balanced weapon with reliable stopping power." },
+  { id: "moonshard", name: "Cut Moonshard", station: "workbench", inputs: { [itemForBlock(BlockId.MoonshardOre)]: 1 }, output: { item: "part:moonshard", count: 2 }, description: "Cut a deep crystal seam into usable shards." },
+  { id: "aether-bolts", name: "Aether Bolts", station: "workbench", inputs: { "part:moonshard": 1, "part:copper-ingot": 1 }, output: { item: "ammo:aether-bolt", count: 8 }, description: "Bright, fast ammunition for an Aether Repeater." },
+  { id: "aether-repeater", name: "Aether Repeater", station: "workbench", inputs: { "part:moonshard": 3, "part:flux-coil": 2, "part:gear": 1 }, output: { item: "tool:aether-repeater", count: 1 }, description: "A long-range crystal launcher built for dangerous ruins." },
+  { id: "mender-tonic", name: "Mender Tonic", station: "hand", inputs: { "food:starfruit": 2, "part:carapace": 1 }, output: { item: "consumable:mender-tonic", count: 1 }, description: "Restores health when used from the hotbar." },
   { id: "flux-coil", name: "Flux Coil", station: "workbench", inputs: { "part:copper-ingot": 2, [itemForBlock(BlockId.AetherCrystal)]: 1 }, output: { item: "part:flux-coil", count: 2 }, description: "The heart of powered devices." },
   { id: "logic-wafer", name: "Logic Wafer", station: "workbench", inputs: { "part:copper-ingot": 1, [itemForBlock(BlockId.AetherCrystal)]: 2 }, output: { item: "part:logic-wafer", count: 2 }, description: "Carries conditional logic." },
   { id: "gear", name: "Drive Gear", station: "workbench", inputs: { "part:copper-ingot": 2, [itemForBlock(BlockId.Stone)]: 1 }, output: { item: "part:gear", count: 1 }, description: "Transfers mechanical force." },
@@ -260,10 +314,70 @@ export const TOOL_POWER: Record<string, number> = {
   "tool:hatchet": 3,
   "tool:spade": 3,
   "tool:blade": 1.25,
+  "tool:stone-spear": 0.8,
+  "tool:copper-saber": 1.1,
+  "tool:aether-repeater": 0.45,
 };
 
 const TILE_SIZE = 16;
 const ATLAS_COLS = 8;
+
+function textureDetail(blockId: BlockId, x: number, y: number): number {
+  const oreSpark = hash3(x * 3, y * 5, blockId, 719) % 23 === 0;
+  switch (blockId) {
+    case BlockId.Turf: return y < 4 ? 0.22 : (x + y) % 7 === 0 ? 0.08 : 0;
+    case BlockId.Soil: return (x * 3 + y * 5) % 17 === 0 ? 0.14 : 0;
+    case BlockId.Stone: return x === (y * 3 + 4) % 16 || x === (y * 3 + 5) % 16 ? -0.12 : 0;
+    case BlockId.Sand: return (x * 7 + y * 3) % 19 === 0 ? 0.18 : 0;
+    case BlockId.Snow: return x === 7 || y === 7 || x === y || x + y === 15 ? 0.08 : 0;
+    case BlockId.Water: return y % 5 === 1 && (x + Math.floor(y / 5) * 3) % 7 < 4 ? 0.18 : -0.03;
+    case BlockId.EmberwoodLog: return x % 4 === 0 ? -0.16 : y % 7 === 0 ? 0.1 : 0;
+    case BlockId.EmberwoodLeaves: return (x * 5 + y * 7) % 13 === 0 ? 0.18 : 0;
+    case BlockId.CoalOre: return oreSpark ? -0.36 : 0;
+    case BlockId.CopperOre: return oreSpark || (x + y * 2) % 29 === 0 ? 0.28 : -0.03;
+    case BlockId.AetherCrystal: return x === 7 || x === 8 || Math.abs(x - 7) === Math.abs(y - 8) ? 0.28 : -0.04;
+    case BlockId.EmberwoodPlanks: return y % 5 === 0 ? -0.13 : x % 9 === 0 ? 0.08 : 0;
+    case BlockId.StoneBrick: return y === 5 || y === 11 || x === (y < 6 ? 7 : y < 12 ? 3 : 11) ? -0.16 : 0;
+    case BlockId.Glass: return x === y || x === y + 1 || x + y === 8 ? 0.25 : -0.08;
+    case BlockId.Workbench: return y < 4 || x === 3 || x === 12 ? 0.14 : (x + y) % 6 === 0 ? -0.1 : 0;
+    case BlockId.FluxWire: return x === 7 || x === 8 || y === 7 || y === 8 ? 0.28 : -0.1;
+    case BlockId.Toggle: return (x >= 7 && x <= 9 && y >= 3 && y <= 12) || (y >= 10 && x >= 4 && x <= 12) ? 0.24 : -0.07;
+    case BlockId.FluxLamp: return Math.abs(x - 7.5) + Math.abs(y - 7.5) < 6 ? 0.32 : -0.09;
+    case BlockId.ThermalGenerator: return y > 9 && x > 3 && x < 12 ? 0.19 : (x + y) % 6 === 0 ? -0.14 : 0;
+    case BlockId.FluxCell: return x > 4 && x < 11 && y > 2 && y < 13 ? 0.18 + (y > 8 ? 0.08 : 0) : -0.1;
+    case BlockId.BoreDrill: return Math.abs(x - 8) <= Math.floor(y / 4) && y > 3 ? 0.2 : -0.08;
+    case BlockId.Conveyor: return y % 6 === 2 || (x + y) % 9 === 0 ? 0.18 : -0.08;
+    case BlockId.ArcFurnace: return x > 4 && x < 11 && y > 6 && y < 13 ? 0.25 : (x + y) % 5 === 0 ? -0.11 : 0;
+    case BlockId.Fabricator: return (x === 4 || x === 11 || y === 4 || y === 11) ? 0.2 : -0.04;
+    case BlockId.Ram: return (y > 6 && y < 10) || x === 12 ? 0.18 : -0.08;
+    case BlockId.ProximitySensor: return Math.abs(x - 8) + Math.abs(y - 8) === 5 || (x === 8 && y === 8) ? 0.3 : -0.07;
+    case BlockId.AndGate: return (x === 4 || x === 11) && y < 9 ? 0.24 : y === 9 ? 0.18 : -0.08;
+    case BlockId.OrGate: return (x + y) % 8 === 0 || (x - y + 16) % 9 === 0 ? 0.23 : -0.07;
+    case BlockId.NotGate: return Math.abs(x - 8) + Math.abs(y - 8) < 4 ? 0.2 : x === 12 ? 0.24 : -0.08;
+    case BlockId.DelayGate: return (x === 4 || x === 11 || y === 4 || y === 11) && (x + y) % 3 ? 0.2 : -0.07;
+    case BlockId.Hopper: return y > 4 && y < 10 && Math.abs(x - 8) < (10 - y) ? 0.18 : -0.09;
+    case BlockId.Crate: return x === 2 || x === 13 || y === 2 || y === 13 || x === y || x + y === 15 ? -0.16 : 0.08;
+    case BlockId.GlowRod: return x > 5 && x < 10 ? 0.35 : -0.12;
+    case BlockId.Basalt: return x % 5 === 0 || x % 5 === 1 ? -0.14 : y % 9 === 0 ? 0.08 : 0;
+    case BlockId.Ice: return x === y || x + y === 15 || x === y + 6 ? 0.22 : -0.04;
+    case BlockId.Clay: return y % 4 === 0 ? -0.11 : (x * 5 + y) % 21 === 0 ? 0.1 : 0;
+    case BlockId.SunCactus: return x % 5 === 2 ? 0.17 : y % 7 === 0 ? -0.1 : 0;
+    case BlockId.StarBloom: return Math.abs(x - 8) + Math.abs(y - 8) < 5 || x === 8 || y === 8 ? 0.23 : -0.12;
+    case BlockId.Bedrock: return (x * 7 + y * 11) % 13 < 3 ? -0.18 : 0.05;
+    case BlockId.CopperBlock: return x === 1 || x === 14 || y === 1 || y === 14 || (x + y) % 11 === 0 ? 0.18 : -0.04;
+    case BlockId.Cinnabar: return oreSpark || x === (y * 2) % 15 ? 0.24 : -0.07;
+    case BlockId.SulfurStone: return oreSpark || (x + y) % 13 === 0 ? 0.26 : -0.06;
+    case BlockId.MoonshardOre: return oreSpark || x === 7 || x === 8 || (x + y) % 17 === 0 ? 0.32 : -0.08;
+    case BlockId.Mossstone: return y < 5 && (x + y) % 3 !== 0 ? 0.17 : (x * 3 + y) % 19 === 0 ? -0.12 : 0;
+    case BlockId.RuinStone: return y === 5 || y === 11 || x === (y < 6 ? 5 : y < 12 ? 11 : 3) ? -0.17 : (x + y) % 13 === 0 ? 0.09 : 0;
+    case BlockId.RelicCache: return x === 2 || x === 13 || y === 3 || y === 12 || x === y || x + y === 15 ? 0.17 : -0.08;
+    case BlockId.Thornvine: return x === y || x + y === 15 || (x * 5 + y * 3) % 17 === 0 ? 0.2 : -0.1;
+    case BlockId.MoonshardBlock: return x === 7 || x === 8 || y === 7 || y === 8 || x === y || x + y === 15 ? 0.26 : -0.06;
+    case BlockId.WayfinderBrazier: return y > 4 && Math.abs(x - 8) < Math.max(2, 8 - y / 2) ? 0.34 : -0.13;
+    case BlockId.AshGlass: return x === y + 3 || x + y === 12 || (x + y) % 19 === 0 ? 0.2 : -0.09;
+    default: return 0;
+  }
+}
 
 function paintTile(
   context: CanvasRenderingContext2D,
@@ -278,17 +392,12 @@ function paintTile(
   for (let y = 0; y < TILE_SIZE; y += 1) {
     for (let x = 0; x < TILE_SIZE; x += 1) {
       const noise = ((hash3(x, y, blockId, 3919) % 21) - 10) / 100;
-      let stripe = 0;
-      if ([BlockId.EmberwoodLog, BlockId.EmberwoodPlanks, BlockId.Crate].includes(blockId)) stripe = x % 5 === 0 ? -0.1 : 0;
-      if ([BlockId.StoneBrick, BlockId.CopperBlock].includes(blockId)) stripe = (y === 7 || x === (y < 8 ? 0 : 8)) ? -0.13 : 0;
-      if (blockId === BlockId.FluxWire) stripe = x === 7 || y === 7 ? 0.22 : -0.08;
-      if ([BlockId.AndGate, BlockId.OrGate, BlockId.NotGate, BlockId.DelayGate].includes(blockId)) stripe = x > 5 && x < 10 ? 0.18 : -0.05;
-      const offset = noise + stripe;
+      const offset = noise + textureDetail(blockId, x, y);
       const index = (y * TILE_SIZE + x) * 4;
       image.data[index] = Math.max(0, Math.min(255, (base.r + offset) * 255));
       image.data[index + 1] = Math.max(0, Math.min(255, (base.g + offset) * 255));
       image.data[index + 2] = Math.max(0, Math.min(255, (base.b + offset) * 255));
-      image.data[index + 3] = blockId === BlockId.EmberwoodLeaves && hash3(x, y, blockId, 17) % 9 === 0 ? 0 : 255;
+      image.data[index + 3] = [BlockId.EmberwoodLeaves, BlockId.Thornvine].includes(blockId) && hash3(x, y, blockId, 17) % 9 === 0 ? 0 : 255;
     }
   }
   context.putImageData(image, column * TILE_SIZE, row * TILE_SIZE);
@@ -344,4 +453,3 @@ export const AUTOMATION_BLOCKS = [
   BlockId.Hopper,
   BlockId.Crate,
 ];
-

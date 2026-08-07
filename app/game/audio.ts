@@ -1,7 +1,7 @@
 import { GameSettings } from "./types";
 import { hashString, seededRandom } from "./prng";
 
-type SoundName = "mine" | "break" | "place" | "step" | "hurt" | "craft" | "machine" | "click";
+type SoundName = "mine" | "break" | "place" | "step" | "hurt" | "craft" | "machine" | "click" | "attack" | "shoot";
 
 export class FrontierAudio {
   private context: AudioContext | null = null;
@@ -109,6 +109,12 @@ export class FrontierAudio {
       this.tone(587, 0.2, "triangle", 0.045, this.effects, 0.09);
     } else if (name === "machine") {
       this.tone(74, 0.12, "square", 0.022, this.effects);
+    } else if (name === "attack") {
+      this.noise(0.08, 0.04);
+      this.tone(178, 0.11, "sawtooth", 0.045, this.effects);
+    } else if (name === "shoot") {
+      this.tone(720, 0.1, "square", 0.04, this.effects);
+      this.tone(310, 0.16, "sine", 0.035, this.effects, 0.035);
     } else {
       this.tone(260, 0.045, "sine", 0.025, this.effects);
     }
@@ -136,4 +142,3 @@ export class FrontierAudio {
     this.context = null;
   }
 }
-

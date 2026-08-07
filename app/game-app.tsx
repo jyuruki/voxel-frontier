@@ -12,6 +12,7 @@ import {
 } from "react";
 import { BLOCKS, RECIPES, itemName } from "./game/blocks";
 import { GameEngine, MachinePanelData } from "./game/engine";
+import { ItemArt } from "./item-art";
 import { NetworkSession } from "./game/network";
 import {
   decodeWorldKey,
@@ -22,6 +23,7 @@ import {
 import {
   BlockId,
   DEFAULT_SETTINGS,
+  GameMode,
   GameSettings,
   HudState,
   ItemId,
@@ -46,31 +48,19 @@ const EMPTY_HUD: HudState = {
   fps: 0,
   networkStatus: "Offline",
   objective: "Build a working signal circuit.",
+  gameMode: "survival",
+  timeLabel: "07:00 · Dawn",
+  dayCount: 1,
+  targetedMob: null,
 };
 
-function blockColor(item: ItemId): string {
-  if (!item.startsWith("block:")) return "#7d8a91";
-  return BLOCKS[Number(item.slice(6)) as BlockId]?.color ?? "#69757b";
-}
-
-function itemGlyph(item: ItemId): string {
-  if (item.includes("pick")) return "⌁";
-  if (item === "tool:hatchet") return "◒";
-  if (item === "tool:spade") return "♠";
-  if (item === "tool:blade") return "╱";
-  if (item.startsWith("part:")) return "⚙";
-  if (item.startsWith("food:")) return "✦";
-  return "";
-}
-
-function ItemIcon({ item, count, compact = false }: { item: ItemId; count?: number; compact?: boolean }) {
+function ItemIcon({ item, count, compact = false }: { item: ItemId; count?: number | string; compact?: boolean }) {
   return (
     <span
       className={`item-icon ${compact ? "item-icon--compact" : ""}`}
-      style={{ "--item-color": blockColor(item) } as CSSProperties}
       title={itemName(item)}
     >
-      <span className="item-icon__cube">{itemGlyph(item)}</span>
+      <ItemArt item={item} />
       {count !== undefined && <span className="item-icon__count">{count}</span>}
     </span>
   );
@@ -221,12 +211,13 @@ export default function GameApp() {
   const engineRef = useRef<GameEngine | null>(null);
   const [network] = useState(() => new NetworkSession());
 
-  const [session, setSession] = useState<{ id: number; seed: string; save?: WorldSave | null } | null>(null);
+  const [session, setSession] = useState<{ id: number; seed: string; mode: GameMode; save?: WorldSave | null } | null>(null);
   const [overlay, setOverlay] = useState<Overlay>("none");
   const [hud, setHud] = useState<HudState>(EMPTY_HUD);
   const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS);
   const [playerName, setPlayerName] = useState("Traveler");
   const [seed, setSeed] = useState("Copper Skies");
+  const [gameMode, setGameMode] = useState<GameMode>("survival");
   const [saveAvailable, setSaveAvailable] = useState(false);
   const [isTouch, setIsTouch] = useState(false);
   const [toast, setToast] = useState("");
@@ -288,6 +279,7 @@ export default function GameApp() {
         save: session.save,
         settings,
         playerName,
+        mode: session.mode,
         network,
         callbacks: {
           onHud: setHud,
@@ -324,12 +316,12 @@ export default function GameApp() {
     localStorage.setItem("voxel-frontier.player-name", playerName);
   }, [playerName]);
 
-  const begin = (worldSeed: string, save?: WorldSave | null) => {
+  const begin = (worldSeed: string, save?: WorldSave | null, mode: GameMode = save?.mode ?? gameMode) => {
     const normalized = worldSeed.trim() || `Frontier-${Math.floor(Math.random() * 999999)}`;
-    setHud(EMPTY_HUD);
+    setHud({ ...EMPTY_HUD, gameMode: mode });
     setLaunchError("");
     setOverlay("none");
-    setSession({ id: Date.now(), seed: normalized, save });
+    setSession({ id: Date.now(), seed: normalized, mode, save });
   };
 
   const continueWorld = () => {
@@ -397,7 +389,7 @@ export default function GameApp() {
             <span className="brand__mark"><i /><i /><i /></span>
             <span><strong>VOXEL</strong><em>FRONTIER</em></span>
           </div>
-          <span className="build-tag">Automation Alpha · Original voxel sandbox</span>
+          <span className="build-tag">Frontiers &amp; Nightfall · Stage 2</span>
         </header>
 
         <section className="landing__content">
@@ -405,10 +397,10 @@ export default function GameApp() {
             <p className="eyebrow">Shape the wild. Teach it to move.</p>
             <h1>A living block world with an engineer&apos;s soul.</h1>
             <p>
-              Explore a deterministic frontier, carve machines into mountains, and connect logic that keeps working after sunset—alone or through a direct peer-to-peer room.
+              Begin empty-handed, survive a living night, uncover Wayfarer ruins, or open an infinite Creative catalog and engineer without limits—alone or online.
             </p>
             <div className="feature-chips">
-              <span>Procedural terrain</span><span>42 original blocks</span><span>Logic & power</span><span>Exportable world keys</span>
+              <span>Survival + Creative</span><span>50 textured blocks</span><span>Combat &amp; ruins</span><span>Exportable world keys</span>
             </div>
           </div>
 
@@ -428,8 +420,19 @@ export default function GameApp() {
                 <button className="icon-button" onClick={() => setSeed(`Frontier-${Math.floor(Math.random() * 999999)}`)} title="Random seed">↻</button>
               </div>
             </label>
+            <fieldset className="mode-picker">
+              <legend>World mode</legend>
+              <button type="button" className={gameMode === "survival" ? "selected" : ""} onClick={() => setGameMode("survival")}>
+                <span className="mode-picker__mark">◇</span>
+                <span><strong>Survival</strong><small>Start with nothing. Gather, craft, eat, fight, and endure the night.</small></span>
+              </button>
+              <button type="button" className={gameMode === "creative" ? "selected" : ""} onClick={() => setGameMode("creative")}>
+                <span className="mode-picker__mark">∞</span>
+                <span><strong>Creative</strong><small>Infinite catalog, instant mining, and no health or hunger damage.</small></span>
+              </button>
+            </fieldset>
             <button className="primary-button primary-button--large" onClick={() => begin(seed)}>
-              Create frontier <span>→</span>
+              Begin {gameMode} world <span>→</span>
             </button>
             <button className="secondary-button" disabled={!saveAvailable} onClick={continueWorld}>
               {saveAvailable ? "Continue local world" : "No local world yet"}
@@ -474,7 +477,7 @@ export default function GameApp() {
           <button className="primary-button" onClick={() => { setSession(null); setLaunchError(""); }}>Return to title</button>
         </div>
       )}
-      <div className="crosshair" aria-hidden="true"><i /><i /></div>
+      <div className={`crosshair ${hud.targetedMob ? "crosshair--hostile" : ""}`} aria-hidden="true"><i /><i /></div>
 
       <div className="hud-top-left">
         <div className="brand brand--hud">
@@ -484,6 +487,7 @@ export default function GameApp() {
         <div className="location-card">
           <strong>{hud.biome}</strong>
           <span>{hud.coordinates.x} · {hud.coordinates.y} · {hud.coordinates.z}</span>
+          <span>{hud.timeLabel} · Day {hud.dayCount} · {hud.gameMode}</span>
         </div>
       </div>
 
@@ -493,6 +497,14 @@ export default function GameApp() {
       </div>
 
       <button className="pause-button" onClick={() => openOverlay("pause")} aria-label="Pause game">Ⅱ</button>
+
+      {hud.targetedMob && (
+        <div className="combat-target" aria-label={`${hud.targetedMob.name} health`}>
+          <div><span>THREAT</span><strong>{hud.targetedMob.name}</strong></div>
+          <div className="combat-target__track"><i style={{ width: `${(hud.targetedMob.health / hud.targetedMob.maxHealth) * 100}%` }} /></div>
+          <small>{Math.ceil(hud.targetedMob.health)} / {hud.targetedMob.maxHealth}</small>
+        </div>
+      )}
 
       <div className="hud-status">
         <Meter label="HEALTH" value={hud.health} tone="#ef725d" />
@@ -514,7 +526,7 @@ export default function GameApp() {
               aria-label={item ? `${index + 1}: ${itemName(item)}` : `Empty slot ${index + 1}`}
             >
               <span className="hotbar__number">{index + 1}</span>
-              {item && <ItemIcon item={item} count={hud.inventory[item] ?? 0} />}
+              {item && <ItemIcon item={item} count={hud.gameMode === "creative" ? "∞" : hud.inventory[item] ?? 0} />}
             </button>
           );
         })}
@@ -522,7 +534,7 @@ export default function GameApp() {
 
       {!isTouch && (
         <div className="desktop-hints">
-          <span><kbd>WASD</kbd> move</span><span><kbd>SPACE</kbd> jump</span><span><kbd>LMB</kbd> mine</span><span><kbd>RMB</kbd> place</span><span><kbd>F</kbd> use</span><span><kbd>E</kbd> inventory</span>
+          <span><kbd>WASD</kbd> move</span><span><kbd>SPACE</kbd> jump</span><span><kbd>LMB</kbd> mine / attack</span><span><kbd>RMB</kbd> place / use</span><span><kbd>F</kbd> interact</span><span><kbd>E</kbd> inventory</span>
         </div>
       )}
 
@@ -535,7 +547,7 @@ export default function GameApp() {
             onMove={(x, y) => engineRef.current?.setMove(x, y)}
           />
           <div className={`touch-actions ${settings.leftHanded ? "touch-actions--left" : ""}`} style={{ opacity: settings.touchOpacity }}>
-            <HoldButton label="MINE" className="touch-button--mine" onChange={(pressed) => engineRef.current?.setAction("mine", pressed)} />
+            <HoldButton label="MINE / HIT" className="touch-button--mine" onChange={(pressed) => engineRef.current?.setAction("mine", pressed)} />
             <HoldButton label="PLACE" onChange={(pressed) => engineRef.current?.setAction("place", pressed)} />
             <HoldButton label="JUMP" onChange={(pressed) => engineRef.current?.setAction("jump", pressed)} />
             <HoldButton label="RUN" onChange={(pressed) => engineRef.current?.setAction("sprint", pressed)} />
@@ -545,7 +557,7 @@ export default function GameApp() {
       )}
 
       {overlay === "pause" && (
-        <Modal title="Frontier paused" eyebrow={hud.biome} onClose={closeOverlay}>
+        <Modal title="Frontier paused" eyebrow={`${hud.gameMode} · ${hud.timeLabel} · Day ${hud.dayCount}`} onClose={closeOverlay}>
           <div className="menu-stack">
             <button className="primary-button" onClick={closeOverlay}>Resume expedition</button>
             <button className="secondary-button" onClick={() => setOverlay("inventory")}>Inventory & crafting</button>
@@ -567,10 +579,11 @@ export default function GameApp() {
           {inventoryTab === "items" ? (
             <>
               <p className="modal-copy">Tap an item to assign it to your currently selected hotbar slot.</p>
+              {inventoryItems.length === 0 && <div className="empty-inventory"><strong>Your pack is empty.</strong><span>Mine an Emberwood log by hand to begin.</span></div>}
               <div className="inventory-grid">
                 {inventoryItems.map(([item, count]) => (
                   <button key={item} onClick={() => engineRef.current?.assignHotbar(hud.selectedSlot, item as ItemId)}>
-                    <ItemIcon item={item as ItemId} count={count} />
+                    <ItemIcon item={item as ItemId} count={hud.gameMode === "creative" ? "∞" : count} />
                     <span><strong>{itemName(item as ItemId)}</strong><small>Assign to slot {hud.selectedSlot + 1}</small></span>
                   </button>
                 ))}
@@ -744,6 +757,7 @@ function OptionsModal({
           <label>Touch opacity <output>{Math.round(settings.touchOpacity * 100)}%</output><input type="range" min="0.3" max="1" step="0.05" value={settings.touchOpacity} onChange={(e) => update("touchOpacity", Number(e.target.value))} /></label>
           <label className="switch-row"><input type="checkbox" checked={settings.invertY} onChange={(e) => update("invertY", e.target.checked)} /><span>Invert vertical look</span></label>
           <label className="switch-row"><input type="checkbox" checked={settings.leftHanded} onChange={(e) => update("leftHanded", e.target.checked)} /><span>Left-handed touch layout</span></label>
+          <label className="switch-row"><input type="checkbox" checked={settings.autoJump} onChange={(e) => update("autoJump", e.target.checked)} /><span>Auto-jump one-block rises</span></label>
           <label className="switch-row"><input type="checkbox" checked={settings.showFps} onChange={(e) => update("showFps", e.target.checked)} /><span>Show frame rate</span></label>
         </section>
       </div>
@@ -753,40 +767,40 @@ function OptionsModal({
 
 function GuideModal({ onClose }: { onClose: () => void }) {
   return (
-    <Modal title="Frontier field guide" eyebrow="Automation Alpha" onClose={onClose} wide>
+    <Modal title="Frontier field guide" eyebrow="Frontiers & Nightfall · Stage 2" onClose={onClose} wide>
       <div className="guide-grid">
         <article className="guide-card guide-card--accent">
-          <span>01</span><h3>Your first live circuit</h3>
+          <span>01</span><h3>Empty-handed survival</h3>
+          <p>Break Emberwood by hand, cut it into planks, then build a Tinker Bench. A Roughstone Spear is the safest first-night weapon; food restores nutrition.</p>
+        </article>
+        <article className="guide-card">
+          <span>02</span><h3>Nightfall &amp; combat</h3>
+          <p>Mirelings, Thornbacks, and Nightwisps emerge after dusk. Aim at a creature and mine/attack. Spears reach farther; Aether Repeaters consume bolts.</p>
+        </article>
+        <article className="guide-card">
+          <span>03</span><h3>Explore Wayfarer ruins</h3>
+          <p>Ancient landmarks appear deterministically throughout every seed. Use a Relic Cache to recover Moonshards, bolts, copper, and occasional medicine.</p>
+        </article>
+        <article className="guide-card">
+          <span>04</span><h3>Your first live circuit</h3>
           <p>Place a Toggle Relay, connect Flux Conduit to a Flux Lamp, then use the relay. Signal strength starts at 15 and falls by one per conduit.</p>
         </article>
         <article className="guide-card">
-          <span>02</span><h3>Powering machines</h3>
-          <p>Feed Carbon Shale into a Thermal Dynamo. A machine needs both energy and a live logic signal. Flux Cells buffer surplus energy.</p>
+          <span>05</span><h3>Power &amp; automation</h3>
+          <p>Feed Carbon Shale into a Thermal Dynamo. Machines need energy and signal. Bore Drills mine; belts route drops; furnaces and fabricators process them.</p>
         </article>
         <article className="guide-card">
-          <span>03</span><h3>Automated mining</h3>
-          <p>Face a Bore Drill toward your output line. Put it on a powered, signaled network; it mines downward and ejects resources onto belts.</p>
-        </article>
-        <article className="guide-card">
-          <span>04</span><h3>Logic matrices</h3>
-          <p>AND needs two live neighbors. OR needs one. NOT is live with no input. Pulse Delay waits four simulation beats. Sensors detect players, daylight, or night.</p>
-        </article>
-        <article className="guide-card">
-          <span>05</span><h3>Processing line</h3>
-          <p>Belts move loose items. Collector Funnels pull them into adjacent storage. Arc Furnaces refine copper; Fabricators produce coils, wafers, and gears.</p>
-        </article>
-        <article className="guide-card">
-          <span>06</span><h3>Portable worlds</h3>
-          <p>Local autosaves run every 18 seconds. A VF1 key compresses your seed, every changed block, machines, inventory, creatures, and player state.</p>
+          <span>06</span><h3>Creative &amp; portable worlds</h3>
+          <p>Creative opens every original item with infinite counts, instant mining, and no damage. VF1 keys preserve mode, day, terrain, machines, creatures, and player state.</p>
         </article>
       </div>
       <div className="controls-table">
         <h3>Desktop controls</h3>
-        <div><span><kbd>W A S D</kbd> Move</span><span><kbd>Shift</kbd> Sprint</span><span><kbd>Ctrl / C</kbd> Crouch</span><span><kbd>Space</kbd> Jump</span><span><kbd>Mouse</kbd> Look</span><span><kbd>LMB</kbd> Mine</span><span><kbd>RMB</kbd> Place</span><span><kbd>F</kbd> Use/configure</span><span><kbd>R</kbd> Rotate machine</span><span><kbd>E</kbd> Inventory</span></div>
+        <div><span><kbd>W A S D</kbd> Move</span><span><kbd>Shift</kbd> Sprint</span><span><kbd>Ctrl / C</kbd> Crouch</span><span><kbd>Space</kbd> Jump</span><span><kbd>Mouse</kbd> Look</span><span><kbd>LMB</kbd> Mine / attack</span><span><kbd>RMB</kbd> Place / use held item</span><span><kbd>F</kbd> Interact/configure</span><span><kbd>R</kbd> Rotate machine</span><span><kbd>E</kbd> Inventory</span></div>
       </div>
       <div className="scope-note">
         <strong>What this release contains</strong>
-        <p>Procedural biomes, caves and ore strata; 42 original block types; survival meters; tools and crafting; original creatures; day/night; mining and building; deep signal, power, machine, and logistics simulation; direct online rooms; mobile controls; options; local autosave; and portable save keys. More dimensions, structures, farming depth, bosses, fluids, enchantment-like upgrades, and additional creatures are staged for later releases.</p>
+        <p>Six biomes, caves, ore strata, ruins, 50 original textured blocks, Survival and Creative modes, nine tools and weapons, food and medicine, five creatures, hostile night spawning, collision-safe mobs, animated held items and block cracking, day/night, crafting, deep automation, direct online rooms, mobile controls with optional auto-jump, autosave, and portable world keys.</p>
       </div>
     </Modal>
   );

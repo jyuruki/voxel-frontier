@@ -28,10 +28,17 @@ function validateSave(value: unknown): asserts value is WorldSave {
   const save = value as Partial<WorldSave>;
   if (save.version !== SAVE_VERSION) throw new Error(`Unsupported world version: ${save.version ?? "unknown"}.`);
   if (typeof save.seed !== "string" || !save.seed.trim()) throw new Error("The world seed is missing.");
+  if (save.mode !== undefined && save.mode !== "survival" && save.mode !== "creative") {
+    throw new Error("The world mode is invalid.");
+  }
+  if (save.dayCount !== undefined && (!Number.isInteger(save.dayCount) || save.dayCount < 1)) {
+    throw new Error("The saved day counter is invalid.");
+  }
   if (!save.player || !Array.isArray(save.player.hotbar) || typeof save.player.inventory !== "object") {
     throw new Error("The player state is incomplete.");
   }
   if (!Array.isArray(save.mutations) || !Array.isArray(save.machines)) throw new Error("The terrain state is incomplete.");
+  if (!Array.isArray(save.drops) || !Array.isArray(save.mobs)) throw new Error("The entity state is incomplete.");
   if (save.mutations.length > 1_000_000) throw new Error("This save contains too many block changes.");
 }
 
@@ -94,4 +101,3 @@ export function downloadWorldKey(key: string, seed: string): void {
   anchor.click();
   URL.revokeObjectURL(url);
 }
-

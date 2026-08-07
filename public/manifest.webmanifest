@@ -1,7 +1,7 @@
 {
   "name": "Voxel Frontier",
   "short_name": "Frontier",
-  "description": "An original procedural voxel survival and automation game.",
+  "description": "An original procedural voxel survival, exploration, combat, and automation game.",
   "start_url": "./",
   "display": "fullscreen",
   "orientation": "any",

@@ -4,9 +4,9 @@ import "./globals.css";
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
 export const metadata: Metadata = {
-  title: "Voxel Frontier — Automation Sandbox",
+  title: "Voxel Frontier — Frontiers & Nightfall",
   description:
-    "An original procedural voxel survival and automation game for desktop and mobile.",
+    "An original procedural voxel survival, exploration, combat, and automation game for desktop and mobile.",
   applicationName: "Voxel Frontier",
   manifest: `${basePath}/manifest.webmanifest`,
   icons: {

@@ -129,6 +129,7 @@ export class VoxelWorld {
     }
 
     const oreRoll = hash3(x, y, z, this.seed ^ 0x165667b1) % 1000;
+    if (y < 11 && oreRoll < 5) return BlockId.MoonshardOre;
     if (y < 14 && oreRoll < 11) return BlockId.AetherCrystal;
     if (y < 25 && oreRoll >= 11 && oreRoll < 35) return BlockId.CopperOre;
     if (y < 35 && oreRoll >= 35 && oreRoll < 68) return BlockId.CoalOre;
@@ -176,9 +177,59 @@ export class VoxelWorld {
           featureRoll < 34
         ) {
           this.setChunkLocal(chunk, lx, height + 1, lz, BlockId.StarBloom);
+        } else if (biome === "Emberwood Wilds" && featureRoll >= 35 && featureRoll < 48) {
+          this.setChunkLocal(chunk, lx, height + 1, lz, BlockId.Thornvine);
         }
       }
     }
+    this.addRuinLandmark(chunk);
+  }
+
+  private addRuinLandmark(chunk: ChunkData): void {
+    const landmarkRoll = hash3(chunk.cx, 77, chunk.cz, this.seed ^ 0x51ed270b);
+    if (landmarkRoll % 13 !== 0) return;
+    const centerX = 5 + (landmarkRoll % 6);
+    const centerZ = 5 + (Math.floor(landmarkRoll / 7) % 6);
+    const worldX = chunk.cx * CHUNK_SIZE + centerX;
+    const worldZ = chunk.cz * CHUNK_SIZE + centerZ;
+    let baseY = 0;
+    for (let dx = -2; dx <= 2; dx += 1) {
+      for (let dz = -2; dz <= 2; dz += 1) {
+        baseY = Math.max(baseY, this.getHeight(worldX + dx, worldZ + dz));
+      }
+    }
+    if (baseY <= SEA_LEVEL + 1 || baseY >= WORLD_HEIGHT - 7) return;
+
+    for (let dx = -2; dx <= 2; dx += 1) {
+      for (let dz = -2; dz <= 2; dz += 1) {
+        const lx = centerX + dx;
+        const lz = centerZ + dz;
+        const terrainY = this.getHeight(worldX + dx, worldZ + dz);
+        for (let y = terrainY + 1; y <= baseY; y += 1) {
+          this.forceChunkLocal(chunk, lx, y, lz, (dx + dz + landmarkRoll) % 4 === 0 ? BlockId.Mossstone : BlockId.RuinStone);
+        }
+        this.forceChunkLocal(chunk, lx, baseY, lz, (Math.abs(dx) + Math.abs(dz)) % 3 === 0 ? BlockId.Mossstone : BlockId.RuinStone);
+        for (let y = baseY + 1; y <= baseY + 4; y += 1) this.forceChunkLocal(chunk, lx, y, lz, BlockId.Air);
+      }
+    }
+
+    const wallPoints = [
+      [-2, -2], [-1, -2], [1, -2], [2, -2], [-2, -1], [2, -1], [-2, 1], [2, 1], [-2, 2], [2, 2],
+    ];
+    for (const [dx, dz] of wallPoints) {
+      const wallHeight = (Math.abs(dx) === 2 && Math.abs(dz) === 2) ? 3 : 1 + ((landmarkRoll + dx * 11 + dz * 17) & 1);
+      for (let dy = 1; dy <= wallHeight; dy += 1) {
+        this.forceChunkLocal(chunk, centerX + dx, baseY + dy, centerZ + dz, dy === wallHeight && wallHeight > 1 ? BlockId.Mossstone : BlockId.RuinStone);
+      }
+    }
+    this.forceChunkLocal(chunk, centerX, baseY + 1, centerZ, BlockId.RelicCache);
+    this.forceChunkLocal(chunk, centerX + 1, baseY + 1, centerZ + 1, BlockId.WayfinderBrazier);
+    this.forceChunkLocal(chunk, centerX - 1, baseY + 1, centerZ + 1, BlockId.MoonshardBlock);
+  }
+
+  private forceChunkLocal(chunk: ChunkData, lx: number, y: number, lz: number, id: BlockId): void {
+    if (lx < 0 || lz < 0 || lx >= CHUNK_SIZE || lz >= CHUNK_SIZE || y < 0 || y >= WORLD_HEIGHT) return;
+    chunk.blocks[chunkIndex(lx, y, lz)] = id;
   }
 
   private setChunkLocal(
@@ -321,4 +372,3 @@ export class VoxelWorld {
     return dirty;
   }
 }
-

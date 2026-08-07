@@ -81,11 +81,12 @@ export class PlayerPhysics {
     world: VoxelWorld,
     dx: number,
     dz: number,
-  ): void {
+  ): boolean {
     const start = this.position.clone();
     const hitX = this.moveAxis(world, "x", dx);
     const hitZ = this.moveAxis(world, "z", dz);
-    if (!(hitX || hitZ) || !this.grounded) return;
+    if (!(hitX || hitZ)) return false;
+    if (!this.grounded) return true;
 
     const flatResult = this.position.clone();
     this.position.copy(start);
@@ -93,16 +94,17 @@ export class PlayerPhysics {
     raised.y += STEP_HEIGHT;
     if (this.collidesAt(world, raised)) {
       this.position.copy(flatResult);
-      return;
+      return true;
     }
     this.position.copy(raised);
     const stepHitX = this.moveAxis(world, "x", dx);
     const stepHitZ = this.moveAxis(world, "z", dz);
     if (stepHitX || stepHitZ) {
       this.position.copy(flatResult);
-      return;
+      return true;
     }
     this.moveAxis(world, "y", -STEP_HEIGHT - 0.04);
+    return false;
   }
 
   update(
@@ -110,6 +112,7 @@ export class PlayerPhysics {
     input: InputFrame,
     world: VoxelWorld,
     onLand?: (fallDistance: number) => void,
+    autoJump = false,
   ): void {
     const safeDt = Math.min(dt, 0.05);
     const inWater = world.getBlock(
@@ -164,12 +167,22 @@ export class PlayerPhysics {
 
     const horizontalLength = Math.hypot(this.velocity.x, this.velocity.z) * safeDt;
     const substeps = Math.max(1, Math.ceil(horizontalLength / 0.22));
+    let blockedHorizontally = false;
     for (let step = 0; step < substeps; step += 1) {
-      this.horizontalStep(
+      blockedHorizontally = this.horizontalStep(
         world,
         (this.velocity.x * safeDt) / substeps,
         (this.velocity.z * safeDt) / substeps,
-      );
+      ) || blockedHorizontally;
+    }
+    if (autoJump && blockedHorizontally && this.grounded && wish.lengthSq() > 0.05) {
+      const raised = this.position.clone();
+      raised.y += 1.02;
+      if (!this.collidesAt(world, raised)) {
+        this.velocity.y = 7.2;
+        this.grounded = false;
+        this.coyoteTimer = 0;
+      }
     }
 
     const wasGrounded = this.grounded;
