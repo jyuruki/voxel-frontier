@@ -1,0 +1,19 @@
+{
+  "name": "Voxel Frontier",
+  "short_name": "Frontier",
+  "description": "An original procedural voxel survival and automation game.",
+  "start_url": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#10262a",
+  "theme_color": "#10262a",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

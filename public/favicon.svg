@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Voxel Frontier cube mark">
+  <rect width="128" height="128" rx="24" fill="#10262a"/>
+  <path d="M64 14 105 37 64 60 23 37Z" fill="#56cbc1"/>
+  <path d="M23 37 64 60v48L23 84Z" fill="#2b817e"/>
+  <path d="M105 37 64 60v48l41-24Z" fill="#ed8050"/>
+  <path d="m64 14 41 23-41 23-41-23Z" fill="none" stroke="#f8f3e8" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M23 37v47l41 24 41-24V37M64 60v48" fill="none" stroke="#f8f3e8" stroke-width="5" stroke-linejoin="round"/>
+  <circle cx="84" cy="72" r="8" fill="#e6b858" stroke="#f8f3e8" stroke-width="3"/>
+</svg>
