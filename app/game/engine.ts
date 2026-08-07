@@ -979,7 +979,8 @@ export class GameEngine {
     }
     if (id === BlockId.ProximitySensor && state) {
       const modes: Array<"near" | "day" | "night"> = ["near", "day", "night"];
-      state.mode = modes[(modes.indexOf(state.mode ?? "near") + 1) % modes.length];
+      const currentMode = state.mode === "day" || state.mode === "night" ? state.mode : "near";
+      state.mode = modes[(modes.indexOf(currentMode) + 1) % modes.length];
       this.broadcastMachine(key, state);
       this.callbacks.onToast(`Field sensor: ${state.mode}`);
       return;
