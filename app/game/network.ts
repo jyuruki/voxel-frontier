@@ -1,5 +1,5 @@
 import { strFromU8, strToU8, zlibSync, unzlibSync } from "fflate";
-import { BlockId, DroppedItemState, ItemId, MachineState, MobState, PlayerSnapshot, WorldSave } from "./types";
+import { BlockId, DroppedItemState, ItemId, MachineState, MobState, PlayerSnapshot, Vec3Data, WorldSave } from "./types";
 
 export type NetworkMessage =
   | { type: "snapshot"; save: WorldSave }
@@ -12,6 +12,9 @@ export type NetworkMessage =
   | { type: "request-mob-hit"; mobId: string; item: ItemId | null }
   | { type: "damage"; amount: number; source: string }
   | { type: "give-item"; item: ItemId; count: number }
+  | { type: "request-sleep" }
+  | { type: "request-rift"; origin: Vec3Data }
+  | { type: "teleport"; position: Vec3Data; text: string }
   | { type: "peer-left"; playerId: string }
   | { type: "toast"; text: string };
 

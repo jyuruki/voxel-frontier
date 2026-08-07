@@ -1,24 +1,24 @@
 # Voxel Frontier
 
-Voxel Frontier is an original, mobile-friendly procedural voxel survival, exploration, combat, and automation game that runs entirely in the browser. Begin empty-handed or build freely, explore a seeded world, survive the night, uncover ruins, automate factories, and carry the world between devices as a portable `VF1` save key.
+Voxel Frontier is an original, mobile-friendly procedural voxel survival, exploration, combat, and automation game that runs entirely in the browser. Begin empty-handed or build freely, explore a seeded world, survive the night, meet Wayfarer villages, automate factories, cross into the Emberdeep, and carry the world between devices as a portable `VF1` save key.
 
 **Play:** [jyuruki.github.io/voxel-frontier](https://jyuruki.github.io/voxel-frontier/)
 
-> Depths & Circuits (Stage 3) adds true 3D swimming, buoyant creature movement, extensive connected caves and aquifers, physical block drops, a wooden tool tier, 25 new blocks, twelve world-mesh shapes, and a directional signal toolkit. The broader roadmap is tracked in [the feature matrix](docs/FEATURE_MATRIX.md).
+> Living Worlds (Version 4) adds soulful animated creatures with synthesized calls, reliable shore exits, brighter nights, beds, full ore progression, coal-fired smelting, procedural villages and trading, 36 new blocks, and the original Emberdeep dimension. See the [Version 4 release notes](docs/VERSION4_RELEASE.md) and [feature matrix](docs/FEATURE_MATRIX.md).
 
 ## Highlights
 
-- Deterministic, endless-by-chunk terrain with six climate regions, large caverns, winding tunnels, vertical rifts, deep aquifers, cave flora, mineral strata, trees, rare Moonshard seams, and Wayfarer ruins
-- 75 original block types with individually generated textures and twelve mesh families: cubes, crossed plants/crystals, thin wire, plates, torches, rods, funnels, slabs, stairs, pistons, columns, and ladders
+- Deterministic, endless-by-chunk terrain with six overworld climates, extensive caves, aquifers, depth-sensitive coal/iron/gold/Fluxstone/diamond seams, ruins, and complete Wayfarer villages
+- 111 original block types with individually generated textures and sixteen mesh families, including beds, portals, doors, fences, plants, wire, plates, slabs, stairs, pistons, and logistics pieces
 - Survival starts with an empty pack; Creative supplies the complete infinite catalog, near-instant mining, and immunity from survival damage
-- Smooth capsule-like controller with acceleration, coyote time, buffering, partial-height collision, step-up handling, and immersion-aware swimming with look steering, drag, buoyancy, ascend, dive, and sprint strokes
+- Smooth capsule-like controller with acceleration, coyote time, buffering, partial-height collision, step-up handling, and immersion-aware swimming with look steering, drag, surface bobbing, shore assist, ascend, dive, and sprint strokes
 - Optional mobile auto-jump for full one-block rises
 - Directional 0–15 logic with thin connected wire, toggles, buttons, plates, daylight/proximity sensors, gates, repeaters, comparators, inverter torches, observers, targets, memory lamps, and tone blocks
 - Energy networks plus physical-item logistics: dynamos, cells, drills, conveyors, furnaces, fabricators, transferring collector funnels, crates, six-block rams, and adhesive retraction
 - Animated first-person hand and held item, mining swings, attack/place/use motion, and seven progressive block-crack textures
-- Five original creature species, melee and ranged combat, weapon reach/cooldowns/knockback/ammo, health targeting, loot, food, medicine, and night spawning
-- A visible eight-minute day/night orbit with stars, sun, moon, twilight, lighting changes, clock, and day counter
-- Creature AABB/partial-height collision, gravity, water immersion, stable buoyancy and swim drag, step-up, crowd separation, and embedded-save recovery
+- Six original creature species with procedural skin patterns, eyes and species details, activity states, walking/idle/jump animation, synthesized voices and footsteps, smooth render interpolation, combat, loot, and night spawning
+- A readable eight-minute day/night orbit with stars, sun, moon, twilight, brighter night ambience, a clock/day counter, and craftable beds that advance the shared world to dawn
+- A coal-fired Hearth Furnace, four mining tiers, raw ore refinement, metal/gem storage blocks, village markets, five barter routes, and returnable Rift Gates into the volcanic Emberdeep
 - Local autosave every 18 seconds plus compressed, checksummed, copyable world keys
 - Host-authoritative WebRTC rooms that work from static GitHub Pages through an invite/answer-key handshake
 - Responsive touch controls, left-handed layout, graphics presets, render distance, FOV, sensitivity, volume controls, and synthesized audio
@@ -49,7 +49,7 @@ The game needs a browser with WebGL and WebRTC. Current Chrome, Edge, Firefox, a
 2. The guest pastes that invite under **Join a host** and sends the generated answer back.
 3. The host pastes the answer and accepts it. The host's world snapshot synchronizes automatically.
 
-The connection is peer-to-peer; no account or custom game server is required. The host owns terrain, machines, time, creature simulation, combat validation, damage, and loot so Stage 3 encounters stay synchronized. A restrictive corporate network may block direct WebRTC routes because this release uses public STUN but no paid TURN relay.
+The connection is peer-to-peer; no account or custom game server is required. The host owns terrain, machines, time, creature simulation, combat validation, damage, loot, sleeping, and validated rift travel. A restrictive corporate network may block direct WebRTC routes because this release uses public STUN but no paid TURN relay.
 
 ## Portable world keys
 
@@ -73,12 +73,12 @@ npm test
 # GitHub Pages output is written to out/
 ```
 
-The 18-test suite additionally covers swimming speed and ascent, stable aquatic creature motion, non-cube shape metadata, extensive deterministic cave voids, directional repeater delay, multi-block pistons, physical-drop funnel transfer, and the wooden-tool progression. Every push to `main` reruns linting, tests, a production export, and GitHub Pages deployment.
+The 24-test suite additionally covers deep-water shore exits, continuous mob jump arcs, stable aquatic motion, the complete ore family, furnace fuel consumption, deterministic villages, Emberdeep terrain, cave density, signals, pistons, physical logistics, saves, and tool progression. Every push to `main` reruns linting, tests, a production export, and GitHub Pages deployment.
 
 ## Architecture
 
 - Next.js/React supplies the responsive shell and menus.
-- Three.js renders face-culled cubes and shape-aware plants, wire, plates, lights, funnels, slabs, stairs, pistons, columns, and ladders from a runtime-generated atlas.
+- Three.js renders face-culled terrain, sixteen shape families, world-matching inventory icons, and procedural articulated creature rigs from runtime-generated textures.
 - The game simulation is framework-independent TypeScript under `app/game/`.
 - Terrain stores only player mutations; untouched chunks regenerate from the seed.
 - Multiplayer uses browser-native WebRTC data channels with the host as authority.

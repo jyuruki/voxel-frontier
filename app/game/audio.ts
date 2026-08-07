@@ -1,7 +1,7 @@
-import { GameSettings } from "./types";
+import { GameSettings, MobState } from "./types";
 import { hashString, seededRandom } from "./prng";
 
-type SoundName = "mine" | "break" | "place" | "step" | "hurt" | "craft" | "machine" | "click" | "attack" | "shoot";
+type SoundName = "mine" | "break" | "place" | "step" | "hurt" | "craft" | "machine" | "click" | "attack" | "shoot" | "trade" | "rift";
 
 export class FrontierAudio {
   private context: AudioContext | null = null;
@@ -69,8 +69,9 @@ export class FrontierAudio {
     oscillator.stop(start + duration + 0.02);
   }
 
-  private noise(duration: number, volume: number): void {
+  private noise(duration: number, volume: number, destination?: AudioNode): void {
     if (!this.context || !this.effects) return;
+    const output = destination ?? this.effects;
     const length = Math.max(1, Math.floor(this.context.sampleRate * duration));
     const buffer = this.context.createBuffer(1, length, this.context.sampleRate);
     const channel = buffer.getChannelData(0);
@@ -85,7 +86,7 @@ export class FrontierAudio {
     gain.gain.exponentialRampToValueAtTime(0.0001, this.context.currentTime + duration);
     source.connect(filter);
     filter.connect(gain);
-    gain.connect(this.effects);
+    gain.connect(output);
     source.start();
   }
 
@@ -115,8 +116,62 @@ export class FrontierAudio {
     } else if (name === "shoot") {
       this.tone(720, 0.1, "square", 0.04, this.effects);
       this.tone(310, 0.16, "sine", 0.035, this.effects, 0.035);
+    } else if (name === "trade") {
+      this.tone(330, 0.16, "triangle", 0.045, this.effects);
+      this.tone(495, 0.18, "triangle", 0.045, this.effects, 0.1);
+      this.tone(660, 0.22, "sine", 0.035, this.effects, 0.2);
+    } else if (name === "rift") {
+      this.noise(0.7, 0.035);
+      this.tone(92, 0.72, "sawtooth", 0.035, this.effects);
+      this.tone(184, 0.82, "sine", 0.06, this.effects, 0.08);
+      this.tone(368, 0.9, "sine", 0.035, this.effects, 0.18);
     } else {
       this.tone(260, 0.045, "sine", 0.025, this.effects);
+    }
+  }
+
+  playCreature(kind: MobState["kind"], mood: "idle" | "hurt" | "step" | "attack", distance = 0): void {
+    if (!this.context || !this.effects || distance > 24) return;
+    const voice = this.context.createGain();
+    const attenuation = Math.max(0.035, 1 - distance / 25);
+    voice.gain.value = attenuation;
+    voice.connect(this.effects);
+    window.setTimeout(() => voice.disconnect(), 1400);
+
+    if (mood === "step") {
+      this.noise(0.035, kind === "thornback" ? 0.03 : 0.014, voice);
+      return;
+    }
+    if (mood === "hurt") {
+      const base = kind === "nightwisp" ? 520 : kind === "thornback" ? 92 : 190;
+      this.tone(base, 0.24, kind === "nightwisp" ? "sine" : "sawtooth", 0.075, voice);
+      return;
+    }
+    if (mood === "attack") {
+      const base = kind === "cinderling" ? 130 : kind === "nightwisp" ? 610 : 108;
+      this.noise(0.08, 0.025, voice);
+      this.tone(base, 0.18, "square", 0.06, voice);
+      return;
+    }
+
+    if (kind === "glowgrazer") {
+      this.tone(238, 0.34, "sine", 0.045, voice);
+      this.tone(318, 0.28, "triangle", 0.026, voice, 0.13);
+    } else if (kind === "mireling") {
+      this.tone(108, 0.18, "square", 0.04, voice);
+      this.tone(82, 0.28, "triangle", 0.045, voice, 0.11);
+    } else if (kind === "cinderling") {
+      this.noise(0.22, 0.035, voice);
+      this.tone(148, 0.3, "sawtooth", 0.04, voice);
+    } else if (kind === "thornback") {
+      this.tone(76, 0.42, "sawtooth", 0.055, voice);
+      this.tone(58, 0.35, "triangle", 0.035, voice, 0.08);
+    } else if (kind === "nightwisp") {
+      this.tone(512, 0.58, "sine", 0.04, voice);
+      this.tone(704, 0.62, "sine", 0.024, voice, 0.17);
+    } else {
+      this.tone(196, 0.26, "triangle", 0.04, voice);
+      this.tone(247, 0.24, "sine", 0.027, voice, 0.12);
     }
   }
 

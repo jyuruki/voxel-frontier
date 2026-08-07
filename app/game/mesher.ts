@@ -55,7 +55,7 @@ function targetBuffers(
 
 function shouldRenderFace(id: BlockId, neighbor: BlockId): boolean {
   if (neighbor === BlockId.Air) return true;
-  if (id === BlockId.Water) return neighbor !== BlockId.Water && !BLOCKS[neighbor].opaque;
+  if (BLOCKS[id].liquid) return id !== neighbor && !BLOCKS[neighbor].opaque;
   if (!BLOCKS[id].opaque) return id !== neighbor && !BLOCKS[neighbor].opaque;
   return !BLOCKS[neighbor].opaque || BLOCKS[neighbor].shape !== "cube";
 }
@@ -151,7 +151,7 @@ function addFullCube(
     if (!shouldRenderFace(id, neighbor)) continue;
     const baseIndex = buffers.positions.length / 3;
     for (const corner of face.corners) {
-      const waterOffset = id === BlockId.Water && corner[1] === 1 ? -0.12 : 0;
+      const waterOffset = BLOCKS[id].liquid && corner[1] === 1 ? -0.12 : 0;
       buffers.positions.push(lx + corner[0], y + corner[1] + waterOffset, lz + corner[2]);
       buffers.normals.push(...face.normal);
     }
@@ -302,6 +302,68 @@ function addLadder(buffers: GeometryBuffers, id: BlockId, lx: number, y: number,
   }
 }
 
+function addBed(
+  buffers: GeometryBuffers,
+  id: BlockId,
+  lx: number,
+  y: number,
+  lz: number,
+  orientation: number,
+): void {
+  addOrientedCuboid(buffers, id, lx, y, lz, [0.06, 0.18, 0.05], [0.94, 0.46, 0.95], orientation);
+  addOrientedCuboid(buffers, id, lx, y, lz, [0.12, 0.44, 0.65], [0.88, 0.58, 0.91], orientation);
+  for (const [x, z] of [[0.12, 0.12], [0.88, 0.12], [0.12, 0.88], [0.88, 0.88]]) {
+    addOrientedCuboid(buffers, id, lx, y, lz, [x - 0.045, 0, z - 0.045], [x + 0.045, 0.2, z + 0.045], orientation);
+  }
+}
+
+function addPortal(
+  buffers: GeometryBuffers,
+  id: BlockId,
+  lx: number,
+  y: number,
+  lz: number,
+  orientation: number,
+): void {
+  addOrientedCuboid(buffers, id, lx, y, lz, [0.05, 0, 0.42], [0.16, 1, 0.58], orientation);
+  addOrientedCuboid(buffers, id, lx, y, lz, [0.84, 0, 0.42], [0.95, 1, 0.58], orientation);
+  addOrientedCuboid(buffers, id, lx, y, lz, [0.16, 0.86, 0.42], [0.84, 1, 0.58], orientation);
+  addOrientedCuboid(buffers, id, lx, y, lz, [0.19, 0.08, 0.475], [0.81, 0.84, 0.525], orientation);
+}
+
+function addDoor(
+  buffers: GeometryBuffers,
+  id: BlockId,
+  lx: number,
+  y: number,
+  lz: number,
+  orientation: number,
+): void {
+  addOrientedCuboid(buffers, id, lx, y, lz, [0.06, 0, 0.44], [0.94, 1, 0.56], orientation);
+  addOrientedCuboid(buffers, id, lx, y, lz, [0.72, 0.48, 0.39], [0.79, 0.56, 0.61], orientation);
+}
+
+function addFence(
+  world: VoxelWorld,
+  buffers: GeometryBuffers,
+  id: BlockId,
+  x: number,
+  y: number,
+  z: number,
+  lx: number,
+  lz: number,
+): void {
+  addCuboid(buffers, id, lx, y, lz, [0.39, 0, 0.39], [0.61, 1, 0.61]);
+  const connects = (neighbor: BlockId) => BLOCKS[neighbor].solid || BLOCKS[neighbor].shape === "fence";
+  const arms: Array<[boolean, Point, Point]> = [
+    [connects(world.getBlock(x, y, z - 1)), [0.43, 0.38, 0], [0.57, 0.82, 0.5]],
+    [connects(world.getBlock(x + 1, y, z)), [0.5, 0.38, 0.43], [1, 0.82, 0.57]],
+    [connects(world.getBlock(x, y, z + 1)), [0.43, 0.38, 0.5], [0.57, 0.82, 1]],
+    [connects(world.getBlock(x - 1, y, z)), [0, 0.38, 0.43], [0.5, 0.82, 0.57]],
+  ];
+  for (const [active, min, max] of arms) if (active) addCuboid(buffers, id, lx, y, lz, min, max);
+}
+
 export function buildChunkGeometries(
   world: VoxelWorld,
   cx: number,
@@ -337,6 +399,10 @@ export function buildChunkGeometries(
         else if (shape === "piston") addPiston(buffers, id, lx, y, lz, orientation);
         else if (shape === "column") addCuboid(buffers, id, lx, y, lz, [0.2, 0, 0.2], [0.8, 1, 0.8]);
         else if (shape === "ladder") addLadder(buffers, id, lx, y, lz);
+        else if (shape === "bed") addBed(buffers, id, lx, y, lz, orientation);
+        else if (shape === "portal") addPortal(buffers, id, lx, y, lz, orientation);
+        else if (shape === "door") addDoor(buffers, id, lx, y, lz, orientation);
+        else if (shape === "fence") addFence(world, buffers, id, x, y, z, lx, lz);
       }
     }
   }

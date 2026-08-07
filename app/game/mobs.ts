@@ -25,7 +25,10 @@ export const MOB_DEFINITIONS: Record<MobState["kind"], MobDefinition> = {
     waterSpeed: 0.82,
     damage: 0,
     reach: 0,
-    loot: [{ item: "food:glowcut", min: 1, max: 2 }],
+    loot: [
+      { item: "food:glowcut", min: 1, max: 2 },
+      { item: "part:soft-fiber", min: 1, max: 3 },
+    ],
   },
   mireling: {
     name: "Mireling",
@@ -74,6 +77,18 @@ export const MOB_DEFINITIONS: Record<MobState["kind"], MobDefinition> = {
     damage: 7,
     reach: 1.1,
     loot: [{ item: "part:moonshard", min: 1, max: 2 }],
+  },
+  wayfarer: {
+    name: "Wayfarer",
+    maxHealth: 30,
+    radius: 0.34,
+    height: 1.72,
+    passive: true,
+    speed: 1.05,
+    waterSpeed: 0.78,
+    damage: 0,
+    reach: 0,
+    loot: [],
   },
 };
 
@@ -181,6 +196,7 @@ export function moveMobWithCollision(
 ): { blocked: boolean; grounded: boolean; inWater: boolean } {
   const safeDt = Math.min(0.08, Math.max(0, dt));
   resolveMobPenetration(world, mob);
+  mob.jumpCooldown = Math.max(0, (mob.jumpCooldown ?? 0) - safeDt);
   const immersion = mobWaterImmersion(world, mob);
   const inWater = immersion > 0;
   const definition = MOB_DEFINITIONS[mob.kind];
@@ -210,19 +226,13 @@ export function moveMobWithCollision(
   const start = { ...mob.position };
   const hitX = moveAxis(world, mob, "x", mob.velocity.x * safeDt);
   const hitZ = moveAxis(world, mob, "z", mob.velocity.z * safeDt);
-  let blocked = hitX || hitZ;
+  const blocked = hitX || hitZ;
 
-  if (!inWater && blocked && grounded(world, { ...mob, position: start })) {
-    const flat = { ...mob.position };
-    mob.position = { ...start, y: start.y + 1.02 };
-    if (!mobIntersectsSolid(world, mob)) {
-      const stepHitX = moveAxis(world, mob, "x", desiredX * safeDt);
-      const stepHitZ = moveAxis(world, mob, "z", desiredZ * safeDt);
-      if (!(stepHitX || stepHitZ)) {
-        moveAxis(world, mob, "y", -1.08);
-        blocked = false;
-      } else mob.position = flat;
-    } else mob.position = flat;
+  if (!inWater && blocked && grounded(world, { ...mob, position: start }) && (mob.jumpCooldown ?? 0) <= 0) {
+    mob.velocity.y = Math.max(mob.velocity.y, mob.kind === "wayfarer" ? 6.35 : 6.55);
+    mob.jumpCooldown = 0.72;
+  } else if (inWater && blocked && immersion <= 2 / 3) {
+    mob.velocity.y = Math.max(mob.velocity.y, 2.2);
   }
 
   const falling = mob.velocity.y <= 0;

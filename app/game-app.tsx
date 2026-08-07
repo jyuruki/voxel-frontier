@@ -11,7 +11,7 @@ import {
   useState,
 } from "react";
 import { BLOCKS, RECIPES, itemName } from "./game/blocks";
-import { GameEngine, MachinePanelData } from "./game/engine";
+import { GameEngine, MachinePanelData, TradePanelData } from "./game/engine";
 import { ItemArt } from "./item-art";
 import { NetworkSession } from "./game/network";
 import {
@@ -31,7 +31,7 @@ import {
   WorldSave,
 } from "./game/types";
 
-type Overlay = "none" | "pause" | "inventory" | "guide" | "options" | "save" | "network" | "machine";
+type Overlay = "none" | "pause" | "inventory" | "guide" | "options" | "save" | "network" | "machine" | "trade";
 
 const EMPTY_HUD: HudState = {
   health: 100,
@@ -226,6 +226,7 @@ export default function GameApp() {
   const [exportValue, setExportValue] = useState("");
   const [inventoryTab, setInventoryTab] = useState<"items" | "craft">("items");
   const [machine, setMachine] = useState<MachinePanelData | null>(null);
+  const [trade, setTrade] = useState<TradePanelData | null>(null);
   const [networkMode, setNetworkMode] = useState<"host" | "join">("host");
   const [inviteKey, setInviteKey] = useState("");
   const [joinKey, setJoinKey] = useState("");
@@ -289,6 +290,10 @@ export default function GameApp() {
           onMachine: (data) => {
             setMachine(data);
             openOverlay("machine");
+          },
+          onTrade: (data) => {
+            setTrade(data);
+            openOverlay("trade");
           },
           onToast: showToast,
         },
@@ -391,7 +396,7 @@ export default function GameApp() {
             <span className="brand__mark"><i /><i /><i /></span>
             <span><strong>VOXEL</strong><em>FRONTIER</em></span>
           </div>
-          <span className="build-tag">Depths & Circuits · Stage 3</span>
+          <span className="build-tag">Living Worlds · Version 4</span>
         </header>
 
         <section className="landing__content">
@@ -399,10 +404,10 @@ export default function GameApp() {
             <p className="eyebrow">Shape the wild. Teach it to move.</p>
             <h1>A living block world with an engineer&apos;s soul.</h1>
             <p>
-              Begin empty-handed, survive a living night, uncover Wayfarer ruins, or open an infinite Creative catalog and engineer without limits—alone or online.
+              Begin empty-handed, mine rich cave seams, meet animated Wayfarers, build a village workshop, or cross a crafted Rift Gate into the Emberdeep—alone or online.
             </p>
             <div className="feature-chips">
-              <span>True swimming</span><span>75 distinct blocks</span><span>Deep caves &amp; circuits</span><span>Physical item drops</span>
+              <span>Soulful creatures</span><span>111 distinct blocks</span><span>Villages &amp; trading</span><span>The Emberdeep</span>
             </div>
           </div>
 
@@ -502,7 +507,7 @@ export default function GameApp() {
 
       {hud.targetedMob && (
         <div className="combat-target" aria-label={`${hud.targetedMob.name} health`}>
-          <div><span>THREAT</span><strong>{hud.targetedMob.name}</strong></div>
+          <div><span>{hud.targetedMob.name === "Wayfarer" ? "MERCHANT" : "CREATURE"}</span><strong>{hud.targetedMob.name}</strong></div>
           <div className="combat-target__track"><i style={{ width: `${(hud.targetedMob.health / hud.targetedMob.maxHealth) * 100}%` }} /></div>
           <small>{Math.ceil(hud.targetedMob.health)} / {hud.targetedMob.maxHealth}</small>
         </div>
@@ -701,6 +706,16 @@ export default function GameApp() {
         />
       )}
 
+      {overlay === "trade" && trade && (
+        <TradeModal
+          trade={trade}
+          inventory={hud.inventory}
+          creative={hud.gameMode === "creative"}
+          onClose={closeOverlay}
+          onTrade={(offerId) => engineRef.current?.trade(trade.mobId, offerId)}
+        />
+      )}
+
       {toast && <div className="toast">{toast}</div>}
     </main>
   );
@@ -773,31 +788,31 @@ function OptionsModal({
 
 function GuideModal({ onClose }: { onClose: () => void }) {
   return (
-    <Modal title="Frontier field guide" eyebrow="Depths & Circuits · Stage 3" onClose={onClose} wide>
+    <Modal title="Frontier field guide" eyebrow="Living Worlds · Version 4" onClose={onClose} wide>
       <div className="guide-grid">
         <article className="guide-card guide-card--accent">
-          <span>01</span><h3>Physical gathering</h3>
-          <p>Broken blocks pop into the world. Walk close to collect them. Cut Emberwood into planks, build a Tinker Bench, then craft an Emberwood Pick before harvesting stone.</p>
+          <span>01</span><h3>Surface swimming</h3>
+          <p>Water adds drag and buoyancy. Look where you want to swim, hold jump to rise, and keep moving at the surface to bob onto a one-block shore. DIVE or crouch descends.</p>
         </article>
         <article className="guide-card">
-          <span>02</span><h3>Swimming</h3>
-          <p>Water has drag and buoyancy. Move while looking up or down to steer your stroke, hold jump to ascend, crouch or use DIVE to descend, and sprint for a faster swim.</p>
+          <span>02</span><h3>Ore &amp; smelting</h3>
+          <p>Coal, iron, gold, Fluxstone, copper, and diamond form depth-sensitive cave seams. Craft a Hearth Furnace, deposit coal with raw ore, and let it smelt ingots automatically.</p>
         </article>
         <article className="guide-card">
-          <span>03</span><h3>Explore the deep</h3>
-          <p>Large caverns, winding tunnels, vertical rifts, aquifers, crystal growths, mushrooms, moss, limestone, marble, and deep slate form connected underground regions.</p>
+          <span>03</span><h3>Rest through night</h3>
+          <p>Weave Soft Fiber into wool, combine it with planks to craft a Frontier Bed, place it, and use it after nightfall. Sleeping advances the shared world to dawn.</p>
         </article>
         <article className="guide-card">
-          <span>04</span><h3>Directional circuits</h3>
-          <p>Thin Flux Conduit links sources to repeaters, comparators, inverter torches, observers, pressure plates, daylight sensors, memory lamps, targets, and tone blocks.</p>
+          <span>04</span><h3>Villages &amp; trade</h3>
+          <p>Wayfarer villages appear across suitable terrain with cottages, beds, markets, paths, and residents. Aim at a Wayfarer or market post and use INTERACT to barter resources.</p>
         </article>
         <article className="guide-card">
-          <span>05</span><h3>Movement &amp; logistics</h3>
-          <p>Linear Rams push up to six blocks; Adhesive Rams pull on retraction. Collector Funnels gather physical drops and transfer one item per beat into facing storage.</p>
+          <span>05</span><h3>Cross the rift</h3>
+          <p>Trade for a Rift Core, craft a Rift Gate with Riftstone and metal, then interact with it. The Emberdeep contains molten currents, Riftwood forests, glowstone, and richer rare ores.</p>
         </article>
         <article className="guide-card">
-          <span>06</span><h3>Creative &amp; portable worlds</h3>
-          <p>Creative opens all 75 original blocks and every tool. VF1 keys remain compatible and preserve terrain, optional Stage 3 circuit state, creatures, inventory, and time.</p>
+          <span>06</span><h3>Living creatures</h3>
+          <p>Six original species now idle, investigate, wander, flee, vocalize, swim, and animate every step and jump. Hostile creatures still wake at night; Wayfarers stay near home.</p>
         </article>
       </div>
       <div className="controls-table">
@@ -806,7 +821,53 @@ function GuideModal({ onClose }: { onClose: () => void }) {
       </div>
       <div className="scope-note">
         <strong>What this release contains</strong>
-        <p>Six biomes, extensive cave networks and aquifers, ruins, 75 original textured blocks with twelve mesh shapes, Survival and Creative modes, an Emberwood tool tier, physical block drops, true swimming, water-stable creatures, five mobs, combat, held-item silhouettes and labels, block cracking, day/night, crafting, directional signal logic, pistons, funnels, direct online rooms, mobile ascend/dive controls with optional auto-jump, autosave, and backward-compatible world keys.</p>
+        <p>Six overworld biomes plus the Emberdeep, extensive caves and ore seams, procedural villages, 111 original textured blocks, Survival and Creative modes, four tool tiers, physical drops, shore-assisted swimming, six animated and synthesized-voice species, combat, beds, furnaces, trading, brighter nights, directional logic and machinery, direct online rooms, mobile controls, autosave, and backward-compatible VF1 world keys.</p>
+      </div>
+    </Modal>
+  );
+}
+
+function TradeModal({
+  trade,
+  inventory,
+  creative,
+  onClose,
+  onTrade,
+}: {
+  trade: TradePanelData;
+  inventory: Record<string, number>;
+  creative: boolean;
+  onClose: () => void;
+  onTrade: (offerId: string) => void;
+}) {
+  return (
+    <Modal title={trade.name} eyebrow="Wayfarer barter" onClose={onClose} wide>
+      <div className="network-callout">
+        <strong>Every trade is immediate.</strong>
+        <span>Bring mined, farmed, or smelted goods. Wayfarers specialize in hard-to-find materials and riftcraft.</span>
+      </div>
+      <div className="trade-list">
+        {trade.offers.map((offer) => {
+          const carried = inventory[offer.cost.item] ?? 0;
+          const canTrade = creative || carried >= offer.cost.count;
+          return (
+            <article key={offer.id}>
+              <div className="trade-list__item">
+                <ItemIcon item={offer.cost.item} count={creative ? "∞" : carried} />
+                <span><small>YOU GIVE</small><strong>{offer.cost.count} × {itemName(offer.cost.item)}</strong></span>
+              </div>
+              <span className="trade-list__arrow">→</span>
+              <div className="trade-list__item">
+                <ItemIcon item={offer.reward.item} count={offer.reward.count} />
+                <span><small>YOU RECEIVE</small><strong>{offer.reward.count} × {itemName(offer.reward.item)}</strong></span>
+              </div>
+              <div className="trade-list__copy"><strong>{offer.name}</strong><p>{offer.note}</p></div>
+              <button className="secondary-button" disabled={!canTrade} onClick={() => onTrade(offer.id)}>
+                {canTrade ? "Trade" : `Need ${offer.cost.count - carried}`}
+              </button>
+            </article>
+          );
+        })}
       </div>
     </Modal>
   );
@@ -848,6 +909,12 @@ function MachineModal({
           <div><span>FACING</span><strong>{["North", "East", "South", "West"][machine.state.orientation]}</strong></div>
         </div>
       </div>
+      {machine.id === BlockId.HearthFurnace && (
+        <div className="network-callout">
+          <strong>Coal-fired smelting</strong>
+          <span>Deposit Coal with Raw Iron, Raw Gold, Copper Ore, Clay, or Sand. One Coal fires one smelting cycle; finished materials appear in storage automatically.</span>
+        </div>
+      )}
       <div className="button-row">
         <button className="secondary-button" onClick={onToggle}>{machine.state.enabled ? "Disable" : "Enable"}</button>
         <button className="secondary-button" onClick={onRotate}>Rotate clockwise</button>

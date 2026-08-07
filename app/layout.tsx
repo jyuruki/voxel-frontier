@@ -4,9 +4,9 @@ import "./globals.css";
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
 export const metadata: Metadata = {
-  title: "Voxel Frontier — Depths & Circuits",
+  title: "Voxel Frontier — Living Worlds",
   description:
-    "An original voxel survival and automation game with true swimming, deep caves, physical drops, and directional circuits.",
+    "An original voxel survival game with animated creatures, villages, smelting, rich caves, automation, and the Emberdeep.",
   applicationName: "Voxel Frontier",
   manifest: `${basePath}/manifest.webmanifest`,
   icons: {

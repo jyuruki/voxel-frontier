@@ -82,6 +82,42 @@ export enum BlockId {
   StoneStairs = 73,
   RopeLadder = 74,
   DeepLantern = 75,
+  IronOre = 76,
+  GoldOre = 77,
+  FluxstoneOre = 78,
+  DiamondOre = 79,
+  IronBlock = 80,
+  GoldBlock = 81,
+  DiamondBlock = 82,
+  HearthFurnace = 83,
+  FrontierBed = 84,
+  Riftstone = 85,
+  RiftGate = 86,
+  Emberrock = 87,
+  EmberGlow = 88,
+  AshSoil = 89,
+  VillageWall = 90,
+  Thatch = 91,
+  Cobblestone = 92,
+  TimberFrame = 93,
+  MarketCanopy = 94,
+  TradePost = 95,
+  IronBars = 96,
+  TimberDoor = 97,
+  PlankSlab = 98,
+  PlankStairs = 99,
+  Bookshelf = 100,
+  WovenWool = 101,
+  FiredBrick = 102,
+  RoofTile = 103,
+  RiftwoodLog = 104,
+  RiftwoodLeaves = 105,
+  RiftwoodPlanks = 106,
+  Emberflow = 107,
+  TimberFence = 108,
+  Gravel = 109,
+  PolishedStone = 110,
+  GoldTrim = 111,
 }
 
 export type ItemId =
@@ -93,6 +129,8 @@ export type ItemId =
   | "tool:rough-pick"
   | "tool:copper-pick"
   | "tool:crystal-pick"
+  | "tool:iron-pick"
+  | "tool:diamond-pick"
   | "tool:hatchet"
   | "tool:spade"
   | "tool:blade"
@@ -100,6 +138,13 @@ export type ItemId =
   | "tool:copper-saber"
   | "tool:aether-repeater"
   | "part:copper-ingot"
+  | "part:coal"
+  | "part:iron-ingot"
+  | "part:gold-ingot"
+  | "part:flux-dust"
+  | "part:diamond"
+  | "part:soft-fiber"
+  | "part:rift-core"
   | "part:flux-coil"
   | "part:logic-wafer"
   | "part:gear"
@@ -148,7 +193,7 @@ export interface DroppedItemState {
 
 export interface MobState {
   id: string;
-  kind: "mireling" | "glowgrazer" | "cinderling" | "thornback" | "nightwisp";
+  kind: "mireling" | "glowgrazer" | "cinderling" | "thornback" | "nightwisp" | "wayfarer";
   position: Vec3Data;
   velocity: Vec3Data;
   health: number;
@@ -156,6 +201,10 @@ export interface MobState {
   targetTimer: number;
   attackTimer?: number;
   hurtTimer?: number;
+  voiceTimer?: number;
+  jumpCooldown?: number;
+  activity?: "idle" | "wander" | "curious";
+  home?: Vec3Data;
 }
 
 export type MutationTuple = [number, number, number, BlockId];
@@ -196,7 +245,11 @@ export type BlockShape =
   | "stair"
   | "piston"
   | "column"
-  | "ladder";
+  | "ladder"
+  | "bed"
+  | "portal"
+  | "door"
+  | "fence";
 
 export interface BlockDefinition {
   id: BlockId;

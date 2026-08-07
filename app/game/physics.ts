@@ -19,6 +19,7 @@ export class PlayerPhysics {
   private coyoteTimer = 0;
   private jumpBuffer = 0;
   private verticalPeak = 0;
+  private shoreAssistTimer = 0;
 
   constructor(position: { x: number; y: number; z: number }) {
     this.position.set(position.x, position.y, position.z);
@@ -84,17 +85,18 @@ export class PlayerPhysics {
     return true;
   }
 
-  private horizontalStep(world: VoxelWorld, dx: number, dz: number): boolean {
+  private horizontalStep(world: VoxelWorld, dx: number, dz: number, shoreAssist = false): boolean {
     const start = this.position.clone();
     const hitX = this.moveAxis(world, "x", dx);
     const hitZ = this.moveAxis(world, "z", dz);
     if (!(hitX || hitZ)) return false;
-    if (!this.grounded) return true;
+    if (!this.grounded && !shoreAssist) return true;
 
     const flatResult = this.position.clone();
     this.position.copy(start);
     const raised = this.position.clone();
-    raised.y += STEP_HEIGHT;
+    const stepHeight = this.grounded ? STEP_HEIGHT : 0.46;
+    raised.y += stepHeight;
     if (this.collidesAt(world, raised)) {
       this.position.copy(flatResult);
       return true;
@@ -106,7 +108,7 @@ export class PlayerPhysics {
       this.position.copy(flatResult);
       return true;
     }
-    this.moveAxis(world, "y", -STEP_HEIGHT - 0.04);
+    this.moveAxis(world, "y", -stepHeight - 0.04);
     return false;
   }
 
@@ -129,12 +131,14 @@ export class PlayerPhysics {
     const safeDt = Math.min(dt, 0.05);
     this.waterImmersion = this.sampleWater(world);
     const inWater = this.waterImmersion > 0;
+    this.shoreAssistTimer = Math.max(0, this.shoreAssistTimer - safeDt);
     const onLadder = world.getBlock(
       this.position.x,
       this.position.y + Math.min(0.82, this.height * 0.55),
       this.position.z,
     ) === BlockId.RopeLadder;
     this.swimming = this.waterImmersion >= 2 / 3;
+    const nearSurface = inWater && this.waterImmersion <= 2 / 3;
 
     if (input.jump && !inWater) this.jumpBuffer = 0.12;
     else this.jumpBuffer = Math.max(0, this.jumpBuffer - safeDt);
@@ -171,7 +175,9 @@ export class PlayerPhysics {
       this.velocity.z += (wish.z * maxSpeed - this.velocity.z) * control;
 
       const hasVerticalIntent = Math.abs(wish.y) > 0.05;
-      const idleVertical = this.waterImmersion < 0.67 ? 0.48 : -0.16;
+      const movingInWater = Math.abs(input.forward) + Math.abs(input.strafe) > 0.08;
+      const movingTowardShore = nearSurface && movingInWater;
+      const idleVertical = nearSurface ? (movingTowardShore ? 1.05 : 0.78) : movingInWater ? 0.72 : -0.12;
       const desiredY = hasVerticalIntent ? wish.y * (sprinting ? 3.05 : 2.35) : idleVertical;
       const verticalControl = 1 - Math.exp(-5.2 * safeDt);
       this.velocity.y += (desiredY - this.velocity.y) * verticalControl;
@@ -185,6 +191,7 @@ export class PlayerPhysics {
       this.coyoteTimer = 0;
       this.jumpBuffer = 0;
       this.verticalPeak = this.position.y;
+      if (movingTowardShore) this.shoreAssistTimer = 0.28;
     } else if (onLadder) {
       const wish = horizontalForward.multiplyScalar(input.forward).add(right.multiplyScalar(input.strafe));
       if (wish.lengthSq() > 1) wish.normalize();
@@ -217,9 +224,13 @@ export class PlayerPhysics {
         this.coyoteTimer = 0;
         this.jumpBuffer = 0;
       }
-      this.velocity.y += -22 * safeDt;
+      if (this.shoreAssistTimer > 0 && input.forward > 0.05) {
+        this.velocity.y = Math.max(this.velocity.y, 0.72);
+        this.velocity.y += -7 * safeDt;
+      } else this.velocity.y += -22 * safeDt;
     }
 
+    const horizontalWish = Math.abs(input.forward) + Math.abs(input.strafe);
     const horizontalLength = Math.hypot(this.velocity.x, this.velocity.z) * safeDt;
     const substeps = Math.max(1, Math.ceil(horizontalLength / 0.22));
     let blockedHorizontally = false;
@@ -228,10 +239,15 @@ export class PlayerPhysics {
         world,
         (this.velocity.x * safeDt) / substeps,
         (this.velocity.z * safeDt) / substeps,
+        this.shoreAssistTimer > 0 && horizontalWish > 0.05,
       ) || blockedHorizontally;
     }
 
-    const horizontalWish = Math.abs(input.forward) + Math.abs(input.strafe);
+    if (inWater && nearSurface && blockedHorizontally && horizontalWish > 0.05) {
+      this.shoreAssistTimer = 0.34;
+      this.velocity.y = Math.max(this.velocity.y, input.jump ? 3.9 : 2.15);
+    }
+
     if (autoJump && !inWater && !onLadder && blockedHorizontally && this.grounded && horizontalWish > 0.05) {
       const raised = this.position.clone();
       raised.y += 1.02;

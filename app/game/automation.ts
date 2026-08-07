@@ -345,18 +345,35 @@ function runConveyor(world: VoxelWorld, key: string, state: MachineState): void 
   }
 }
 
-function runFurnace(state: MachineState, position: Vec3Data, events: AutomationEvent[]): void {
-  const ore = itemForBlock(BlockId.CopperOre);
-  if (itemCount(state.storage, ore) <= 0) {
+const SMELTING_RECIPES: Array<{ input: ItemId; output: ItemId; count?: number }> = [
+  { input: itemForBlock(BlockId.IronOre), output: "part:iron-ingot" },
+  { input: itemForBlock(BlockId.GoldOre), output: "part:gold-ingot" },
+  { input: itemForBlock(BlockId.CopperOre), output: "part:copper-ingot" },
+  { input: itemForBlock(BlockId.Clay), output: itemForBlock(BlockId.FiredBrick), count: 2 },
+  { input: itemForBlock(BlockId.Sand), output: itemForBlock(BlockId.Glass) },
+];
+
+function runFurnace(
+  state: MachineState,
+  position: Vec3Data,
+  events: AutomationEvent[],
+  coalFired: boolean,
+): void {
+  const recipe = SMELTING_RECIPES.find((candidate) => itemCount(state.storage, candidate.input) > 0);
+  const coalItem: ItemId = itemCount(state.storage, "part:coal") > 0
+    ? "part:coal"
+    : itemForBlock(BlockId.CoalOre);
+  if (!recipe || (coalFired && itemCount(state.storage, coalItem) <= 0)) {
     state.progress = 0;
     return;
   }
-  state.progress += 1 / 20;
+  state.progress += coalFired ? 1 / 20 : 1 / 12;
   if (state.progress < 1) return;
   state.progress = 0;
-  addItem(state.storage, ore, -1);
-  addItem(state.storage, "part:copper-ingot", 1);
-  events.push({ type: "smelted", position, item: "part:copper-ingot" });
+  addItem(state.storage, recipe.input, -1);
+  if (coalFired) addItem(state.storage, coalItem, -1);
+  addItem(state.storage, recipe.output, recipe.count ?? 1);
+  events.push({ type: "smelted", position, item: recipe.output });
 }
 
 function runFabricator(state: MachineState, position: Vec3Data, events: AutomationEvent[]): void {
@@ -487,6 +504,7 @@ function runUnpoweredDevices(world: VoxelWorld, events: AutomationEvent[]): void
     const [x, y, z] = parseWorldKey(key);
     const id = world.getBlock(x, y, z);
     if (id === BlockId.Hopper) runHopper(world, key, state);
+    else if (id === BlockId.HearthFurnace && state.enabled) runFurnace(state, { x, y, z }, events, true);
   }
   runPistons(world, events);
 }
@@ -502,7 +520,7 @@ function runPoweredMachine(
   const position = { x, y, z };
   if (id === BlockId.BoreDrill) runDrill(world, key, state, events);
   else if (id === BlockId.Conveyor) runConveyor(world, key, state);
-  else if (id === BlockId.ArcFurnace) runFurnace(state, position, events);
+  else if (id === BlockId.ArcFurnace) runFurnace(state, position, events, false);
   else if (id === BlockId.Fabricator) runFabricator(state, position, events);
 }
 
@@ -516,8 +534,9 @@ function distributeEnergy(world: VoxelWorld, component: string[], events: Automa
     const [x, y, z] = parseWorldKey(key);
     const id = world.getBlock(x, y, z);
     if (id === BlockId.ThermalGenerator && state.enabled) {
-      if (state.progress <= 0 && itemCount(state.storage, itemForBlock(BlockId.CoalOre)) > 0) {
-        addItem(state.storage, itemForBlock(BlockId.CoalOre), -1);
+      const fuelItem: ItemId = itemCount(state.storage, "part:coal") > 0 ? "part:coal" : itemForBlock(BlockId.CoalOre);
+      if (state.progress <= 0 && itemCount(state.storage, fuelItem) > 0) {
+        addItem(state.storage, fuelItem, -1);
         state.progress = 80;
         events.push({ type: "fuel", position: { x, y, z } });
       }

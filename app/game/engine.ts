@@ -35,9 +35,11 @@ import {
   PlayerSnapshot,
   Recipe,
   SAVE_VERSION,
+  Vec3Data,
   WorldSave,
+  WORLD_HEIGHT,
 } from "./types";
-import { chunkKey, floorDiv, VoxelWorld } from "./world";
+import { chunkKey, EMBERDEEP_OFFSET, floorDiv, isEmberdeepCoordinate, VoxelWorld } from "./world";
 
 export interface MachinePanelData {
   key: string;
@@ -46,12 +48,27 @@ export interface MachinePanelData {
   inputs: number;
 }
 
+export interface TradeOffer {
+  id: string;
+  name: string;
+  cost: { item: ItemId; count: number };
+  reward: { item: ItemId; count: number };
+  note: string;
+}
+
+export interface TradePanelData {
+  mobId: string;
+  name: string;
+  offers: TradeOffer[];
+}
+
 export interface GameEngineCallbacks {
   onHud: (state: HudState) => void;
   onInventory: () => void;
   onPause: () => void;
   onGuide: () => void;
   onMachine: (data: MachinePanelData) => void;
+  onTrade: (data: TradePanelData) => void;
   onToast: (message: string) => void;
 }
 
@@ -161,13 +178,20 @@ function createStarField(seed: number): THREE.Points {
 }
 
 function disposeObject(object: THREE.Object3D, disposeMaterials = false): void {
+  const disposeMaterial = (material: THREE.Material) => {
+    if (material.userData.ownedMap && "map" in material) {
+      const map = (material as THREE.MeshLambertMaterial).map;
+      map?.dispose();
+    }
+    material.dispose();
+  };
   object.traverse((child) => {
     if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
       child.geometry.dispose();
       if (disposeMaterials) {
         const material = child.material;
-        if (Array.isArray(material)) material.forEach((item) => item.dispose());
-        else material.dispose();
+        if (Array.isArray(material)) material.forEach(disposeMaterial);
+        else disposeMaterial(material);
       }
     }
   });
@@ -198,6 +222,14 @@ function formatFrontierTime(timeOfDay: number): string {
   return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")} · ${phase}`;
 }
 
+const WAYFARER_OFFERS: TradeOffer[] = [
+  { id: "coal-for-iron", name: "Foundry Bundle", cost: { item: "part:coal", count: 10 }, reward: { item: "part:iron-ingot", count: 2 }, note: "Useful when the nearest iron seam is still out of reach." },
+  { id: "iron-for-gold", name: "Gilded Exchange", cost: { item: "part:iron-ingot", count: 4 }, reward: { item: "part:gold-ingot", count: 1 }, note: "Trade practical metal for a rarer conductor." },
+  { id: "gold-for-diamond", name: "Lapidary Parcel", cost: { item: "part:gold-ingot", count: 3 }, reward: { item: "part:diamond", count: 1 }, note: "A cut crystal from a distant Wayfarer mine." },
+  { id: "fruit-for-fiber", name: "Weaver's Roll", cost: { item: "food:starfruit", count: 5 }, reward: { item: "part:soft-fiber", count: 3 }, note: "Warm fiber for beds, fleece, and journals." },
+  { id: "diamond-for-rift", name: "Riftwright's Core", cost: { item: "part:diamond", count: 4 }, reward: { item: "part:rift-core", count: 1 }, note: "The stabilizer required to craft a Rift Gate." },
+];
+
 function blockVisualBounds(id: BlockId): { x: number; y: number; z: number } {
   const definition = BLOCKS[id];
   const shape = definition.shape ?? "cube";
@@ -206,6 +238,9 @@ function blockVisualBounds(id: BlockId): { x: number; y: number; z: number } {
   if (shape === "cross") return { x: 0.92, y: 0.96, z: 0.92 };
   if (shape === "torch" || shape === "rod") return { x: 0.4, y: 0.96, z: 0.4 };
   if (shape === "slab") return { x: 1, y: definition.collisionHeight ?? 0.5, z: 1 };
+  if (shape === "bed") return { x: 1, y: 0.58, z: 1 };
+  if (shape === "portal" || shape === "door") return { x: 0.94, y: 1, z: 0.2 };
+  if (shape === "fence") return { x: 0.76, y: 1, z: 0.76 };
   if (shape === "column") return { x: 0.64, y: 1, z: 0.64 };
   if (shape === "ladder") return { x: 0.72, y: 1, z: 0.16 };
   return { x: 1, y: 1, z: 1 };
@@ -220,6 +255,61 @@ function paintBlockUv(geometry: THREE.BufferGeometry, id: BlockId): void {
     attribute.setXY(index, uv.u0 + x * (uv.u1 - uv.u0), uv.v0 + y * (uv.v1 - uv.v0));
   }
   attribute.needsUpdate = true;
+}
+
+const CREATURE_PALETTES: Record<MobState["kind"], { base: string; accent: string; mark: string; eye: number }> = {
+  glowgrazer: { base: "#426c70", accent: "#8ce6d4", mark: "#315056", eye: 0xffe59a },
+  mireling: { base: "#405e55", accent: "#86bd91", mark: "#263f3b", eye: 0xffca5c },
+  cinderling: { base: "#713c38", accent: "#f48a45", mark: "#2b2428", eye: 0xffe073 },
+  thornback: { base: "#3e5038", accent: "#9db45c", mark: "#293628", eye: 0xffc85e },
+  nightwisp: { base: "#343e5c", accent: "#829dff", mark: "#202943", eye: 0xd5eeff },
+  wayfarer: { base: "#69526c", accent: "#c99177", mark: "#3c344c", eye: 0xf2d39f },
+};
+
+function createCreatureTexture(kind: MobState["kind"], accent = false): THREE.CanvasTexture {
+  const palette = CREATURE_PALETTES[kind];
+  const canvas = document.createElement("canvas");
+  canvas.width = 16;
+  canvas.height = 16;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Canvas textures are unavailable in this browser.");
+  context.imageSmoothingEnabled = false;
+  context.fillStyle = accent ? palette.accent : palette.base;
+  context.fillRect(0, 0, 16, 16);
+  context.fillStyle = accent ? palette.base : palette.mark;
+
+  if (kind === "glowgrazer") {
+    for (const [x, y, w] of [[1, 2, 4], [10, 1, 3], [6, 7, 4], [0, 12, 3], [12, 11, 4]]) context.fillRect(x, y, w, 2);
+  } else if (kind === "mireling") {
+    for (let y = 1; y < 16; y += 4) for (let x = (y / 4) % 2 ? 0 : 2; x < 16; x += 5) context.fillRect(x, y, 3, 2);
+  } else if (kind === "cinderling") {
+    for (const [x, y] of [[2, 2], [11, 1], [6, 5], [13, 8], [3, 11], [9, 13]]) {
+      context.fillRect(x, y, 2, 1);
+      context.fillRect(x + 1, y + 1, 1, 2);
+    }
+    context.fillStyle = "#ffbd59";
+    for (const [x, y] of [[1, 7], [8, 2], [12, 13], [5, 14]]) context.fillRect(x, y, 1, 1);
+  } else if (kind === "thornback") {
+    for (let x = 1; x < 16; x += 5) context.fillRect(x, 0, 2, 16);
+    context.fillStyle = palette.accent;
+    for (const [x, y] of [[3, 3], [11, 6], [6, 12]]) context.fillRect(x, y, 2, 2);
+  } else if (kind === "nightwisp") {
+    for (const [x, y, w] of [[2, 2, 3], [8, 1, 5], [0, 8, 4], [6, 11, 3], [12, 13, 3]]) context.fillRect(x, y, w, 1);
+    context.fillStyle = "#b8c8ff";
+    for (const [x, y] of [[5, 4], [11, 7], [3, 13]]) context.fillRect(x, y, 1, 1);
+  } else {
+    for (let y = 2; y < 16; y += 4) {
+      context.fillRect(0, y, 16, 1);
+      for (let x = y % 3; x < 16; x += 5) context.fillRect(x, y + 1, 1, 2);
+    }
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+  return texture;
 }
 
 export class GameEngine {
@@ -286,6 +376,8 @@ export class GameEngine {
   private mobSpawnTimer = 4;
   private placeCooldown = 0;
   private attackCooldown = 0;
+  private riftCooldown = 0;
+  private hazardCooldown = 0;
   private interactLatch = false;
   private miningKey = "";
   private miningProgress = 0;
@@ -303,6 +395,7 @@ export class GameEngine {
   private readonly breakMaterials: THREE.MeshBasicMaterial[];
   private readonly sun: THREE.DirectionalLight;
   private readonly hemisphere: THREE.HemisphereLight;
+  private readonly ambient: THREE.AmbientLight;
   private readonly starField: THREE.Points;
   private readonly moonDisc: THREE.Mesh;
   private readonly sunDisc: THREE.Mesh;
@@ -420,6 +513,7 @@ export class GameEngine {
     this.scene.add(this.chunkRoot, this.entityRoot, this.indicatorRoot, this.remotePlayerRoot, this.camera);
 
     this.hemisphere = new THREE.HemisphereLight(0xbce9ff, 0x5a4a36, 1.35);
+    this.ambient = new THREE.AmbientLight(0x91a9c9, 0.28);
     this.sun = new THREE.DirectionalLight(0xfff1c2, 1.75);
     this.sun.position.set(40, 64, 25);
     this.sun.castShadow = this.settings.graphics === "high";
@@ -428,7 +522,7 @@ export class GameEngine {
     this.sun.shadow.camera.right = 32;
     this.sun.shadow.camera.top = 32;
     this.sun.shadow.camera.bottom = -32;
-    this.scene.add(this.hemisphere, this.sun, this.sun.target);
+    this.scene.add(this.hemisphere, this.ambient, this.sun, this.sun.target);
 
     this.starField = createStarField(this.world.seed);
     this.moonDisc = new THREE.Mesh(
@@ -532,6 +626,8 @@ export class GameEngine {
     this.input.lookX = 0;
     this.input.lookY = 0;
     this.attackCooldown = Math.max(0, this.attackCooldown - dt);
+    this.riftCooldown = Math.max(0, this.riftCooldown - dt);
+    this.hazardCooldown = Math.max(0, this.hazardCooldown - dt);
 
     const sprinting = this.input.sprint && (this.mode === "creative" || (this.stamina > 1 && this.hunger > 4));
     const physicsInput = { ...this.input, sprint: sprinting };
@@ -539,6 +635,14 @@ export class GameEngine {
       const damage = Math.max(0, (fallDistance - 3.2) * 6.5);
       if (damage > 0) this.damage(damage, "Hard landing");
     }, this.settings.autoJump);
+    if (
+      this.mode === "survival" &&
+      this.world.getBlock(this.physics.position.x, this.physics.position.y + 0.12, this.physics.position.z) === BlockId.Emberflow &&
+      this.hazardCooldown <= 0
+    ) {
+      this.hazardCooldown = 0.9;
+      this.damage(8, "Emberflow burn");
+    }
     if (this.mode === "creative") {
       this.health = 100;
       this.hunger = 100;
@@ -604,7 +708,7 @@ export class GameEngine {
       this.mobSpawnTimer = 3.5;
       if (this.network.role !== "guest") this.spawnNightMob();
     }
-    this.syncEntityMeshes();
+    this.syncEntityMeshes(dt);
     this.updateRemotePlayerMeshes();
     this.updateDayNight(dt);
 
@@ -719,16 +823,22 @@ export class GameEngine {
     const definition = BLOCKS[id];
     if (!definition.collectible) return false;
     if (definition.tool !== "pick") return true;
-    const woodenTier = ["tool:wood-pick", "tool:rough-pick", "tool:copper-pick", "tool:crystal-pick"];
-    const stoneTier = ["tool:rough-pick", "tool:copper-pick", "tool:crystal-pick"];
-    const copperTier = ["tool:copper-pick", "tool:crystal-pick"];
+    const woodenTier = ["tool:wood-pick", "tool:rough-pick", "tool:copper-pick", "tool:iron-pick", "tool:diamond-pick", "tool:crystal-pick"];
+    const stoneTier = ["tool:rough-pick", "tool:copper-pick", "tool:iron-pick", "tool:diamond-pick", "tool:crystal-pick"];
+    const copperTier = ["tool:copper-pick", "tool:iron-pick", "tool:diamond-pick", "tool:crystal-pick"];
+    const ironTier = ["tool:iron-pick", "tool:diamond-pick", "tool:crystal-pick"];
+    if ([BlockId.GoldOre, BlockId.DiamondOre, BlockId.Riftstone].includes(id)) return ironTier.includes(selected ?? "");
     if ([BlockId.AetherCrystal, BlockId.MoonshardOre].includes(id)) return copperTier.includes(selected ?? "");
-    if ([BlockId.CopperOre, BlockId.Cinnabar, BlockId.SulfurStone].includes(id)) return stoneTier.includes(selected ?? "");
+    if ([BlockId.CopperOre, BlockId.IronOre, BlockId.FluxstoneOre, BlockId.Cinnabar, BlockId.SulfurStone].includes(id)) return stoneTier.includes(selected ?? "");
     return woodenTier.includes(selected ?? "");
   }
 
   private blockDrop(id: BlockId): ItemId {
-    return id === BlockId.StarBloom ? "food:starfruit" : itemForBlock(id);
+    if (id === BlockId.StarBloom) return "food:starfruit";
+    if (id === BlockId.CoalOre) return "part:coal";
+    if (id === BlockId.DiamondOre) return "part:diamond";
+    if (id === BlockId.FluxstoneOre) return "part:flux-dust";
+    return itemForBlock(id);
   }
 
   private mineTarget(dt: number): void {
@@ -770,9 +880,11 @@ export class GameEngine {
     if (this.mode === "survival" && canHarvest && this.network.role !== "guest") {
       this.spawnDrop(this.blockDrop(id), 1, { x: x + 0.5, y: y - 0.05, z: z + 0.5 });
     } else if (this.mode === "survival" && !canHarvest) {
-      const requirement = id === BlockId.AetherCrystal || id === BlockId.MoonshardOre
+      const requirement = [BlockId.GoldOre, BlockId.DiamondOre, BlockId.Riftstone].includes(id)
+        ? "An Iron Pick or better is required to harvest that deep material."
+        : id === BlockId.AetherCrystal || id === BlockId.MoonshardOre
         ? "A Copper Pick or better is required to harvest that crystal."
-        : id === BlockId.CopperOre || id === BlockId.Cinnabar || id === BlockId.SulfurStone
+        : [BlockId.CopperOre, BlockId.IronOre, BlockId.FluxstoneOre, BlockId.Cinnabar, BlockId.SulfurStone].includes(id)
           ? "A Roughstone Pick or better is required to harvest that ore."
           : "An Emberwood Pick or better is required to collect that block.";
       this.callbacks.onToast(requirement);
@@ -917,6 +1029,7 @@ export class GameEngine {
     mob.velocity.z += (dz / distance) * stats.knockback;
     mob.velocity.y = Math.max(mob.velocity.y, stats.knockback * 0.34);
     mob.yaw = Math.atan2(dx, dz);
+    this.audio.playCreature(mob.kind, "hurt", distance);
     if (mob.health > 0) return;
 
     const definition = MOB_DEFINITIONS[mob.kind];
@@ -945,6 +1058,18 @@ export class GameEngine {
   }
 
   private interactTarget(): void {
+    if (this.targetedMob?.kind === "wayfarer") {
+      this.audio.playCreature("wayfarer", "idle", Math.hypot(
+        this.targetedMob.position.x - this.physics.position.x,
+        this.targetedMob.position.z - this.physics.position.z,
+      ));
+      this.callbacks.onTrade({
+        mobId: this.targetedMob.id,
+        name: `Wayfarer ${this.targetedMob.id.slice(-3).toUpperCase()}`,
+        offers: WAYFARER_OFFERS.map((offer) => ({ ...offer, cost: { ...offer.cost }, reward: { ...offer.reward } })),
+      });
+      return;
+    }
     if (!this.currentHit) return;
     const { x, y, z } = this.currentHit.block;
     const key = worldKey(x, y, z);
@@ -989,6 +1114,22 @@ export class GameEngine {
       this.callbacks.onInventory();
       return;
     }
+    if (id === BlockId.FrontierBed) {
+      this.sleepThroughNight();
+      return;
+    }
+    if (id === BlockId.RiftGate) {
+      this.travelThroughRift({ x, y, z });
+      return;
+    }
+    if (id === BlockId.TradePost) {
+      this.callbacks.onTrade({
+        mobId: `post:${key}`,
+        name: "Wayfarer Market",
+        offers: WAYFARER_OFFERS.map((offer) => ({ ...offer, cost: { ...offer.cost }, reward: { ...offer.reward } })),
+      });
+      return;
+    }
     if (id === BlockId.RelicCache) {
       const moonshards = 2 + Math.floor(this.wildlifeRandom() * 3);
       const bolts = 4 + Math.floor(this.wildlifeRandom() * 5);
@@ -1007,6 +1148,68 @@ export class GameEngine {
     if (inspection) {
       this.callbacks.onMachine({ key, ...inspection, state: { ...inspection.state, storage: cloneInventory(inspection.state.storage) } });
     }
+  }
+
+  private sleepThroughNight(): void {
+    const night = this.timeOfDay < 0.22 || this.timeOfDay > 0.78;
+    if (!night) {
+      this.callbacks.onToast("The Frontier Bed can be used after nightfall.");
+      return;
+    }
+    if (this.network.role === "guest") {
+      this.network.send({ type: "request-sleep" });
+      this.callbacks.onToast("Sleep request sent to the host.");
+      return;
+    }
+    this.timeOfDay = 0.255;
+    this.dayCount += 1;
+    this.nightAnnouncementDay = 0;
+    this.health = Math.min(100, this.health + 12);
+    this.objective = `Day ${this.dayCount}: morning has returned. Explore, trade, and build.`;
+    this.audio.play("craft");
+    this.callbacks.onToast(`You slept through the night. Dawn begins Day ${this.dayCount}.`);
+  }
+
+  private buildRiftArrival(x: number, z: number): Vec3Data {
+    const surface = this.world.getHeight(x, z);
+    const floorY = Math.max(2, Math.min(WORLD_HEIGHT - 5, surface));
+    for (let dx = -2; dx <= 2; dx += 1) {
+      for (let dz = -2; dz <= 2; dz += 1) {
+        this.applyBlockChange(x + dx, floorY, z + dz, BlockId.Riftstone);
+        for (let dy = 1; dy <= 3; dy += 1) this.applyBlockChange(x + dx, floorY + dy, z + dz, BlockId.Air);
+      }
+    }
+    this.applyBlockChange(x, floorY + 1, z, BlockId.RiftGate);
+    return { x: x + 1.5, y: floorY + 1.01, z: z + 0.5 };
+  }
+
+  private riftDestination(origin: Vec3Data): Vec3Data {
+    const fromEmberdeep = isEmberdeepCoordinate(origin.x);
+    const x = Math.floor(fromEmberdeep
+      ? origin.x > 0 ? origin.x - EMBERDEEP_OFFSET : origin.x + EMBERDEEP_OFFSET
+      : origin.x + EMBERDEEP_OFFSET);
+    const z = Math.floor(origin.z);
+    return this.buildRiftArrival(x, z);
+  }
+
+  private travelThroughRift(origin: Vec3Data): void {
+    if (this.riftCooldown > 0) return;
+    this.riftCooldown = 2;
+    if (this.network.role === "guest") {
+      this.network.send({ type: "request-rift", origin });
+      this.callbacks.onToast("The host is stabilizing your rift route…");
+      return;
+    }
+    const destination = this.riftDestination(origin);
+    this.physics.position.set(destination.x, destination.y, destination.z);
+    this.physics.velocity.set(0, 0, 0);
+    this.queueNearbyChunks(true);
+    const entering = isEmberdeepCoordinate(destination.x);
+    this.audio.play("rift");
+    this.objective = entering
+      ? "The Emberdeep: gather Riftwood, rare ores, and Ember Glowstone—avoid the molten currents."
+      : `Day ${this.dayCount}: returned from the Emberdeep.`;
+    this.callbacks.onToast(entering ? "The Rift Gate opens into the Emberdeep." : "You return to the living frontier.");
   }
 
   private rotateTargetedMachine(): void {
@@ -1206,16 +1409,28 @@ export class GameEngine {
 
   private spawnNightMob(): void {
     const night = this.timeOfDay < 0.22 || this.timeOfDay > 0.78;
-    if (!night || this.world.mobs.length >= 30) return;
+    const anchors = [
+      { x: this.physics.position.x, z: this.physics.position.z },
+      ...Array.from(this.remotePeerPlayers.values(), (player) => ({ x: player.position.x, z: player.position.z })),
+    ].filter((position) => night || isEmberdeepCoordinate(position.x));
+    if (anchors.length === 0 || this.world.mobs.length >= 30) return;
+    const anchor = anchors[Math.floor(this.wildlifeRandom() * anchors.length)];
+    const emberdeep = isEmberdeepCoordinate(anchor.x);
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const angle = this.wildlifeRandom() * Math.PI * 2;
       const distance = 18 + this.wildlifeRandom() * 14;
-      const x = Math.floor(this.physics.position.x + Math.cos(angle) * distance) + 0.5;
-      const z = Math.floor(this.physics.position.z + Math.sin(angle) * distance) + 0.5;
+      const x = Math.floor(anchor.x + Math.cos(angle) * distance) + 0.5;
+      const z = Math.floor(anchor.z + Math.sin(angle) * distance) + 0.5;
       const y = this.world.getHeight(x, z) + 1.01;
       const biome = this.world.getBiome(x, z);
       const roll = this.wildlifeRandom();
-      const kind: MobState["kind"] = biome === "Cinder Reach"
+      const kind: MobState["kind"] = emberdeep
+        ? roll < 0.62
+          ? "cinderling"
+          : roll < 0.86
+            ? "nightwisp"
+            : "thornback"
+        : biome === "Cinder Reach"
         ? "cinderling"
         : roll < 0.46
           ? "nightwisp"
@@ -1243,69 +1458,146 @@ export class GameEngine {
   }
 
   private createMobMesh(mob: MobState): THREE.Group {
-    const group = new THREE.Group();
-    const colors: Record<MobState["kind"], [number, number]> = {
-      glowgrazer: [0x496e74, 0x8de2d2],
-      mireling: [0x48625b, 0x8bc2a2],
-      cinderling: [0x8e493d, 0xff9a4c],
-      thornback: [0x44543b, 0xa2bd62],
-      nightwisp: [0x39445f, 0x91a9ff],
-    };
-    const rememberColor = (material: THREE.MeshLambertMaterial) => {
+    const root = new THREE.Group();
+    root.position.set(mob.position.x, mob.position.y, mob.position.z);
+    root.userData.gait = this.wildlifeRandom() * Math.PI * 2;
+    root.userData.voiceTimer = 2 + this.wildlifeRandom() * 7;
+    root.userData.stepTimer = 0;
+    const visual = new THREE.Group();
+    visual.name = "visual";
+    root.add(visual);
+
+    const palette = CREATURE_PALETTES[mob.kind];
+    const rememberColor = (material: THREE.MeshLambertMaterial, ownsMap = false) => {
       material.userData.baseColor = material.color.getHex();
+      material.userData.ownedMap = ownsMap;
       return material;
     };
-    const palette = colors[mob.kind];
-    const bodyMaterial = rememberColor(new THREE.MeshLambertMaterial({ color: palette[0] }));
-    const accentMaterial = rememberColor(new THREE.MeshLambertMaterial({ color: palette[1], emissive: palette[1], emissiveIntensity: mob.kind === "nightwisp" ? 0.72 : 0.14 }));
+    const bodyMaterial = rememberColor(new THREE.MeshLambertMaterial({
+      color: 0xffffff,
+      map: createCreatureTexture(mob.kind),
+      emissive: mob.kind === "nightwisp" ? 0x263b75 : 0x000000,
+      emissiveIntensity: mob.kind === "nightwisp" ? 0.68 : 0,
+    }), true);
+    const accentMaterial = rememberColor(new THREE.MeshLambertMaterial({
+      color: 0xffffff,
+      map: createCreatureTexture(mob.kind, true),
+      emissive: mob.kind === "cinderling" ? 0x7b2e18 : mob.kind === "nightwisp" ? 0x5269d4 : 0x000000,
+      emissiveIntensity: mob.kind === "nightwisp" ? 0.8 : mob.kind === "cinderling" ? 0.38 : 0,
+    }), true);
+    const darkMaterial = rememberColor(new THREE.MeshLambertMaterial({ color: palette.mark }));
+    const eyeMaterial = rememberColor(new THREE.MeshLambertMaterial({
+      color: palette.eye,
+      emissive: palette.eye,
+      emissiveIntensity: mob.kind === "nightwisp" || mob.kind === "cinderling" ? 0.95 : 0.26,
+    }));
+    const addPart = (
+      parent: THREE.Object3D,
+      size: [number, number, number],
+      position: [number, number, number],
+      material: THREE.Material,
+      name = "",
+    ): THREE.Mesh => {
+      const part = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+      part.position.set(...position);
+      part.name = name;
+      part.castShadow = this.settings.graphics === "high";
+      parent.add(part);
+      return part;
+    };
+    const addPivotPart = (
+      name: string,
+      pivotPosition: [number, number, number],
+      size: [number, number, number],
+      material: THREE.Material,
+    ): THREE.Group => {
+      const pivot = new THREE.Group();
+      pivot.name = name;
+      pivot.position.set(...pivotPosition);
+      addPart(pivot, size, [0, -size[1] / 2, 0], material);
+      visual.add(pivot);
+      return pivot;
+    };
+
     if (mob.kind === "nightwisp") {
-      const core = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.64, 0.46), accentMaterial);
-      core.position.y = 0.58;
-      core.rotation.set(0.12, 0.18, 0.08);
-      group.add(core);
+      addPart(visual, [0.62, 0.64, 0.5], [0, 0.68, 0], bodyMaterial, "body").rotation.set(0.06, 0.12, 0.04);
+      addPart(visual, [0.44, 0.22, 0.12], [0, 0.72, -0.29], accentMaterial, "face");
+      for (const x of [-0.13, 0.13]) addPart(visual, [0.08, 0.1, 0.04], [x, 0.75, -0.37], eyeMaterial);
       for (const [index, x] of [-0.24, -0.08, 0.08, 0.24].entries()) {
-        const tendril = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.42 + (index % 2) * 0.13, 0.09), bodyMaterial);
-        tendril.position.set(x, 0.17, 0.05 + Math.abs(x) * 0.3);
-        tendril.userData.baseY = tendril.position.y;
-        tendril.name = `leg-${index}`;
-        group.add(tendril);
+        addPivotPart(`leg-${index}`, [x, 0.42, 0.06 + Math.abs(x) * 0.2], [0.08, 0.4 + (index % 2) * 0.12, 0.08], index % 2 ? accentMaterial : bodyMaterial);
       }
-      return group;
+      addPart(visual, [0.09, 0.09, 0.09], [-0.42, 0.84, 0.02], eyeMaterial);
+      addPart(visual, [0.06, 0.06, 0.06], [0.38, 0.48, 0.08], eyeMaterial);
+      return root;
     }
-    const bodyWidth = mob.kind === "thornback" ? 1.02 : 0.78;
-    const bodyLength = mob.kind === "thornback" ? 1.2 : 1.02;
-    const body = new THREE.Mesh(new THREE.BoxGeometry(bodyWidth, 0.62, bodyLength), bodyMaterial);
-    body.position.y = 0.55;
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.56, 0.56), accentMaterial);
-    head.position.set(0, 0.78, -0.58);
-    group.add(body, head);
-    if (mob.kind === "thornback") {
-      for (const z of [-0.35, 0, 0.35]) {
-        const spike = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.46, 0.14), accentMaterial);
-        spike.position.set(0, 1.02, z);
-        spike.rotation.z = Math.PI / 4;
-        group.add(spike);
+
+    if (mob.kind === "wayfarer") {
+      addPart(visual, [0.56, 0.82, 0.34], [0, 1.02, 0], bodyMaterial, "body");
+      addPart(visual, [0.48, 0.44, 0.46], [0, 1.62, -0.02], accentMaterial, "head");
+      addPart(visual, [0.16, 0.14, 0.12], [0, 1.56, -0.29], accentMaterial, "nose");
+      for (const x of [-0.13, 0.13]) addPart(visual, [0.07, 0.07, 0.035], [x, 1.68, -0.26], eyeMaterial);
+      addPart(visual, [0.64, 0.1, 0.58], [0, 1.9, -0.01], darkMaterial);
+      addPart(visual, [0.45, 0.2, 0.42], [0, 2.01, 0], bodyMaterial);
+      addPart(visual, [0.46, 0.52, 0.18], [0, 1.08, 0.25], darkMaterial, "pack");
+      for (const [index, x] of [-0.18, 0.18].entries()) addPivotPart(`leg-${index}`, [x, 0.62, 0], [0.2, 0.62, 0.22], darkMaterial);
+      for (const [index, x] of [-0.37, 0.37].entries()) addPivotPart(`arm-${index}`, [x, 1.35, 0], [0.15, 0.67, 0.17], accentMaterial);
+      return root;
+    }
+
+    const thornback = mob.kind === "thornback";
+    const bodyWidth = thornback ? 1.02 : mob.kind === "mireling" ? 0.86 : 0.78;
+    const bodyLength = thornback ? 1.2 : mob.kind === "mireling" ? 0.92 : 1.02;
+    addPart(visual, [bodyWidth, 0.58, bodyLength], [0, 0.68, 0.04], bodyMaterial, "body");
+    if (mob.kind === "mireling") addPart(visual, [0.72, 0.24, 0.72], [0, 1.02, 0.13], darkMaterial, "shell");
+    const head = addPart(visual, [0.56, 0.5, 0.54], [0, 0.84, -bodyLength / 2 - 0.18], accentMaterial, "head");
+    head.rotation.x = mob.kind === "mireling" ? -0.08 : 0;
+    addPart(visual, [0.38, 0.22, 0.28], [0, 0.73, -bodyLength / 2 - 0.52], darkMaterial, "muzzle");
+    for (const x of [-0.17, 0.17]) addPart(visual, [0.07, 0.08, 0.04], [x, 0.93, -bodyLength / 2 - 0.465], eyeMaterial);
+
+    if (thornback) {
+      for (const [index, z] of [-0.38, -0.02, 0.34].entries()) {
+        const spike = addPart(visual, [0.13, 0.45 - index * 0.04, 0.13], [0, 1.18, z], accentMaterial);
+        spike.rotation.z = index % 2 ? -0.3 : 0.3;
+      }
+      for (const x of [-0.3, 0.3]) {
+        const cheek = addPart(visual, [0.22, 0.12, 0.18], [x, 0.79, -0.78], accentMaterial);
+        cheek.rotation.z = x < 0 ? -0.38 : 0.38;
       }
     } else if (mob.kind === "glowgrazer") {
-      for (const x of [-0.24, 0.24]) {
-        const horn = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.26, 0.1), accentMaterial);
-        horn.position.set(x, 1.12, -0.62);
-        horn.rotation.z = x < 0 ? -0.45 : 0.45;
-        group.add(horn);
+      for (const x of [-0.22, 0.22]) {
+        const horn = addPart(visual, [0.09, 0.3, 0.09], [x, 1.22, -0.6], accentMaterial);
+        horn.rotation.z = x < 0 ? -0.5 : 0.5;
+        const ear = addPart(visual, [0.22, 0.08, 0.16], [x * 1.42, 1.04, -0.6], bodyMaterial);
+        ear.rotation.z = x < 0 ? -0.26 : 0.26;
+      }
+    } else if (mob.kind === "cinderling") {
+      for (const x of [-0.2, 0, 0.2]) {
+        const crest = addPart(visual, [0.09, 0.28 + (x === 0 ? 0.12 : 0), 0.09], [x, 1.22, -0.48], accentMaterial);
+        crest.rotation.z = x * 0.8;
+      }
+      for (const z of [-0.18, 0.28]) addPart(visual, [0.22, 0.12, 0.22], [0, 1.02, z], accentMaterial);
+    } else {
+      for (const x of [-0.3, 0.3]) {
+        const fin = addPart(visual, [0.28, 0.08, 0.2], [x, 0.78, -0.46], accentMaterial);
+        fin.rotation.z = x < 0 ? -0.5 : 0.5;
       }
     }
+
     let legIndex = 0;
-    for (const x of [-0.27, 0.27]) {
-      for (const z of [-0.32, 0.32]) {
-        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.48, 0.18), bodyMaterial);
-        leg.position.set(x, 0.22, z);
-        leg.userData.baseY = leg.position.y;
-        leg.name = `leg-${legIndex}`;
+    for (const x of [-bodyWidth * 0.3, bodyWidth * 0.3]) {
+      for (const z of [-bodyLength * 0.3, bodyLength * 0.3]) {
+        addPivotPart(`leg-${legIndex}`, [x, 0.53, z], [0.18, 0.52, 0.18], legIndex % 2 ? accentMaterial : bodyMaterial);
         legIndex += 1;
-        group.add(leg);
       }
     }
-    return group;
+    const tail = new THREE.Group();
+    tail.name = "tail";
+    tail.position.set(0, 0.76, bodyLength / 2 + 0.02);
+    const tailLength = thornback ? 0.58 : 0.42;
+    const tailPart = addPart(tail, [0.13, 0.13, tailLength], [0, 0, tailLength / 2], thornback ? accentMaterial : bodyMaterial);
+    tailPart.rotation.x = mob.kind === "glowgrazer" ? -0.25 : 0.08;
+    visual.add(tail);
+    return root;
   }
 
   private updateMobs(dt: number): void {
@@ -1326,7 +1618,7 @@ export class GameEngine {
       }
       const dx = targetPosition.x - mob.position.x;
       const dz = targetPosition.z - mob.position.z;
-      const hostile = !definition.passive && (night || mob.kind === "cinderling");
+      const hostile = !definition.passive && (night || mob.kind === "cinderling" || isEmberdeepCoordinate(mob.position.x));
       mob.targetTimer -= dt;
       mob.attackTimer = Math.max(0, (mob.attackTimer ?? 0) - dt);
       mob.hurtTimer = Math.max(0, (mob.hurtTimer ?? 0) - dt);
@@ -1334,14 +1626,35 @@ export class GameEngine {
       if (hostile && distance < 15) mob.yaw = Math.atan2(-dx, -dz);
       else if (fleeing && distance < 9) mob.yaw = Math.atan2(dx, dz);
       else if (mob.targetTimer <= 0) {
-        mob.targetTimer = 2 + this.wildlifeRandom() * 5;
-        mob.yaw += (this.wildlifeRandom() - 0.5) * Math.PI * 1.3;
+        const activityRoll = this.wildlifeRandom();
+        mob.activity = activityRoll < 0.32 ? "idle" : activityRoll < 0.53 ? "curious" : "wander";
+        mob.targetTimer = mob.activity === "idle" ? 1.4 + this.wildlifeRandom() * 3.2 : 2.4 + this.wildlifeRandom() * 5;
+        mob.yaw += (this.wildlifeRandom() - 0.5) * Math.PI * 1.45;
+      }
+      if (!mob.activity) mob.activity = "wander";
+      if (!hostile && !fleeing && mob.activity === "curious" && distance < 7) mob.yaw = Math.atan2(-dx, -dz);
+
+      let returningHome = false;
+      if (mob.kind === "wayfarer" && mob.home) {
+        const homeDx = mob.home.x - mob.position.x;
+        const homeDz = mob.home.z - mob.position.z;
+        if (Math.hypot(homeDx, homeDz) > 7) {
+          mob.yaw = Math.atan2(-homeDx, -homeDz);
+          returningHome = true;
+          mob.activity = "wander";
+        }
       }
       const speed = fleeing
         ? definition.speed * 1.45
         : hostile && distance < 15
           ? definition.speed
-          : Math.min(0.74, definition.speed * 0.42);
+          : returningHome
+            ? definition.speed * 0.78
+            : mob.activity === "idle"
+              ? 0
+              : mob.activity === "curious"
+                ? distance > 3.2 ? Math.min(0.54, definition.speed * 0.34) : 0
+                : Math.min(0.78, definition.speed * 0.44);
       let desiredX = -Math.sin(mob.yaw) * speed;
       let desiredZ = -Math.cos(mob.yaw) * speed;
       for (const other of this.world.mobs) {
@@ -1362,7 +1675,7 @@ export class GameEngine {
       }
       const desiredY = Math.max(-1.4, Math.min(1.4, (targetPosition.y - mob.position.y) * 0.65));
       const movement = moveMobWithCollision(this.world, mob, dt, desiredX, desiredZ, desiredY);
-      if (movement.blocked) {
+      if (movement.blocked && mob.velocity.y <= 0.1) {
         mob.yaw += Math.PI * (0.45 + this.wildlifeRandom() * 0.45);
         mob.targetTimer = 0.6;
       }
@@ -1370,13 +1683,14 @@ export class GameEngine {
       if (hostile && distance < definition.reach && (mob.attackTimer ?? 0) <= 0) {
         mob.attackTimer = 1.45 + this.wildlifeRandom() * 0.55;
         const source = `${definition.name} attack`;
+        if (!targetPeerId) this.audio.playCreature(mob.kind, "attack", distance);
         if (targetPeerId) this.network.send({ type: "damage", amount: definition.damage, source }, targetPeerId);
         else this.damage(definition.damage, source);
       }
     }
   }
 
-  private syncEntityMeshes(): void {
+  private syncEntityMeshes(dt: number): void {
     const mobIds = new Set(this.world.mobs.map((mob) => mob.id));
     for (const mob of this.world.mobs) {
       let mesh = this.mobMeshes.get(mob.id);
@@ -1388,9 +1702,37 @@ export class GameEngine {
       const motion = Math.hypot(mob.velocity.x, mob.velocity.z);
       const now = performance.now() / 1000;
       const hover = mob.kind === "nightwisp" ? 0.16 + Math.sin(now * 3.4 + mob.id.length) * 0.12 : 0;
-      mesh.position.set(mob.position.x, mob.position.y + hover, mob.position.z);
-      mesh.rotation.y = mob.yaw;
-      mesh.scale.setScalar((mob.hurtTimer ?? 0) > 0 ? 1.06 : 1);
+      const targetPosition = new THREE.Vector3(mob.position.x, mob.position.y, mob.position.z);
+      mesh.position.lerp(targetPosition, 1 - Math.exp(-15 * dt));
+      const yawDelta = Math.atan2(Math.sin(mob.yaw - mesh.rotation.y), Math.cos(mob.yaw - mesh.rotation.y));
+      mesh.rotation.y += yawDelta * (1 - Math.exp(-11 * dt));
+      const targetScale = (mob.hurtTimer ?? 0) > 0 ? 1.06 : 1;
+      mesh.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 1 - Math.exp(-18 * dt));
+      mesh.userData.gait = Number(mesh.userData.gait ?? 0) + dt * (2.7 + Math.min(3.8, motion * 2.7));
+      mesh.userData.voiceTimer = Number(mesh.userData.voiceTimer ?? 4) - dt;
+      mesh.userData.stepTimer = Number(mesh.userData.stepTimer ?? 0) - dt;
+      const gait = Number(mesh.userData.gait);
+      const movementBlend = THREE.MathUtils.clamp(motion / 1.25, 0, 1);
+      const airborne = Math.abs(mob.velocity.y) > 0.18;
+      const localDistance = Math.hypot(
+        mob.position.x - this.physics.position.x,
+        mob.position.y - this.physics.position.y,
+        mob.position.z - this.physics.position.z,
+      );
+      if (mesh.userData.voiceTimer <= 0) {
+        if (localDistance < 22) this.audio.playCreature(mob.kind, "idle", localDistance);
+        mesh.userData.voiceTimer = (mob.kind === "wayfarer" ? 5 : 7) + this.wildlifeRandom() * 10;
+      }
+      if (
+        mob.kind !== "nightwisp" &&
+        motion > 0.58 &&
+        !airborne &&
+        localDistance < 12 &&
+        mesh.userData.stepTimer <= 0
+      ) {
+        this.audio.playCreature(mob.kind, "step", localDistance);
+        mesh.userData.stepTimer = mob.kind === "thornback" ? 0.52 : 0.4;
+      }
       let legIndex = 0;
       mesh.traverse((child) => {
         if (child instanceof THREE.Mesh) {
@@ -1404,9 +1746,27 @@ export class GameEngine {
           }
         }
         if (child.name.startsWith("leg-")) {
-          const baseY = Number(child.userData.baseY ?? child.position.y);
-          child.position.y = baseY + Math.sin(now * (5 + motion) + legIndex * Math.PI) * Math.min(0.09, motion * 0.035);
+          const phase = gait + legIndex * Math.PI;
+          const targetSwing = airborne
+            ? (legIndex % 2 === 0 ? -0.38 : 0.38)
+            : Math.sin(phase) * movementBlend * 0.62;
+          child.rotation.x += (targetSwing - child.rotation.x) * (1 - Math.exp(-16 * dt));
           legIndex += 1;
+        } else if (child.name.startsWith("arm-")) {
+          const armIndex = Number(child.name.slice(4)) || 0;
+          const targetSwing = Math.sin(gait + (armIndex + 1) * Math.PI) * movementBlend * 0.48;
+          child.rotation.x += (targetSwing - child.rotation.x) * (1 - Math.exp(-14 * dt));
+        } else if (child.name === "tail") {
+          const targetSwing = Math.sin(now * 2.4 + mob.id.length) * (0.16 + movementBlend * 0.22);
+          child.rotation.y += (targetSwing - child.rotation.y) * (1 - Math.exp(-9 * dt));
+        } else if (child.name === "head") {
+          const curious = mob.activity === "curious" || mob.kind === "wayfarer";
+          const targetTurn = curious ? Math.sin(now * 0.8 + mob.id.length) * 0.14 : 0;
+          child.rotation.y += (targetTurn - child.rotation.y) * (1 - Math.exp(-5 * dt));
+        } else if (child.name === "visual") {
+          const groundedBob = airborne ? 0.035 : Math.abs(Math.sin(gait * 2)) * 0.035 * movementBlend;
+          child.position.y = hover + groundedBob;
+          child.rotation.z = Math.sin(gait) * movementBlend * 0.018;
         }
       });
     }
@@ -1531,21 +1891,25 @@ export class GameEngine {
         this.callbacks.onToast(`Night ${this.dayCount} has fallen. Hostile creatures are active.`);
       }
     }
+    const inEmberdeep = isEmberdeepCoordinate(this.physics.position.x);
     const angle = (this.timeOfDay - 0.25) * Math.PI * 2;
     const solarHeight = Math.sin(angle);
     const daylight = THREE.MathUtils.smoothstep(solarHeight, -0.2, 0.16);
     const dayColor = new THREE.Color(0x8fc8d8);
-    const nightColor = new THREE.Color(0x081122);
+    const nightColor = new THREE.Color(0x263957);
     const twilightColor = new THREE.Color(0xc17774);
     const sky = nightColor.clone().lerp(dayColor, daylight);
     const twilight = Math.max(0, 1 - Math.abs(solarHeight) / 0.34) * 0.46;
     sky.lerp(twilightColor, twilight);
+    if (inEmberdeep) sky.setHex(0x4a2838);
     this.scene.background = sky;
     if (this.scene.fog) this.scene.fog.color.copy(sky);
-    this.hemisphere.color.setHex(daylight > 0.28 ? 0xbce9ff : 0x657cb8);
-    this.hemisphere.groundColor.setHex(daylight > 0.28 ? 0x5a4a36 : 0x20233a);
-    this.hemisphere.intensity = 0.14 + daylight * 1.22;
-    this.sun.intensity = 0.025 + daylight * 1.82;
+    this.hemisphere.color.setHex(inEmberdeep ? 0xffa06c : daylight > 0.28 ? 0xbce9ff : 0x8299c9);
+    this.hemisphere.groundColor.setHex(inEmberdeep ? 0x351a23 : daylight > 0.28 ? 0x5a4a36 : 0x343b52);
+    this.hemisphere.intensity = inEmberdeep ? 0.94 : 0.56 + daylight * 0.86;
+    this.ambient.color.setHex(inEmberdeep ? 0xff8a62 : 0x91a9c9);
+    this.ambient.intensity = inEmberdeep ? 0.42 : 0.26 + daylight * 0.16;
+    this.sun.intensity = inEmberdeep ? 0.24 : 0.12 + daylight * 1.7;
     const orbitRadius = 145;
     const orbitX = Math.cos(angle) * orbitRadius;
     const orbitY = solarHeight * orbitRadius;
@@ -1556,16 +1920,16 @@ export class GameEngine {
     );
     this.sun.target.position.set(this.physics.position.x, this.physics.position.y, this.physics.position.z);
     this.sunDisc.position.copy(this.sun.position);
-    this.sunDisc.visible = solarHeight > -0.12;
+    this.sunDisc.visible = !inEmberdeep && solarHeight > -0.12;
     this.moonDisc.position.set(
       this.physics.position.x - orbitX,
       this.physics.position.y - orbitY,
       this.physics.position.z - 44,
     );
-    this.moonDisc.visible = solarHeight < 0.18;
+    this.moonDisc.visible = !inEmberdeep && solarHeight < 0.18;
     this.starField.position.set(this.physics.position.x, this.physics.position.y, this.physics.position.z);
     const starMaterial = this.starField.material as THREE.PointsMaterial;
-    starMaterial.opacity = Math.max(0, 1 - daylight * 1.35);
+    starMaterial.opacity = inEmberdeep ? 0 : Math.max(0, 1 - daylight * 1.35);
   }
 
   private damage(amount: number, source: string): void {
@@ -1662,6 +2026,46 @@ export class GameEngine {
       this.collectItem(message.item, message.count);
       this.audio.play("click");
       this.callbacks.onToast(`Collected ${message.count} × ${itemName(message.item)}.`);
+    } else if (message.type === "request-sleep" && this.network.role === "host") {
+      const night = this.timeOfDay < 0.22 || this.timeOfDay > 0.78;
+      if (!night) {
+        this.network.send({ type: "toast", text: "The Frontier Bed can only be used after nightfall." }, peerId);
+        return;
+      }
+      this.timeOfDay = 0.255;
+      this.dayCount += 1;
+      this.nightAnnouncementDay = 0;
+      this.objective = `Day ${this.dayCount}: morning has returned. Explore, trade, and build.`;
+      this.network.send({ type: "toast", text: `You slept through the night. Dawn begins Day ${this.dayCount}.` }, peerId);
+      this.callbacks.onToast(`${peerId.slice(-6)} slept through the night.`);
+    } else if (message.type === "request-rift" && this.network.role === "host") {
+      const player = this.remotePeerPlayers.get(peerId);
+      const originBlock = this.world.getBlock(message.origin.x, message.origin.y, message.origin.z);
+      const closeEnough = player && Math.hypot(
+        player.position.x - message.origin.x,
+        player.position.y - message.origin.y,
+        player.position.z - message.origin.z,
+      ) < 5;
+      if (!closeEnough || originBlock !== BlockId.RiftGate) {
+        this.network.send({ type: "toast", text: "The rift route could not be verified." }, peerId);
+        return;
+      }
+      const destination = this.riftDestination(message.origin);
+      const entering = isEmberdeepCoordinate(destination.x);
+      this.network.send({
+        type: "teleport",
+        position: destination,
+        text: entering ? "The Rift Gate opens into the Emberdeep." : "You return to the living frontier.",
+      }, peerId);
+    } else if (message.type === "teleport" && this.network.role === "guest") {
+      this.physics.position.set(message.position.x, message.position.y, message.position.z);
+      this.physics.velocity.set(0, 0, 0);
+      this.queueNearbyChunks(true);
+      this.audio.play("rift");
+      this.objective = isEmberdeepCoordinate(message.position.x)
+        ? "The Emberdeep: gather Riftwood, rare ores, and Ember Glowstone—avoid the molten currents."
+        : `Day ${this.dayCount}: returned from the Emberdeep.`;
+      this.callbacks.onToast(message.text);
     } else if (message.type === "player") {
       this.remotePlayers.set(message.player.id, message.player);
       this.remotePeerPlayers.set(peerId, message.player);
@@ -1842,6 +2246,29 @@ export class GameEngine {
     }
     if (id === BlockId.Fabricator && ["flux-coil", "logic-wafer", "gear"].includes(value)) state.recipe = value;
     this.broadcastMachine(key, state);
+  }
+
+  trade(mobId: string, offerId: string): boolean {
+    const offer = WAYFARER_OFFERS.find((candidate) => candidate.id === offerId);
+    if (!offer) return false;
+    if (!mobId.startsWith("post:")) {
+      const merchant = this.world.mobs.find((mob) => mob.id === mobId && mob.kind === "wayfarer");
+      if (!merchant || Math.hypot(merchant.position.x - this.physics.position.x, merchant.position.z - this.physics.position.z) > 6) {
+        this.callbacks.onToast("That Wayfarer is no longer close enough to trade.");
+        return false;
+      }
+    }
+    if (this.mode === "survival" && !itemAvailable(this.inventory, offer.cost.item, offer.cost.count)) {
+      this.callbacks.onToast(`You need ${offer.cost.count} ${itemName(offer.cost.item)}.`);
+      return false;
+    }
+    if (this.mode === "survival") changeItem(this.inventory, offer.cost.item, -offer.cost.count);
+    this.collectItem(offer.reward.item, offer.reward.count);
+    this.clearDepletedHotbar();
+    this.audio.play("trade");
+    this.callbacks.onToast(`Trade complete · ${offer.reward.count} ${itemName(offer.reward.item)}.`);
+    this.emitHud();
+    return true;
   }
 
   assignHotbar(slot: number, item: ItemId): void {

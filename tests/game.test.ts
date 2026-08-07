@@ -7,7 +7,7 @@ import { mobIntersectsSolid, mobWaterImmersion, moveMobWithCollision, resolveMob
 import { PlayerPhysics } from "../app/game/physics";
 import { decodeWorldKey, encodeWorldKey } from "../app/game/save";
 import { BlockId, CHUNK_SIZE, InputFrame, MobState, SAVE_VERSION, WorldSave } from "../app/game/types";
-import { VoxelWorld } from "../app/game/world";
+import { EMBERDEEP_OFFSET, isVillageChunk, VoxelWorld } from "../app/game/world";
 
 test("procedural terrain is deterministic for a seed", () => {
   const first = new VoxelWorld("copper skies");
@@ -371,4 +371,121 @@ test("the Emberwood tool tier establishes early survival progression", () => {
   const woodenTools = ["wood-pick", "wood-hatchet", "wood-spade", "wood-club"];
   for (const id of woodenTools) assert.ok(RECIPES.some((recipe) => recipe.id === id), `missing recipe ${id}`);
   assert.ok(RECIPES.find((recipe) => recipe.id === "rough-pick")!.inputs[itemForBlock(BlockId.Stone)] > 0);
+});
+
+test("surface buoyancy and shore assist let a swimmer leave deep water without jumping", () => {
+  const world = new VoxelWorld("shore exit bench");
+  for (let x = -4; x <= 7; x += 1) {
+    for (let z = -3; z <= 3; z += 1) {
+      world.setBlock(x, 39, z, BlockId.Stone);
+      if (x < 2) {
+        world.setBlock(x, 40, z, BlockId.Water);
+        world.setBlock(x, 41, z, BlockId.Water);
+      } else {
+        world.setBlock(x, 40, z, BlockId.Stone);
+        world.setBlock(x, 41, z, BlockId.Stone);
+      }
+    }
+  }
+  const swimmer = new PlayerPhysics({ x: 0.5, y: 40.1, z: 0.5 });
+  swimmer.yaw = -Math.PI / 2;
+  const input: InputFrame = {
+    forward: 1, strafe: 0, lookX: 0, lookY: 0, jump: false, sprint: false,
+    crouch: false, mine: false, place: false, interact: false,
+  };
+  let reachedBank = false;
+  for (let frame = 0; frame < 90; frame += 1) {
+    swimmer.update(1 / 30, input, world);
+    if (swimmer.position.x > 2.4 && swimmer.position.y >= 41.99 && !swimmer.swimming) reachedBank = true;
+  }
+  assert.ok(swimmer.position.x > 3, `swimmer remained caught at the shoreline; x=${swimmer.position.x}`);
+  assert.ok(reachedBank, "swimmer never rose onto the bank");
+  assert.equal(swimmer.swimming, false);
+});
+
+test("creatures traverse one-block rises with a continuous jump arc", () => {
+  const world = new VoxelWorld("creature jump bench");
+  for (let x = -2; x <= 8; x += 1) {
+    for (let z = -2; z <= 2; z += 1) world.setBlock(x, 40, z, BlockId.Stone);
+  }
+  world.setBlock(2, 41, 0, BlockId.Stone);
+  const mob: MobState = {
+    id: "jumping-grazer",
+    kind: "glowgrazer",
+    position: { x: 0.5, y: 41.01, z: 0.5 },
+    velocity: { x: 0, y: 0, z: 0 },
+    health: 28,
+    yaw: -Math.PI / 2,
+    targetTimer: 1,
+  };
+  let peak = mob.position.y;
+  const samples: number[] = [];
+  for (let frame = 0; frame < 120; frame += 1) {
+    moveMobWithCollision(world, mob, 1 / 30, 2, 0);
+    peak = Math.max(peak, mob.position.y);
+    samples.push(mob.position.y);
+  }
+  assert.ok(mob.position.x > 3, `creature failed to clear the rise; x=${mob.position.x}`);
+  assert.ok(peak > 42.05, `jump arc was too low; peak=${peak}`);
+  assert.ok(samples.some((height) => height > 41.2 && height < 41.8), "jump should contain intermediate heights rather than teleporting");
+  assert.equal(mobIntersectsSolid(world, mob), false);
+});
+
+test("caves contain the complete Version 4 ore progression", () => {
+  const world = new VoxelWorld("v4 ore survey");
+  const found = new Set<BlockId>();
+  const ores = [BlockId.CoalOre, BlockId.IronOre, BlockId.GoldOre, BlockId.FluxstoneOre, BlockId.DiamondOre];
+  for (let x = -16; x <= 16; x += 1) {
+    for (let z = -16; z <= 16; z += 1) {
+      const ceiling = world.getHeight(x, z) - 3;
+      for (let y = 1; y < ceiling; y += 1) {
+        const id = world.getBlock(x, y, z);
+        if (ores.includes(id)) found.add(id);
+      }
+    }
+  }
+  for (const ore of ores) assert.ok(found.has(ore), `missing ${BLOCKS[ore].name} in cave survey`);
+});
+
+test("a Hearth Furnace consumes coal and smelts raw ore into ingots", () => {
+  const world = new VoxelWorld("hearth furnace bench");
+  world.setBlock(0, 42, 0, BlockId.HearthFurnace);
+  const state = world.machines.get("0,42,0")!;
+  state.storage["part:coal"] = 1;
+  state.storage[itemForBlock(BlockId.IronOre)] = 1;
+  const automation = new AutomationSystem();
+  const events = [];
+  for (let tick = 0; tick < 22; tick += 1) events.push(...automation.tick(world, [], 0.5));
+  assert.equal(state.storage["part:coal"] ?? 0, 0);
+  assert.equal(state.storage[itemForBlock(BlockId.IronOre)] ?? 0, 0);
+  assert.equal(state.storage["part:iron-ingot"], 1);
+  assert.ok(events.some((event) => event.type === "smelted" && event.item === "part:iron-ingot"));
+});
+
+test("villages generate deterministically with homes, markets, and resident Wayfarers", () => {
+  const first = new VoxelWorld("v4 survey");
+  let village: { cx: number; cz: number } | null = null;
+  for (let cx = -10; cx <= 10 && !village; cx += 1) {
+    for (let cz = -10; cz <= 10 && !village; cz += 1) {
+      if (!isVillageChunk(cx, cz, first.seed)) continue;
+      if (first.getChunk(cx, cz).blocks.includes(BlockId.TradePost)) village = { cx, cz };
+    }
+  }
+  assert.ok(village, "expected a valid village in the survey area");
+  const villageWayfarers = first.mobs.filter((mob) => mob.kind === "wayfarer" && mob.id.startsWith(`wayfarer-${village.cx}-${village.cz}`));
+  assert.equal(villageWayfarers.length, 3);
+  assert.ok(villageWayfarers.every((mob) => mob.home && mob.activity));
+  const second = new VoxelWorld("v4 survey");
+  assert.ok(second.getChunk(village.cx, village.cz).blocks.includes(BlockId.TradePost));
+});
+
+test("the Emberdeep is a distinct deterministic dimension with original terrain", () => {
+  const world = new VoxelWorld("rift survey");
+  assert.equal(world.getBiome(EMBERDEEP_OFFSET, 0), "The Emberdeep");
+  const surface = world.getHeight(EMBERDEEP_OFFSET, 0);
+  assert.equal(world.getBlock(EMBERDEEP_OFFSET, surface, 0), BlockId.AshSoil);
+  assert.ok([BlockId.Emberrock, BlockId.Gravel].includes(world.getBlock(EMBERDEEP_OFFSET, Math.max(2, surface - 2), 0)));
+  assert.equal(BLOCKS[BlockId.RiftGate].shape, "portal");
+  assert.ok(RECIPES.some((recipe) => recipe.id === "rift-gate"));
+  assert.ok(RECIPES.some((recipe) => recipe.id === "frontier-bed"));
 });

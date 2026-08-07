@@ -846,8 +846,9 @@ button:disabled {
   height: 42px;
 }
 
-.item-art { display: block; width: 40px; height: 40px; filter: drop-shadow(2px 3px 1px rgba(0,0,0,.28)); }
+.item-art { display: block; width: 40px; height: 40px; filter: drop-shadow(2px 3px 1px rgba(0,0,0,.38)); }
 .item-art svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.item-art__world-texture { display: block; width: 40px; height: 40px; image-rendering: pixelated; opacity: 1; }
 
 .item-icon__count {
   position: absolute;
@@ -1127,6 +1128,17 @@ kbd {
 .transfer-grid section > button:hover { background: rgba(255,255,255,.05); }
 .transfer-grid section > button span { font-size: .67rem; }
 .transfer-grid section > button em { color: var(--teal-bright); font-size: .65rem; font-style: normal; font-weight: 900; }
+
+.trade-list { display: grid; gap: 9px; }
+.trade-list article { display: grid; grid-template-columns: minmax(150px, .8fr) 28px minmax(150px, .8fr) minmax(170px, 1.2fr) auto; align-items: center; gap: 10px; padding: 11px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.025); }
+.trade-list__item { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.trade-list__item > span { display: grid; gap: 2px; min-width: 0; }
+.trade-list__item small { color: var(--muted); font-size: .52rem; font-weight: 900; letter-spacing: .09em; }
+.trade-list__item strong { overflow: hidden; font-size: .68rem; text-overflow: ellipsis; white-space: nowrap; }
+.trade-list__arrow { color: var(--gold); font-size: 1.2rem; text-align: center; }
+.trade-list__copy strong { color: var(--paper); font-size: .75rem; }
+.trade-list__copy p { margin: 3px 0 0; color: #9db1ad; font-size: .63rem; line-height: 1.4; }
+.trade-list article > button { min-width: 76px; }
 .empty-note { color: #7f9893; font-size: .7rem; }
 
 .toast {
@@ -1227,6 +1239,9 @@ kbd {
   .guide-grid,
   .machine-dashboard,
   .transfer-grid { grid-template-columns: 1fr; }
+  .trade-list article { grid-template-columns: 1fr 24px 1fr; }
+  .trade-list__copy { grid-column: 1 / 4; }
+  .trade-list article > button { grid-column: 1 / 4; }
   .network-steps section { grid-template-columns: 35px 1fr; }
   .network-steps section > button { grid-column: 1 / -1; }
   .hud-top-left { top: max(10px, env(safe-area-inset-top)); left: max(10px, env(safe-area-inset-left)); }

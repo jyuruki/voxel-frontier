@@ -38,7 +38,12 @@ function toolModel(item: ItemId): THREE.Group {
   const group = new THREE.Group();
   const handle = 0x9b613c;
   if (item.includes("pick")) {
-    const head = item === "tool:crystal-pick" ? 0x74f5e5 : item === "tool:copper-pick" ? 0xda8758 : item === "tool:wood-pick" ? 0xb77948 : 0x9ea7a7;
+    const head = item === "tool:crystal-pick" ? 0x74f5e5
+      : item === "tool:diamond-pick" ? 0x62d9d3
+        : item === "tool:iron-pick" ? 0xd1d9d7
+          : item === "tool:copper-pick" ? 0xda8758
+            : item === "tool:wood-pick" ? 0xb77948
+              : 0x9ea7a7;
     group.add(
       box([0.06, 0.55, 0.06], [0, -0.05, 0], handle, [0, 0, -0.5]),
       box([0.44, 0.09, 0.08], [-0.12, 0.19, 0], head, [0, 0, -0.28]),
@@ -115,6 +120,12 @@ export class FirstPersonViewModel {
             ? new THREE.BoxGeometry(0.09, 0.42, 0.09)
             : shape === "slab"
               ? new THREE.BoxGeometry(0.32, 0.16, 0.32)
+              : shape === "bed"
+                ? new THREE.BoxGeometry(0.34, 0.14, 0.28)
+                : shape === "portal" || shape === "door"
+                  ? new THREE.BoxGeometry(0.26, 0.4, 0.06)
+                  : shape === "fence"
+                    ? new THREE.BoxGeometry(0.12, 0.4, 0.12)
               : shape === "hopper"
                 ? new THREE.CylinderGeometry(0.1, 0.2, 0.31, 4)
                 : shape === "piston"
@@ -123,7 +134,7 @@ export class FirstPersonViewModel {
       paintBoxUv(geometry, item);
       const material = new THREE.MeshBasicMaterial({
         map: this.atlas,
-        color: BLOCKS[blockId].color,
+        color: 0xffffff,
         depthTest: false,
         depthWrite: false,
         toneMapped: false,

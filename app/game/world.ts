@@ -26,6 +26,16 @@ export interface ChunkData {
 }
 
 const CHUNK_VOLUME = CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT;
+export const EMBERDEEP_OFFSET = 100_000;
+
+export function isEmberdeepCoordinate(x: number): boolean {
+  return Math.abs(x) >= EMBERDEEP_OFFSET / 2;
+}
+
+export function isVillageChunk(cx: number, cz: number, seed: number): boolean {
+  if (isEmberdeepCoordinate(cx * CHUNK_SIZE)) return false;
+  return hash3(cx, 193, cz, seed ^ 0x6a09e667) % 31 === 0;
+}
 
 export const chunkKey = (cx: number, cz: number): string => `${cx},${cz}`;
 
@@ -83,6 +93,14 @@ export class VoxelWorld {
     const cacheKey = `${x},${z}`;
     const cached = this.heightCache.get(cacheKey);
     if (cached !== undefined) return cached;
+    if (isEmberdeepCoordinate(x)) {
+      const localX = x > 0 ? x - EMBERDEEP_OFFSET : x + EMBERDEEP_OFFSET;
+      const basin = fractalNoise2(localX / 68, z / 68, this.seed ^ 0x3c6ef372, 4);
+      const broken = Math.abs(fractalNoise2(localX / 29, z / 29, this.seed ^ 0xbb67ae85, 3) - 0.5) * 2;
+      const height = Math.max(8, Math.min(31, Math.floor(11 + basin * 12 + broken * 7)));
+      this.heightCache.set(cacheKey, height);
+      return height;
+    }
     const continental = fractalNoise2(x / 82, z / 82, this.seed ^ 0x91e10da5, 5);
     const detail = fractalNoise2(x / 27, z / 27, this.seed ^ 0xa54ff53a, 3);
     const ridgeNoise = Math.abs(fractalNoise2(x / 48, z / 48, this.seed ^ 0x5a17c9e3, 4) - 0.5) * 2;
@@ -96,6 +114,7 @@ export class VoxelWorld {
   }
 
   getBiome(x: number, z: number): string {
+    if (isEmberdeepCoordinate(x)) return "The Emberdeep";
     const heat = fractalNoise2(x / 150, z / 150, this.seed ^ 0x243f6a88, 3);
     const moisture = fractalNoise2(x / 130, z / 130, this.seed ^ 0xb7e15162, 3);
     const volcanic = fractalNoise2(x / 210, z / 210, this.seed ^ 0x8aed2a6b, 2);
@@ -111,6 +130,24 @@ export class VoxelWorld {
     if (y < 0 || y >= WORLD_HEIGHT) return BlockId.Air;
     if (y === 0) return BlockId.Bedrock;
     const height = this.getHeight(x, z);
+    if (isEmberdeepCoordinate(x)) {
+      if (y > height) return y <= 5 ? BlockId.Emberflow : BlockId.Air;
+      const depth = height - y;
+      const localX = x > 0 ? x - EMBERDEEP_OFFSET : x + EMBERDEEP_OFFSET;
+      if (depth === 0) return BlockId.AshSoil;
+      if (depth < 3) return hash3(x, y, z, this.seed) % 7 === 0 ? BlockId.Gravel : BlockId.Emberrock;
+      const cavernA = valueNoise3(localX / 18, y / 10, z / 18, this.seed ^ 0xa54ff53a);
+      const cavernB = Math.abs(valueNoise3(localX / 13, y / 8, z / 13, this.seed ^ 0x510e527f) - 0.5);
+      if (y > 3 && y < height - 2 && (cavernA > 0.67 || cavernB < 0.07)) return y <= 5 ? BlockId.Emberflow : BlockId.Air;
+      const emberRoll = hash3(x, y, z, this.seed ^ 0x9b05688c) % 1000;
+      const seam = valueNoise3(localX / 5, y / 4, z / 5, this.seed ^ 0x1f83d9ab);
+      if (y < 13 && seam > 0.68 && emberRoll < 180) return BlockId.DiamondOre;
+      if (y < 21 && seam < 0.3 && emberRoll < 230) return BlockId.GoldOre;
+      if (y < 25 && emberRoll > 948) return BlockId.FluxstoneOre;
+      if (emberRoll > 985) return BlockId.EmberGlow;
+      if (y < 8 && emberRoll < 34) return BlockId.Riftstone;
+      return BlockId.Emberrock;
+    }
     const biome = this.getBiome(x, z);
     if (y > height) return y <= SEA_LEVEL ? BlockId.Water : BlockId.Air;
 
@@ -144,6 +181,14 @@ export class VoxelWorld {
     }
 
     const oreRoll = hash3(x, y, z, this.seed ^ 0x165667b1) % 1000;
+    const metalVein = valueNoise3(x / 5.2, y / 4.1, z / 5.2, this.seed ^ 0x6a09e667);
+    const crystalVein = valueNoise3(x / 4.4, y / 3.7, z / 4.4, this.seed ^ 0xbb67ae85);
+    if (y < 10 && crystalVein > 0.7 && oreRoll < 185) return BlockId.DiamondOre;
+    if (y < 18 && metalVein < 0.29 && oreRoll < 205) return BlockId.GoldOre;
+    if (y < 24 && crystalVein < 0.3 && oreRoll < 245) return BlockId.FluxstoneOre;
+    if (y < 34 && metalVein > 0.69 && oreRoll < 285) return BlockId.IronOre;
+    if (y < 39 && metalVein > 0.62 && oreRoll > 720) return BlockId.CoalOre;
+    if (y < 8 && oreRoll > 992) return BlockId.Riftstone;
     if (y < 11 && oreRoll < 5) return BlockId.MoonshardOre;
     if (y < 14 && oreRoll < 11) return BlockId.AetherCrystal;
     if (y < 25 && oreRoll >= 11 && oreRoll < 35) return BlockId.CopperOre;
@@ -159,6 +204,10 @@ export class VoxelWorld {
   private addSurfaceFeatures(chunk: ChunkData): void {
     const baseX = chunk.cx * CHUNK_SIZE;
     const baseZ = chunk.cz * CHUNK_SIZE;
+    if (isEmberdeepCoordinate(baseX + CHUNK_SIZE / 2)) {
+      this.addEmberdeepFeatures(chunk);
+      return;
+    }
     for (let lx = 2; lx < CHUNK_SIZE - 2; lx += 1) {
       for (let lz = 2; lz < CHUNK_SIZE - 2; lz += 1) {
         const x = baseX + lx;
@@ -215,7 +264,100 @@ export class VoxelWorld {
         }
       }
     }
-    this.addRuinLandmark(chunk);
+    if (isVillageChunk(chunk.cx, chunk.cz, this.seed)) this.addVillageLandmark(chunk);
+    else this.addRuinLandmark(chunk);
+  }
+
+  private addEmberdeepFeatures(chunk: ChunkData): void {
+    const baseX = chunk.cx * CHUNK_SIZE;
+    const baseZ = chunk.cz * CHUNK_SIZE;
+    for (let lx = 2; lx < CHUNK_SIZE - 2; lx += 1) {
+      for (let lz = 2; lz < CHUNK_SIZE - 2; lz += 1) {
+        const x = baseX + lx;
+        const z = baseZ + lz;
+        const height = this.getHeight(x, z);
+        if (height >= WORLD_HEIGHT - 7 || this.getBiome(x, z) !== "The Emberdeep") continue;
+        const roll = hash3(x, 37, z, this.seed ^ 0x5be0cd19) % 1000;
+        if (roll < 18) {
+          const trunkHeight = 3 + (roll % 3);
+          for (let dy = 1; dy <= trunkHeight; dy += 1) this.forceChunkLocal(chunk, lx, height + dy, lz, BlockId.RiftwoodLog);
+          for (let dx = -2; dx <= 2; dx += 1) {
+            for (let dz = -2; dz <= 2; dz += 1) {
+              if (Math.abs(dx) + Math.abs(dz) <= 3) this.setChunkLocal(chunk, lx + dx, height + trunkHeight, lz + dz, BlockId.RiftwoodLeaves);
+            }
+          }
+        } else if (roll < 36) {
+          this.forceChunkLocal(chunk, lx, height + 1, lz, BlockId.EmberGlow);
+        } else if (roll < 62) {
+          this.setChunkLocal(chunk, lx, height + 1, lz, roll % 2 === 0 ? BlockId.GlowMushroom : BlockId.CrystalSpike);
+        }
+      }
+    }
+  }
+
+  private addVillageLandmark(chunk: ChunkData): void {
+    const baseX = chunk.cx * CHUNK_SIZE;
+    const baseZ = chunk.cz * CHUNK_SIZE;
+    const heights: number[] = [];
+    for (let lx = 2; lx <= 13; lx += 1) {
+      for (let lz = 2; lz <= 13; lz += 1) heights.push(this.getHeight(baseX + lx, baseZ + lz));
+    }
+    const minY = Math.min(...heights);
+    const baseY = Math.max(...heights);
+    const biome = this.getBiome(baseX + 8, baseZ + 8);
+    if (baseY - minY > 3 || baseY <= SEA_LEVEL + 1 || baseY >= WORLD_HEIGHT - 8 || biome === "Cinder Reach" || biome === "Sunscar Dunes") return;
+
+    for (let lx = 1; lx < CHUNK_SIZE - 1; lx += 1) {
+      for (let lz = 1; lz < CHUNK_SIZE - 1; lz += 1) {
+        const terrainY = this.getHeight(baseX + lx, baseZ + lz);
+        for (let y = terrainY + 1; y <= baseY; y += 1) this.forceChunkLocal(chunk, lx, y, lz, BlockId.Cobblestone);
+        for (let y = baseY + 1; y <= baseY + 7; y += 1) this.forceChunkLocal(chunk, lx, y, lz, BlockId.Air);
+        this.forceChunkLocal(chunk, lx, baseY, lz, lx === 7 || lx === 8 || lz === 7 || lz === 8 ? BlockId.Cobblestone : BlockId.Turf);
+      }
+    }
+
+    const buildCottage = (x0: number, z0: number, doorX: number, doorZ: number): void => {
+      for (let lx = x0; lx < x0 + 5; lx += 1) {
+        for (let lz = z0; lz < z0 + 5; lz += 1) {
+          this.forceChunkLocal(chunk, lx, baseY, lz, BlockId.Cobblestone);
+          const edge = lx === x0 || lx === x0 + 4 || lz === z0 || lz === z0 + 4;
+          for (let dy = 1; dy <= 3; dy += 1) {
+            if (!edge) this.forceChunkLocal(chunk, lx, baseY + dy, lz, BlockId.Air);
+            else if (lx === doorX && lz === doorZ && dy <= 2) this.forceChunkLocal(chunk, lx, baseY + dy, lz, dy === 1 ? BlockId.TimberDoor : BlockId.Air);
+            else if (dy === 2 && ((lx + lz) & 1) === 0) this.forceChunkLocal(chunk, lx, baseY + dy, lz, BlockId.IronBars);
+            else this.forceChunkLocal(chunk, lx, baseY + dy, lz, (lx + lz) % 3 === 0 ? BlockId.TimberFrame : BlockId.VillageWall);
+          }
+          this.forceChunkLocal(chunk, lx, baseY + 4, lz, (lx + lz) % 2 === 0 ? BlockId.Thatch : BlockId.RoofTile);
+        }
+      }
+      this.forceChunkLocal(chunk, x0 + 2, baseY + 1, z0 + 2, BlockId.FrontierBed);
+      this.forceChunkLocal(chunk, x0 + 1, baseY + 1, z0 + 2, BlockId.Bookshelf);
+    };
+    buildCottage(1, 1, 5, 3);
+    buildCottage(10, 10, 10, 12);
+    this.forceChunkLocal(chunk, 7, baseY + 1, 8, BlockId.TradePost);
+    this.forceChunkLocal(chunk, 8, baseY + 1, 8, BlockId.Crate);
+    for (let lx = 6; lx <= 9; lx += 1) for (let lz = 6; lz <= 9; lz += 1) this.forceChunkLocal(chunk, lx, baseY + 4, lz, BlockId.MarketCanopy);
+    for (const [lx, lz] of [[1, 7], [14, 7], [7, 1], [7, 14]]) this.forceChunkLocal(chunk, lx, baseY + 1, lz, BlockId.WayfinderBrazier);
+
+    for (let index = 0; index < 3; index += 1) {
+      const id = `wayfarer-${chunk.cx}-${chunk.cz}-${index}`;
+      if (this.mobs.some((mob) => mob.id === id)) continue;
+      this.mobs.push({
+        id,
+        kind: "wayfarer",
+        position: { x: baseX + 6.5 + index, y: baseY + 1.01, z: baseZ + 8.5 + (index % 2) },
+        velocity: { x: 0, y: 0, z: 0 },
+        health: 30,
+        yaw: index * 2.1,
+        targetTimer: 1 + index,
+        attackTimer: 0,
+        hurtTimer: 0,
+        voiceTimer: 3 + index * 2,
+        activity: "wander",
+        home: { x: baseX + 8, y: baseY + 1, z: baseZ + 8 },
+      });
+    }
   }
 
   private addCaveFeatures(chunk: ChunkData): void {

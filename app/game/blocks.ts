@@ -327,6 +327,66 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
   [BlockId.DeepLantern]: block(BlockId.DeepLantern, "Deep Lantern", "#e4bb62", "A caged lamp built for long cave expeditions.", {
     solid: false, hardness: 0.3, shape: "rod", emissive: 0.9,
   }),
+  [BlockId.IronOre]: block(BlockId.IronOre, "Iron Ore", "#8b8580", "Dense iron nodules threaded through stone.", { hardness: 2.5 }),
+  [BlockId.GoldOre]: block(BlockId.GoldOre, "Gold Ore", "#9d8954", "Rare gold locked inside deep rock.", { hardness: 3.1 }),
+  [BlockId.FluxstoneOre]: block(BlockId.FluxstoneOre, "Fluxstone Ore", "#76505a", "Signal-bearing red crystal dust inside slate.", { hardness: 2.8, emissive: 0.16 }),
+  [BlockId.DiamondOre]: block(BlockId.DiamondOre, "Diamond Ore", "#507b82", "Exceptionally hard crystal found near the deepstone floor.", { hardness: 4.2, emissive: 0.12 }),
+  [BlockId.IronBlock]: block(BlockId.IronBlock, "Iron Block", "#aeb5b3", "A heavy block of refined iron.", { hardness: 3.4 }),
+  [BlockId.GoldBlock]: block(BlockId.GoldBlock, "Gold Block", "#d5ae3f", "A brilliant block of refined gold.", { hardness: 3 }),
+  [BlockId.DiamondBlock]: block(BlockId.DiamondBlock, "Diamond Block", "#5fc7c7", "A compact block of cut diamond.", { hardness: 5, emissive: 0.1 }),
+  [BlockId.HearthFurnace]: block(BlockId.HearthFurnace, "Hearth Furnace", "#55504a", "A coal-fired furnace for smelting raw metal ores.", {
+    hardness: 2.4, automation: "machine",
+  }),
+  [BlockId.FrontierBed]: block(BlockId.FrontierBed, "Frontier Bed", "#a44943", "A warm bed that advances night to dawn.", {
+    hardness: 0.65, tool: "axe", shape: "bed", collisionHeight: 0.48,
+  }),
+  [BlockId.Riftstone]: block(BlockId.Riftstone, "Riftstone", "#24202d", "Volcanic glass that hums near dimensional fractures.", { hardness: 5.2 }),
+  [BlockId.RiftGate]: block(BlockId.RiftGate, "Rift Gate", "#794fb2", "A stabilized doorway into the Emberdeep.", {
+    solid: false, opaque: false, hardness: 3.5, shape: "portal", emissive: 0.82,
+  }),
+  [BlockId.Emberrock]: block(BlockId.Emberrock, "Emberrock", "#49343a", "Heat-scarred stone native to the Emberdeep.", { hardness: 2.7 }),
+  [BlockId.EmberGlow]: block(BlockId.EmberGlow, "Ember Glowstone", "#d86d3f", "A porous stone that radiates a steady furnace glow.", { hardness: 1.1, emissive: 0.92 }),
+  [BlockId.AshSoil]: block(BlockId.AshSoil, "Ash Soil", "#61575a", "Soft silver ash gathered in the Emberdeep.", { hardness: 0.5, tool: "spade" }),
+  [BlockId.VillageWall]: block(BlockId.VillageWall, "Wayfarer Stucco", "#c7b58f", "Warm plaster used in Wayfarer cottages.", { hardness: 1.1 }),
+  [BlockId.Thatch]: block(BlockId.Thatch, "Golden Thatch", "#b58c45", "Tightly bundled prairie grass for roofs.", { hardness: 0.45, tool: "axe" }),
+  [BlockId.Cobblestone]: block(BlockId.Cobblestone, "Cobblestone", "#696d6c", "Irregular stone suited to foundations and hearths.", { hardness: 1.7 }),
+  [BlockId.TimberFrame]: block(BlockId.TimberFrame, "Timber Frame", "#795039", "Decorative structural beams used in village homes.", { hardness: 1.2, tool: "axe" }),
+  [BlockId.MarketCanopy]: block(BlockId.MarketCanopy, "Market Canopy", "#b85b4f", "Colorful woven cloth from a Wayfarer market.", {
+    hardness: 0.35, tool: "axe", shape: "slab", collisionHeight: 0.24,
+  }),
+  [BlockId.TradePost]: block(BlockId.TradePost, "Trade Post", "#8a643f", "A carved counter where Wayfarers display their goods.", {
+    hardness: 1, tool: "axe", automation: "storage",
+  }),
+  [BlockId.IronBars]: block(BlockId.IronBars, "Iron Bars", "#7d8b8c", "Narrow iron bars for windows and enclosures.", {
+    opaque: false, hardness: 2.6, shape: "fence",
+  }),
+  [BlockId.TimberDoor]: block(BlockId.TimberDoor, "Timber Door", "#8b5b38", "A slim cottage door left open to travelers.", {
+    solid: false, opaque: false, hardness: 0.9, tool: "axe", shape: "door",
+  }),
+  [BlockId.PlankSlab]: block(BlockId.PlankSlab, "Emberwood Slab", "#ad6c3e", "A half-height wooden building piece.", {
+    hardness: 0.8, tool: "axe", shape: "slab", collisionHeight: 0.5,
+  }),
+  [BlockId.PlankStairs]: block(BlockId.PlankStairs, "Emberwood Steps", "#b87342", "Two-tier wooden steps.", {
+    hardness: 0.9, tool: "axe", shape: "stair", collisionHeight: 0.5,
+  }),
+  [BlockId.Bookshelf]: block(BlockId.Bookshelf, "Wayfarer Bookshelf", "#79553c", "Shelves packed with weathered travel journals.", { hardness: 0.9, tool: "axe" }),
+  [BlockId.WovenWool]: block(BlockId.WovenWool, "Woven Fleece", "#ded7ca", "A soft block woven from Glowgrazer fiber.", { hardness: 0.35, tool: "none" }),
+  [BlockId.FiredBrick]: block(BlockId.FiredBrick, "Fired Brick", "#995446", "Clay brick hardened in a Hearth Furnace.", { hardness: 1.9 }),
+  [BlockId.RoofTile]: block(BlockId.RoofTile, "Terracotta Roof Tile", "#a64d3f", "Weatherproof tile used on village roofs.", {
+    hardness: 1.2, shape: "stair", collisionHeight: 0.5,
+  }),
+  [BlockId.RiftwoodLog]: block(BlockId.RiftwoodLog, "Riftwood Log", "#5f3c62", "Dark timber grown under an alien sky.", { hardness: 1.5, tool: "axe" }),
+  [BlockId.RiftwoodLeaves]: block(BlockId.RiftwoodLeaves, "Riftwood Crown", "#694f82", "Violet foliage flecked with warm light.", { opaque: false, hardness: 0.22, tool: "none" }),
+  [BlockId.RiftwoodPlanks]: block(BlockId.RiftwoodPlanks, "Riftwood Planks", "#805484", "Purple-grained boards cut from Riftwood.", { hardness: 1.1, tool: "axe" }),
+  [BlockId.Emberflow]: block(BlockId.Emberflow, "Emberflow", "#d1492f", "A dangerous molten current in the Emberdeep.", {
+    solid: false, opaque: false, liquid: true, hardness: 999, collectible: false, emissive: 0.88,
+  }),
+  [BlockId.TimberFence]: block(BlockId.TimberFence, "Timber Fence", "#8b5a37", "A post-and-rail boundary for farms and paths.", {
+    opaque: false, hardness: 0.85, tool: "axe", shape: "fence",
+  }),
+  [BlockId.Gravel]: block(BlockId.Gravel, "River Gravel", "#77736e", "Loose rounded stone common near water and caves.", { hardness: 0.6, tool: "spade" }),
+  [BlockId.PolishedStone]: block(BlockId.PolishedStone, "Polished Roughstone", "#929796", "Smooth stone dressed for precise construction.", { hardness: 2 }),
+  [BlockId.GoldTrim]: block(BlockId.GoldTrim, "Gold-Inlaid Stone", "#82765b", "Polished masonry traced with refined gold.", { hardness: 2.6 }),
 };
 
 export const BLOCK_IDS = Object.values(BlockId).filter(
@@ -351,6 +411,8 @@ export const ITEM_NAMES: Record<string, string> = {
   "tool:rough-pick": "Roughstone Pick",
   "tool:copper-pick": "Copper Pick",
   "tool:crystal-pick": "Aether Pick",
+  "tool:iron-pick": "Iron Pick",
+  "tool:diamond-pick": "Diamond Pick",
   "tool:hatchet": "Emberwood Hatchet",
   "tool:spade": "Field Spade",
   "tool:blade": "Frontier Blade",
@@ -358,6 +420,13 @@ export const ITEM_NAMES: Record<string, string> = {
   "tool:copper-saber": "Copper Saber",
   "tool:aether-repeater": "Aether Repeater",
   "part:copper-ingot": "Copper Ingot",
+  "part:coal": "Coal",
+  "part:iron-ingot": "Iron Ingot",
+  "part:gold-ingot": "Gold Ingot",
+  "part:flux-dust": "Fluxstone Dust",
+  "part:diamond": "Diamond",
+  "part:soft-fiber": "Soft Fiber",
+  "part:rift-core": "Rift Core",
   "part:flux-coil": "Flux Coil",
   "part:logic-wafer": "Logic Wafer",
   "part:gear": "Drive Gear",
@@ -429,6 +498,27 @@ export const RECIPES: Recipe[] = [
   { id: "stone-steps", name: "Roughstone Steps", station: "workbench", inputs: { [itemForBlock(BlockId.Stone)]: 4 }, output: { item: itemForBlock(BlockId.StoneStairs), count: 4 }, description: "Smooth two-tier steps." },
   { id: "frostpine-planks", name: "Cut Frostpine Planks", station: "hand", inputs: { [itemForBlock(BlockId.FrostpineLog)]: 1 }, output: { item: itemForBlock(BlockId.FrostpinePlanks), count: 4 }, description: "Cut pale alpine timber into planks." },
   { id: "deep-lantern", name: "Deep Lantern", station: "workbench", inputs: { [itemForBlock(BlockId.GlowRod)]: 1, "part:copper-ingot": 2, [itemForBlock(BlockId.Glass)]: 1 }, output: { item: itemForBlock(BlockId.DeepLantern), count: 1 }, description: "A bright caged light for cave expeditions." },
+  { id: "hearth-furnace", name: "Hearth Furnace", station: "workbench", inputs: { [itemForBlock(BlockId.Stone)]: 8 }, output: { item: itemForBlock(BlockId.HearthFurnace), count: 1 }, description: "Burns coal to smelt iron, gold, copper, clay, and other raw materials." },
+  { id: "iron-ingot", name: "Smelt Iron", station: "furnace", inputs: { [itemForBlock(BlockId.IronOre)]: 1, "part:coal": 1 }, output: { item: "part:iron-ingot", count: 1 }, description: "Refine raw iron ore in a Hearth Furnace." },
+  { id: "gold-ingot", name: "Smelt Gold", station: "furnace", inputs: { [itemForBlock(BlockId.GoldOre)]: 1, "part:coal": 1 }, output: { item: "part:gold-ingot", count: 1 }, description: "Refine deep gold ore in a Hearth Furnace." },
+  { id: "fired-brick", name: "Fire Clay", station: "furnace", inputs: { [itemForBlock(BlockId.Clay)]: 1, "part:coal": 1 }, output: { item: itemForBlock(BlockId.FiredBrick), count: 2 }, description: "Fire river clay into durable brick." },
+  { id: "iron-pick", name: "Iron Pick", station: "workbench", inputs: { "part:iron-ingot": 3, [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, output: { item: "tool:iron-pick", count: 1 }, description: "A durable pick that can harvest gold, diamond, and Riftstone." },
+  { id: "diamond-pick", name: "Diamond Pick", station: "workbench", inputs: { "part:diamond": 3, [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, output: { item: "tool:diamond-pick", count: 1 }, description: "The strongest conventional mining tool." },
+  { id: "frontier-bed", name: "Frontier Bed", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 3, "part:soft-fiber": 3 }, output: { item: itemForBlock(BlockId.FrontierBed), count: 1 }, description: "Sleep through the dangerous hours and wake at dawn." },
+  { id: "woven-fleece", name: "Woven Fleece", station: "workbench", inputs: { "part:soft-fiber": 4 }, output: { item: itemForBlock(BlockId.WovenWool), count: 1 }, description: "Compress soft fiber into a decorative building block." },
+  { id: "iron-block", name: "Iron Block", station: "workbench", inputs: { "part:iron-ingot": 9 }, output: { item: itemForBlock(BlockId.IronBlock), count: 1 }, description: "Store refined iron in compact block form." },
+  { id: "gold-block", name: "Gold Block", station: "workbench", inputs: { "part:gold-ingot": 9 }, output: { item: itemForBlock(BlockId.GoldBlock), count: 1 }, description: "A brilliant architectural block." },
+  { id: "diamond-block", name: "Diamond Block", station: "workbench", inputs: { "part:diamond": 9 }, output: { item: itemForBlock(BlockId.DiamondBlock), count: 1 }, description: "A compact monument of cut diamond." },
+  { id: "rift-gate", name: "Rift Gate", station: "workbench", inputs: { [itemForBlock(BlockId.Riftstone)]: 4, "part:gold-ingot": 2, "part:diamond": 1, "part:rift-core": 1 }, output: { item: itemForBlock(BlockId.RiftGate), count: 1 }, description: "An original dimensional gateway powered by a Wayfarer Rift Core." },
+  { id: "plank-slabs", name: "Emberwood Slabs", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 3 }, output: { item: itemForBlock(BlockId.PlankSlab), count: 6 }, description: "Half-height wooden building pieces." },
+  { id: "plank-steps", name: "Emberwood Steps", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 4 }, output: { item: itemForBlock(BlockId.PlankStairs), count: 4 }, description: "Smooth wooden steps for cottages and workshops." },
+  { id: "timber-door", name: "Timber Door", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 6 }, output: { item: itemForBlock(BlockId.TimberDoor), count: 2 }, description: "A slim wooden doorway." },
+  { id: "timber-fence", name: "Timber Fence", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 4 }, output: { item: itemForBlock(BlockId.TimberFence), count: 4 }, description: "Post-and-rail fencing for farms and paths." },
+  { id: "bookshelf", name: "Bookshelf", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 6, "part:soft-fiber": 2 }, output: { item: itemForBlock(BlockId.Bookshelf), count: 1 }, description: "A shelf of stitched travel journals." },
+  { id: "roof-tile", name: "Roof Tiles", station: "workbench", inputs: { [itemForBlock(BlockId.FiredBrick)]: 4 }, output: { item: itemForBlock(BlockId.RoofTile), count: 4 }, description: "Angled terracotta tiles for weatherproof roofs." },
+  { id: "polished-stone", name: "Polished Roughstone", station: "workbench", inputs: { [itemForBlock(BlockId.Stone)]: 4 }, output: { item: itemForBlock(BlockId.PolishedStone), count: 4 }, description: "Dress rough stone into clean architectural blocks." },
+  { id: "gold-trim", name: "Gold-Inlaid Stone", station: "workbench", inputs: { [itemForBlock(BlockId.PolishedStone)]: 4, "part:gold-ingot": 1 }, output: { item: itemForBlock(BlockId.GoldTrim), count: 4 }, description: "Decorative stone traced with refined gold." },
+  { id: "riftwood-planks", name: "Cut Riftwood Planks", station: "hand", inputs: { [itemForBlock(BlockId.RiftwoodLog)]: 1 }, output: { item: itemForBlock(BlockId.RiftwoodPlanks), count: 4 }, description: "Cut alien timber into purple-grained boards." },
 ];
 
 export const TOOL_POWER: Record<string, number> = {
@@ -439,6 +529,8 @@ export const TOOL_POWER: Record<string, number> = {
   "tool:rough-pick": 2.1,
   "tool:copper-pick": 3.4,
   "tool:crystal-pick": 5.2,
+  "tool:iron-pick": 4.25,
+  "tool:diamond-pick": 6.2,
   "tool:hatchet": 3,
   "tool:spade": 3,
   "tool:blade": 1.25,
@@ -528,6 +620,42 @@ function textureDetail(blockId: BlockId, x: number, y: number): number {
     case BlockId.StoneStairs: return y === 5 || y === 10 || x === 8 ? -0.13 : 0.03;
     case BlockId.RopeLadder: return x === 3 || x === 12 || y % 5 === 0 ? 0.17 : -0.13;
     case BlockId.DeepLantern: return (x > 4 && x < 12 && y > 3 && y < 13) ? 0.32 : -0.13;
+    case BlockId.IronOre: return oreSpark || (x * 5 + y * 3) % 31 < 2 ? 0.24 : -0.05;
+    case BlockId.GoldOre: return oreSpark || (x + y * 4) % 27 < 2 ? 0.35 : -0.07;
+    case BlockId.FluxstoneOre: return x === (y * 3 + 2) % 16 || x === (y * 3 + 3) % 16 ? 0.34 : -0.08;
+    case BlockId.DiamondOre: return oreSpark || Math.abs(x - y) === 2 || (x + y) % 23 === 0 ? 0.37 : -0.08;
+    case BlockId.IronBlock: return x === 2 || x === 13 || y === 2 || y === 13 ? 0.12 : (x + y) % 10 === 0 ? -0.08 : 0;
+    case BlockId.GoldBlock: return x === 1 || x === 14 || y === 1 || y === 14 ? 0.18 : (x * 3 + y) % 17 === 0 ? -0.09 : 0.04;
+    case BlockId.DiamondBlock: return x === y || x + y === 15 || x === 7 || y === 8 ? 0.22 : -0.05;
+    case BlockId.HearthFurnace: return x > 3 && x < 12 && y > 7 && y < 13 ? 0.24 : (x + y) % 6 === 0 ? -0.13 : 0;
+    case BlockId.FrontierBed: return y % 4 === 0 ? -0.12 : (x + y) % 13 === 0 ? 0.1 : 0;
+    case BlockId.Riftstone: return (x * 7 + y * 11) % 19 < 3 ? 0.16 : (x + y) % 7 === 0 ? -0.12 : 0;
+    case BlockId.RiftGate: return Math.abs(x - 7.5) < 2 || Math.abs(y - 7.5) < 2 ? 0.3 : Math.sin((x + y) * 1.7) * 0.08;
+    case BlockId.Emberrock: return x % 5 === 0 || (x + y * 2) % 13 === 0 ? -0.14 : y % 7 === 0 ? 0.09 : 0;
+    case BlockId.EmberGlow: return Math.abs(x - 7.5) + Math.abs(y - 7.5) < 7 ? 0.28 : (x + y) % 5 === 0 ? 0.12 : -0.08;
+    case BlockId.AshSoil: return (x * 3 + y * 7) % 17 === 0 ? 0.14 : (x + y) % 9 === 0 ? -0.08 : 0;
+    case BlockId.VillageWall: return (x + y * 3) % 23 === 0 ? -0.1 : y < 2 ? 0.08 : 0;
+    case BlockId.Thatch: return (x + y) % 4 === 0 || (x - y + 16) % 7 === 0 ? 0.13 : -0.04;
+    case BlockId.Cobblestone: return (x * 5 + y * 7) % 11 < 2 ? -0.14 : (x + y) % 13 === 0 ? 0.1 : 0;
+    case BlockId.TimberFrame: return x < 3 || x > 12 || y < 3 || y > 12 || x === y ? -0.14 : 0.08;
+    case BlockId.MarketCanopy: return Math.floor(x / 3) % 2 === 0 ? 0.16 : -0.08;
+    case BlockId.TradePost: return x === 2 || x === 13 || y === 4 || y === 11 || x + y === 15 ? 0.14 : -0.08;
+    case BlockId.IronBars: return x % 5 === 2 || y % 5 === 2 ? 0.18 : -0.13;
+    case BlockId.TimberDoor: return x === 2 || x === 13 || y === 2 || y === 13 || (x === 10 && y > 7) ? 0.15 : -0.07;
+    case BlockId.PlankSlab:
+    case BlockId.PlankStairs: return y % 5 === 0 ? -0.13 : x % 8 === 0 ? 0.08 : 0;
+    case BlockId.Bookshelf: return x === 2 || x === 13 || y % 5 === 0 ? -0.15 : (x + y) % 4 === 0 ? 0.18 : -0.02;
+    case BlockId.WovenWool: return (x + y) % 5 === 0 || (x - y + 16) % 6 === 0 ? 0.09 : -0.03;
+    case BlockId.FiredBrick: return y === 5 || y === 11 || x === (y < 6 ? 7 : y < 12 ? 3 : 11) ? -0.18 : 0.04;
+    case BlockId.RoofTile: return (x + y) % 6 < 2 ? -0.12 : y % 5 === 0 ? 0.11 : 0;
+    case BlockId.RiftwoodLog: return x % 4 === 0 ? -0.15 : (x + y) % 11 === 0 ? 0.14 : 0;
+    case BlockId.RiftwoodLeaves: return (x * 7 + y * 5) % 11 < 2 ? 0.2 : -0.03;
+    case BlockId.RiftwoodPlanks: return y % 4 === 0 ? -0.13 : x % 7 === 0 ? 0.12 : 0;
+    case BlockId.Emberflow: return y % 4 === 1 && (x + Math.floor(y / 4) * 2) % 6 < 4 ? 0.28 : -0.04;
+    case BlockId.TimberFence: return x === 4 || x === 11 || y % 6 === 0 ? 0.14 : -0.1;
+    case BlockId.Gravel: return (x * 11 + y * 5) % 17 < 4 ? -0.12 : (x + y) % 9 === 0 ? 0.1 : 0;
+    case BlockId.PolishedStone: return x === 1 || x === 14 || y === 1 || y === 14 ? -0.08 : (x + y) % 19 === 0 ? 0.07 : 0;
+    case BlockId.GoldTrim: return x === y || x + y === 15 || x === 7 || y === 7 ? 0.26 : -0.07;
     default: return 0;
   }
 }
@@ -570,12 +698,96 @@ function paintTile(
       image.data[index] = Math.max(0, Math.min(255, (base.r + offset) * 255));
       image.data[index + 1] = Math.max(0, Math.min(255, (base.g + offset) * 255));
       image.data[index + 2] = Math.max(0, Math.min(255, (base.b + offset) * 255));
-      const cutoutLeaves = [BlockId.EmberwoodLeaves, BlockId.FrostpineLeaves].includes(blockId) && hash3(x, y, blockId, 17) % 9 === 0;
+      const cutoutLeaves = [BlockId.EmberwoodLeaves, BlockId.FrostpineLeaves, BlockId.RiftwoodLeaves].includes(blockId) && hash3(x, y, blockId, 17) % 9 === 0;
       const cutoutPlant = BLOCKS[blockId].shape === "cross" && !plantPixel(blockId, x, y);
       image.data[index + 3] = cutoutLeaves || cutoutPlant ? 0 : 255;
     }
   }
   context.putImageData(image, column * TILE_SIZE, row * TILE_SIZE);
+}
+
+export function paintBlockItemIcon(canvas: HTMLCanvasElement, blockId: BlockId): void {
+  const tile = document.createElement("canvas");
+  tile.width = TILE_SIZE;
+  tile.height = TILE_SIZE;
+  const tileContext = tile.getContext("2d", { alpha: true });
+  const context = canvas.getContext("2d", { alpha: true });
+  if (!tileContext || !context) return;
+  tileContext.imageSmoothingEnabled = false;
+  paintTile(tileContext, 0, BLOCKS[blockId].color, blockId);
+  canvas.width = 48;
+  canvas.height = 48;
+  context.clearRect(0, 0, 48, 48);
+  context.imageSmoothingEnabled = false;
+
+  const shape = BLOCKS[blockId].shape ?? "cube";
+  if (shape === "cross") {
+    context.drawImage(tile, 4, 3, 40, 42);
+    return;
+  }
+  if (shape === "portal") {
+    context.shadowColor = BLOCKS[blockId].color;
+    context.shadowBlur = 8;
+    context.drawImage(tile, 11, 2, 26, 44);
+    context.strokeStyle = "#2b2035";
+    context.lineWidth = 4;
+    context.strokeRect(9, 1, 30, 46);
+    return;
+  }
+  if (shape === "torch" || shape === "rod" || shape === "column") {
+    const width = shape === "column" ? 22 : 13;
+    context.drawImage(tile, 24 - width / 2, 4, width, 41);
+    context.strokeStyle = "rgba(18, 23, 25, .9)";
+    context.lineWidth = 2;
+    context.strokeRect(24 - width / 2, 4, width, 41);
+    return;
+  }
+  if (shape === "door" || shape === "ladder") {
+    context.drawImage(tile, 9, 3, 30, 42);
+    return;
+  }
+  if (shape === "fence") {
+    context.drawImage(tile, 20, 3, 9, 43);
+    context.drawImage(tile, 5, 16, 38, 8);
+    context.drawImage(tile, 5, 31, 38, 8);
+    return;
+  }
+
+  const shadeTile = (alpha: number): HTMLCanvasElement => {
+    const shaded = document.createElement("canvas");
+    shaded.width = TILE_SIZE;
+    shaded.height = TILE_SIZE;
+    const shadedContext = shaded.getContext("2d", { alpha: true });
+    if (!shadedContext) return tile;
+    shadedContext.imageSmoothingEnabled = false;
+    shadedContext.drawImage(tile, 0, 0);
+    shadedContext.globalCompositeOperation = "source-atop";
+    shadedContext.fillStyle = `rgba(6, 13, 16, ${alpha})`;
+    shadedContext.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
+    return shaded;
+  };
+  const left = shadeTile(0.2);
+  const right = shadeTile(0.38);
+  const heightScale = shape === "wire" || shape === "plate" ? 0.11
+    : shape === "slab" || shape === "stair" ? 0.46
+      : shape === "bed" ? 0.36
+        : shape === "hopper" ? 0.62
+          : 1;
+  const vertical = 1.35 * heightScale;
+  const topY = 12 - (1 - heightScale) * 7;
+
+  context.save();
+  context.setTransform(1.375, 0.6875, 0, vertical, 2, topY + 11);
+  context.drawImage(left, 0, 0);
+  context.restore();
+  context.save();
+  context.setTransform(1.375, -0.6875, 0, vertical, 24, topY + 22);
+  context.drawImage(right, 0, 0);
+  context.restore();
+  context.save();
+  context.setTransform(1.375, 0.6875, -1.375, 0.6875, 24, topY);
+  context.drawImage(tile, 0, 0);
+  context.restore();
 }
 
 export function createOriginalTextureAtlas(): THREE.CanvasTexture {
@@ -638,4 +850,6 @@ export const AUTOMATION_BLOCKS = [
   BlockId.TargetBlock,
   BlockId.LatchLamp,
   BlockId.NoteEmitter,
+  BlockId.HearthFurnace,
+  BlockId.TradePost,
 ];
