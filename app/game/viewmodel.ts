@@ -4,7 +4,7 @@ import { ItemId } from "./types";
 
 type SwingKind = "mine" | "attack" | "place" | "use";
 
-function paintBoxUv(geometry: THREE.BoxGeometry, item: ItemId): void {
+function paintBoxUv(geometry: THREE.BufferGeometry, item: ItemId): void {
   const id = blockForItem(item);
   if (id === null) return;
   const uv = tileUv(id);
@@ -38,15 +38,19 @@ function toolModel(item: ItemId): THREE.Group {
   const group = new THREE.Group();
   const handle = 0x9b613c;
   if (item.includes("pick")) {
-    const head = item === "tool:crystal-pick" ? 0x74f5e5 : item === "tool:copper-pick" ? 0xda8758 : 0x9ea7a7;
+    const head = item === "tool:crystal-pick" ? 0x74f5e5 : item === "tool:copper-pick" ? 0xda8758 : item === "tool:wood-pick" ? 0xb77948 : 0x9ea7a7;
     group.add(
       box([0.06, 0.55, 0.06], [0, -0.05, 0], handle, [0, 0, -0.5]),
       box([0.44, 0.09, 0.08], [-0.12, 0.19, 0], head, [0, 0, -0.28]),
     );
-  } else if (item === "tool:hatchet") {
-    group.add(box([0.07, 0.52, 0.07], [0, -0.05, 0], handle, [0, 0, -0.28]), box([0.28, 0.22, 0.08], [-0.1, 0.17, 0], 0xaeb6b5, [0, 0, -0.18]));
-  } else if (item === "tool:spade") {
-    group.add(box([0.06, 0.48, 0.06], [0, 0, 0], handle), box([0.24, 0.22, 0.07], [0, -0.31, 0], 0xabb5b5, [0, 0, Math.PI / 4]));
+  } else if (item === "tool:hatchet" || item === "tool:wood-hatchet") {
+    const head = item === "tool:wood-hatchet" ? 0xb77948 : 0xaeb6b5;
+    group.add(box([0.07, 0.52, 0.07], [0, -0.05, 0], handle, [0, 0, -0.28]), box([0.28, 0.22, 0.08], [-0.1, 0.17, 0], head, [0, 0, -0.18]));
+  } else if (item === "tool:spade" || item === "tool:wood-spade") {
+    const head = item === "tool:wood-spade" ? 0xb77948 : 0xabb5b5;
+    group.add(box([0.06, 0.48, 0.06], [0, 0, 0], handle), box([0.24, 0.22, 0.07], [0, -0.31, 0], head, [0, 0, Math.PI / 4]));
+  } else if (item === "tool:wood-club") {
+    group.add(box([0.14, 0.62, 0.14], [0, 0.02, 0], 0x9b613c, [0, 0, -0.3]), box([0.21, 0.28, 0.19], [-0.08, 0.24, 0], 0xb77948, [0, 0, -0.3]));
   } else if (["tool:blade", "tool:copper-saber"].includes(item)) {
     const blade = item === "tool:copper-saber" ? 0xee9c68 : 0xc7d0d0;
     group.add(box([0.075, 0.58, 0.045], [0, 0.12, 0], blade, [0, 0, -0.16]), box([0.29, 0.07, 0.08], [-0.04, -0.18, 0], 0xd69a5b), box([0.09, 0.2, 0.09], [0, -0.3, 0], handle));
@@ -102,7 +106,20 @@ export class FirstPersonViewModel {
     if (!item) return;
     const blockId = blockForItem(item);
     if (blockId !== null) {
-      const geometry = new THREE.BoxGeometry(0.28, 0.28, 0.28);
+      const shape = BLOCKS[blockId].shape ?? "cube";
+      const geometry: THREE.BufferGeometry = shape === "cross"
+        ? new THREE.PlaneGeometry(0.34, 0.42)
+        : shape === "wire" || shape === "plate"
+          ? new THREE.BoxGeometry(0.34, 0.055, 0.34)
+          : shape === "torch" || shape === "rod" || shape === "ladder"
+            ? new THREE.BoxGeometry(0.09, 0.42, 0.09)
+            : shape === "slab"
+              ? new THREE.BoxGeometry(0.32, 0.16, 0.32)
+              : shape === "hopper"
+                ? new THREE.CylinderGeometry(0.1, 0.2, 0.31, 4)
+                : shape === "piston"
+                  ? new THREE.BoxGeometry(0.36, 0.27, 0.28)
+                  : new THREE.BoxGeometry(0.28, 0.28, 0.28);
       paintBoxUv(geometry, item);
       const material = new THREE.MeshBasicMaterial({
         map: this.atlas,
@@ -112,6 +129,7 @@ export class FirstPersonViewModel {
         toneMapped: false,
         transparent: !BLOCKS[blockId].opaque,
         opacity: BLOCKS[blockId].opaque ? 1 : 0.82,
+        side: THREE.DoubleSide,
       });
       const mesh = new THREE.Mesh(geometry, material);
       mesh.rotation.set(0.25, 0.62, 0.1);

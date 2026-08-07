@@ -14,6 +14,8 @@ export class PlayerPhysics {
   pitch = 0;
   grounded = false;
   crouched = false;
+  waterImmersion = 0;
+  swimming = false;
   private coyoteTimer = 0;
   private jumpBuffer = 0;
   private verticalPeak = 0;
@@ -34,14 +36,19 @@ export class PlayerPhysics {
   private collidesAt(world: VoxelWorld, position: THREE.Vector3, height = this.height): boolean {
     const minX = Math.floor(position.x - PLAYER_RADIUS + 0.001);
     const maxX = Math.floor(position.x + PLAYER_RADIUS - 0.001);
-    const minY = Math.floor(position.y + 0.01);
-    const maxY = Math.floor(position.y + height - 0.01);
+    const minY = Math.floor(position.y + 0.001);
+    const maxY = Math.floor(position.y + height - 0.001);
     const minZ = Math.floor(position.z - PLAYER_RADIUS + 0.001);
     const maxZ = Math.floor(position.z + PLAYER_RADIUS - 0.001);
     for (let x = minX; x <= maxX; x += 1) {
       for (let y = minY; y <= maxY; y += 1) {
         for (let z = minZ; z <= maxZ; z += 1) {
-          if (world.isSolid(x, y, z)) return true;
+          const collisionHeight = world.getCollisionHeight(x, y, z);
+          if (
+            collisionHeight > 0 &&
+            position.y < y + collisionHeight - 0.001 &&
+            position.y + height > y + 0.001
+          ) return true;
         }
       }
     }
@@ -77,11 +84,7 @@ export class PlayerPhysics {
     return true;
   }
 
-  private horizontalStep(
-    world: VoxelWorld,
-    dx: number,
-    dz: number,
-  ): boolean {
+  private horizontalStep(world: VoxelWorld, dx: number, dz: number): boolean {
     const start = this.position.clone();
     const hitX = this.moveAxis(world, "x", dx);
     const hitZ = this.moveAxis(world, "z", dz);
@@ -107,6 +110,15 @@ export class PlayerPhysics {
     return false;
   }
 
+  private sampleWater(world: VoxelWorld): number {
+    const samples = [0.14, Math.min(this.height - 0.1, 0.86), Math.min(this.height - 0.06, 1.56)];
+    let wet = 0;
+    for (const height of samples) {
+      if (world.getBlock(this.position.x, this.position.y + height, this.position.z) === BlockId.Water) wet += 1;
+    }
+    return wet / samples.length;
+  }
+
   update(
     dt: number,
     input: InputFrame,
@@ -115,13 +127,16 @@ export class PlayerPhysics {
     autoJump = false,
   ): void {
     const safeDt = Math.min(dt, 0.05);
-    const inWater = world.getBlock(
+    this.waterImmersion = this.sampleWater(world);
+    const inWater = this.waterImmersion > 0;
+    const onLadder = world.getBlock(
       this.position.x,
-      this.position.y + this.eyeHeight * 0.65,
+      this.position.y + Math.min(0.82, this.height * 0.55),
       this.position.z,
-    ) === BlockId.Water;
+    ) === BlockId.RopeLadder;
+    this.swimming = this.waterImmersion >= 2 / 3;
 
-    if (input.jump) this.jumpBuffer = 0.12;
+    if (input.jump && !inWater) this.jumpBuffer = 0.12;
     else this.jumpBuffer = Math.max(0, this.jumpBuffer - safeDt);
     if (this.grounded) this.coyoteTimer = 0.12;
     else this.coyoteTimer = Math.max(0, this.coyoteTimer - safeDt);
@@ -132,37 +147,77 @@ export class PlayerPhysics {
       if (!this.collidesAt(world, standing, STANDING_HEIGHT)) this.crouched = false;
     } else if (wantsCrouch) this.crouched = true;
 
-    const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+    const horizontalForward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
-    const wish = forward.multiplyScalar(input.forward).add(right.multiplyScalar(input.strafe));
-    if (wish.lengthSq() > 1) wish.normalize();
-
     const sprinting = input.sprint && !this.crouched && input.forward > 0.2;
-    const maxSpeed = inWater ? 2.7 : this.crouched ? 2.1 : sprinting ? 6.25 : 4.35;
-    const acceleration = this.grounded ? 34 : inWater ? 16 : 10;
-    const desiredX = wish.x * maxSpeed;
-    const desiredZ = wish.z * maxSpeed;
-    const blend = 1 - Math.exp(-acceleration * safeDt);
-    this.velocity.x += (desiredX - this.velocity.x) * blend;
-    this.velocity.z += (desiredZ - this.velocity.z) * blend;
 
-    if (wish.lengthSq() < 0.001 && this.grounded) {
-      const friction = Math.exp(-18 * safeDt);
-      this.velocity.x *= friction;
-      this.velocity.z *= friction;
-    }
+    if (inWater) {
+      const cosPitch = Math.cos(this.pitch);
+      const swimForward = this.swimming
+        ? new THREE.Vector3(
+            -Math.sin(this.yaw) * cosPitch,
+            Math.sin(this.pitch),
+            -Math.cos(this.yaw) * cosPitch,
+          )
+        : horizontalForward;
+      const wish = swimForward.multiplyScalar(input.forward).add(right.multiplyScalar(input.strafe));
+      if (input.jump) wish.y += 1;
+      if (input.crouch) wish.y -= 1;
+      if (wish.lengthSq() > 1) wish.normalize();
 
-    if (this.jumpBuffer > 0 && (this.coyoteTimer > 0 || inWater)) {
-      this.velocity.y = inWater ? 4.2 : 7.2;
+      const maxSpeed = sprinting ? 3.25 : 2.35;
+      const control = 1 - Math.exp(-7.5 * safeDt);
+      this.velocity.x += (wish.x * maxSpeed - this.velocity.x) * control;
+      this.velocity.z += (wish.z * maxSpeed - this.velocity.z) * control;
+
+      const hasVerticalIntent = Math.abs(wish.y) > 0.05;
+      const idleVertical = this.waterImmersion < 0.67 ? 0.48 : -0.16;
+      const desiredY = hasVerticalIntent ? wish.y * (sprinting ? 3.05 : 2.35) : idleVertical;
+      const verticalControl = 1 - Math.exp(-5.2 * safeDt);
+      this.velocity.y += (desiredY - this.velocity.y) * verticalControl;
+
+      if (wish.lengthSq() < 0.001) {
+        const drag = Math.exp(-2.8 * safeDt);
+        this.velocity.x *= drag;
+        this.velocity.z *= drag;
+      }
       this.grounded = false;
       this.coyoteTimer = 0;
       this.jumpBuffer = 0;
-    }
+      this.verticalPeak = this.position.y;
+    } else if (onLadder) {
+      const wish = horizontalForward.multiplyScalar(input.forward).add(right.multiplyScalar(input.strafe));
+      if (wish.lengthSq() > 1) wish.normalize();
+      const ladderBlend = 1 - Math.exp(-9 * safeDt);
+      this.velocity.x += (wish.x * 1.8 - this.velocity.x) * ladderBlend;
+      this.velocity.z += (wish.z * 1.8 - this.velocity.z) * ladderBlend;
+      const climb = input.jump ? 2.7 : input.crouch ? -2.2 : input.forward > 0.1 ? 1.9 : -0.22;
+      this.velocity.y += (climb - this.velocity.y) * (1 - Math.exp(-10 * safeDt));
+      this.grounded = false;
+      this.coyoteTimer = 0;
+      this.jumpBuffer = 0;
+      this.verticalPeak = this.position.y;
+    } else {
+      const wish = horizontalForward.multiplyScalar(input.forward).add(right.multiplyScalar(input.strafe));
+      if (wish.lengthSq() > 1) wish.normalize();
+      const maxSpeed = this.crouched ? 2.1 : sprinting ? 6.25 : 4.35;
+      const acceleration = this.grounded ? 34 : 10;
+      const blend = 1 - Math.exp(-acceleration * safeDt);
+      this.velocity.x += (wish.x * maxSpeed - this.velocity.x) * blend;
+      this.velocity.z += (wish.z * maxSpeed - this.velocity.z) * blend;
 
-    this.velocity.y += (inWater ? -5.5 : -22) * safeDt;
-    if (inWater) {
-      this.velocity.multiplyScalar(1 - Math.min(0.55, safeDt * 2.3));
-      if (input.jump) this.velocity.y += 11 * safeDt;
+      if (wish.lengthSq() < 0.001 && this.grounded) {
+        const friction = Math.exp(-18 * safeDt);
+        this.velocity.x *= friction;
+        this.velocity.z *= friction;
+      }
+      if (this.jumpBuffer > 0 && this.coyoteTimer > 0) {
+        this.velocity.y = 7.2;
+        this.grounded = false;
+        this.coyoteTimer = 0;
+        this.jumpBuffer = 0;
+      }
+      this.velocity.y += -22 * safeDt;
     }
 
     const horizontalLength = Math.hypot(this.velocity.x, this.velocity.z) * safeDt;
@@ -175,7 +230,9 @@ export class PlayerPhysics {
         (this.velocity.z * safeDt) / substeps,
       ) || blockedHorizontally;
     }
-    if (autoJump && blockedHorizontally && this.grounded && wish.lengthSq() > 0.05) {
+
+    const horizontalWish = Math.abs(input.forward) + Math.abs(input.strafe);
+    if (autoJump && !inWater && !onLadder && blockedHorizontally && this.grounded && horizontalWish > 0.05) {
       const raised = this.position.clone();
       raised.y += 1.02;
       if (!this.collidesAt(world, raised)) {
@@ -189,8 +246,8 @@ export class PlayerPhysics {
     const wasDescending = this.velocity.y <= 0;
     const hitY = this.moveAxis(world, "y", this.velocity.y * safeDt);
     this.grounded = hitY && wasDescending;
-    if (!this.grounded) this.verticalPeak = Math.max(this.verticalPeak, this.position.y);
-    if (!wasGrounded && this.grounded) {
+    if (!this.grounded && !inWater && !onLadder) this.verticalPeak = Math.max(this.verticalPeak, this.position.y);
+    if (!inWater && !onLadder && !wasGrounded && this.grounded) {
       const fallDistance = Math.max(0, this.verticalPeak - this.position.y);
       if (fallDistance > 3.4) onLand?.(fallDistance);
       this.verticalPeak = this.position.y;

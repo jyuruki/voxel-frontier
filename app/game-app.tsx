@@ -363,6 +363,8 @@ export default function GameApp() {
     [hud.inventory],
   );
 
+  const heldItem = hud.hotbar[hud.selectedSlot] ?? null;
+
   const refreshMachine = () => {
     if (!machine) return;
     const latest = engineRef.current?.getMachine(machine.key);
@@ -389,7 +391,7 @@ export default function GameApp() {
             <span className="brand__mark"><i /><i /><i /></span>
             <span><strong>VOXEL</strong><em>FRONTIER</em></span>
           </div>
-          <span className="build-tag">Frontiers &amp; Nightfall · Stage 2</span>
+          <span className="build-tag">Depths & Circuits · Stage 3</span>
         </header>
 
         <section className="landing__content">
@@ -400,7 +402,7 @@ export default function GameApp() {
               Begin empty-handed, survive a living night, uncover Wayfarer ruins, or open an infinite Creative catalog and engineer without limits—alone or online.
             </p>
             <div className="feature-chips">
-              <span>Survival + Creative</span><span>50 textured blocks</span><span>Combat &amp; ruins</span><span>Exportable world keys</span>
+              <span>True swimming</span><span>75 distinct blocks</span><span>Deep caves &amp; circuits</span><span>Physical item drops</span>
             </div>
           </div>
 
@@ -515,6 +517,9 @@ export default function GameApp() {
       <div className="network-pill"><span className={network.role === "offline" ? "" : "online"} />{hud.networkStatus}</div>
       {settings.showFps && <div className="fps-pill">{hud.fps} FPS</div>}
 
+      <div className="held-item-label" aria-live="polite">
+        {heldItem ? itemName(heldItem) : "Empty hand"}
+      </div>
       <div className="hotbar" role="toolbar" aria-label="Hotbar">
         {Array.from({ length: 9 }, (_, index) => {
           const item = hud.hotbar[index];
@@ -534,7 +539,7 @@ export default function GameApp() {
 
       {!isTouch && (
         <div className="desktop-hints">
-          <span><kbd>WASD</kbd> move</span><span><kbd>SPACE</kbd> jump</span><span><kbd>LMB</kbd> mine / attack</span><span><kbd>RMB</kbd> place / use</span><span><kbd>F</kbd> interact</span><span><kbd>E</kbd> inventory</span>
+          <span><kbd>WASD</kbd> move / swim</span><span><kbd>SPACE</kbd> jump / ascend</span><span><kbd>CTRL</kbd> crouch / dive</span><span><kbd>LMB</kbd> mine / attack</span><span><kbd>RMB</kbd> place / use</span><span><kbd>F</kbd> interact</span><span><kbd>E</kbd> inventory</span>
         </div>
       )}
 
@@ -552,6 +557,7 @@ export default function GameApp() {
             <HoldButton label="JUMP" onChange={(pressed) => engineRef.current?.setAction("jump", pressed)} />
             <HoldButton label="RUN" onChange={(pressed) => engineRef.current?.setAction("sprint", pressed)} />
             <HoldButton label="USE" onChange={(pressed) => engineRef.current?.setAction("interact", pressed)} />
+            <HoldButton label="DIVE" className="touch-button--dive" onChange={(pressed) => engineRef.current?.setAction("crouch", pressed)} />
           </div>
         </div>
       )}
@@ -767,40 +773,40 @@ function OptionsModal({
 
 function GuideModal({ onClose }: { onClose: () => void }) {
   return (
-    <Modal title="Frontier field guide" eyebrow="Frontiers & Nightfall · Stage 2" onClose={onClose} wide>
+    <Modal title="Frontier field guide" eyebrow="Depths & Circuits · Stage 3" onClose={onClose} wide>
       <div className="guide-grid">
         <article className="guide-card guide-card--accent">
-          <span>01</span><h3>Empty-handed survival</h3>
-          <p>Break Emberwood by hand, cut it into planks, then build a Tinker Bench. A Roughstone Spear is the safest first-night weapon; food restores nutrition.</p>
+          <span>01</span><h3>Physical gathering</h3>
+          <p>Broken blocks pop into the world. Walk close to collect them. Cut Emberwood into planks, build a Tinker Bench, then craft an Emberwood Pick before harvesting stone.</p>
         </article>
         <article className="guide-card">
-          <span>02</span><h3>Nightfall &amp; combat</h3>
-          <p>Mirelings, Thornbacks, and Nightwisps emerge after dusk. Aim at a creature and mine/attack. Spears reach farther; Aether Repeaters consume bolts.</p>
+          <span>02</span><h3>Swimming</h3>
+          <p>Water has drag and buoyancy. Move while looking up or down to steer your stroke, hold jump to ascend, crouch or use DIVE to descend, and sprint for a faster swim.</p>
         </article>
         <article className="guide-card">
-          <span>03</span><h3>Explore Wayfarer ruins</h3>
-          <p>Ancient landmarks appear deterministically throughout every seed. Use a Relic Cache to recover Moonshards, bolts, copper, and occasional medicine.</p>
+          <span>03</span><h3>Explore the deep</h3>
+          <p>Large caverns, winding tunnels, vertical rifts, aquifers, crystal growths, mushrooms, moss, limestone, marble, and deep slate form connected underground regions.</p>
         </article>
         <article className="guide-card">
-          <span>04</span><h3>Your first live circuit</h3>
-          <p>Place a Toggle Relay, connect Flux Conduit to a Flux Lamp, then use the relay. Signal strength starts at 15 and falls by one per conduit.</p>
+          <span>04</span><h3>Directional circuits</h3>
+          <p>Thin Flux Conduit links sources to repeaters, comparators, inverter torches, observers, pressure plates, daylight sensors, memory lamps, targets, and tone blocks.</p>
         </article>
         <article className="guide-card">
-          <span>05</span><h3>Power &amp; automation</h3>
-          <p>Feed Carbon Shale into a Thermal Dynamo. Machines need energy and signal. Bore Drills mine; belts route drops; furnaces and fabricators process them.</p>
+          <span>05</span><h3>Movement &amp; logistics</h3>
+          <p>Linear Rams push up to six blocks; Adhesive Rams pull on retraction. Collector Funnels gather physical drops and transfer one item per beat into facing storage.</p>
         </article>
         <article className="guide-card">
           <span>06</span><h3>Creative &amp; portable worlds</h3>
-          <p>Creative opens every original item with infinite counts, instant mining, and no damage. VF1 keys preserve mode, day, terrain, machines, creatures, and player state.</p>
+          <p>Creative opens all 75 original blocks and every tool. VF1 keys remain compatible and preserve terrain, optional Stage 3 circuit state, creatures, inventory, and time.</p>
         </article>
       </div>
       <div className="controls-table">
         <h3>Desktop controls</h3>
-        <div><span><kbd>W A S D</kbd> Move</span><span><kbd>Shift</kbd> Sprint</span><span><kbd>Ctrl / C</kbd> Crouch</span><span><kbd>Space</kbd> Jump</span><span><kbd>Mouse</kbd> Look</span><span><kbd>LMB</kbd> Mine / attack</span><span><kbd>RMB</kbd> Place / use held item</span><span><kbd>F</kbd> Interact/configure</span><span><kbd>R</kbd> Rotate machine</span><span><kbd>E</kbd> Inventory</span></div>
+        <div><span><kbd>W A S D</kbd> Move / swim</span><span><kbd>Shift</kbd> Sprint / stroke</span><span><kbd>Ctrl / C</kbd> Crouch / dive</span><span><kbd>Space</kbd> Jump / ascend</span><span><kbd>Mouse</kbd> Look</span><span><kbd>LMB</kbd> Mine / attack</span><span><kbd>RMB</kbd> Place / use held item</span><span><kbd>F</kbd> Interact/configure</span><span><kbd>R</kbd> Rotate machine</span><span><kbd>E</kbd> Inventory</span></div>
       </div>
       <div className="scope-note">
         <strong>What this release contains</strong>
-        <p>Six biomes, caves, ore strata, ruins, 50 original textured blocks, Survival and Creative modes, nine tools and weapons, food and medicine, five creatures, hostile night spawning, collision-safe mobs, animated held items and block cracking, day/night, crafting, deep automation, direct online rooms, mobile controls with optional auto-jump, autosave, and portable world keys.</p>
+        <p>Six biomes, extensive cave networks and aquifers, ruins, 75 original textured blocks with twelve mesh shapes, Survival and Creative modes, an Emberwood tool tier, physical block drops, true swimming, water-stable creatures, five mobs, combat, held-item silhouettes and labels, block cracking, day/night, crafting, directional signal logic, pistons, funnels, direct online rooms, mobile ascend/dive controls with optional auto-jump, autosave, and backward-compatible world keys.</p>
       </div>
     </Modal>
   );
@@ -847,6 +853,12 @@ function MachineModal({
         <button className="secondary-button" onClick={onRotate}>Rotate clockwise</button>
         {machine.id === BlockId.ProximitySensor && (
           <select value={machine.state.mode ?? "near"} onChange={(event) => onConfigure(event.target.value)}><option value="near">Nearby player</option><option value="day">Daylight</option><option value="night">Night</option></select>
+        )}
+        {machine.id === BlockId.FluxComparator && (
+          <select value={machine.state.mode ?? "compare"} onChange={(event) => onConfigure(event.target.value)}><option value="compare">Compare</option><option value="subtract">Subtract</option></select>
+        )}
+        {machine.id === BlockId.PulseRepeater && (
+          <select value={String(machine.state.delayTicks ?? 2)} onChange={(event) => onConfigure(event.target.value)}><option value="1">1 beat</option><option value="2">2 beats</option><option value="3">3 beats</option><option value="4">4 beats</option></select>
         )}
         {machine.id === BlockId.Fabricator && (
           <select value={machine.state.recipe ?? "flux-coil"} onChange={(event) => onConfigure(event.target.value)}><option value="flux-coil">Flux Coil</option><option value="logic-wafer">Logic Wafer</option><option value="gear">Drive Gear</option></select>

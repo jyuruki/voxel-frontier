@@ -57,10 +57,39 @@ export enum BlockId {
   MoonshardBlock = 48,
   WayfinderBrazier = 49,
   AshGlass = 50,
+  PulseRepeater = 51,
+  FluxComparator = 52,
+  InverterTorch = 53,
+  Observer = 54,
+  AdhesiveRam = 55,
+  PulseButton = 56,
+  PressurePlate = 57,
+  DaylightSensor = 58,
+  TargetBlock = 59,
+  LatchLamp = 60,
+  NoteEmitter = 61,
+  FrostpineLog = 62,
+  FrostpineLeaves = 63,
+  FrostpinePlanks = 64,
+  Limestone = 65,
+  Marble = 66,
+  Slate = 67,
+  CaveMushroom = 68,
+  GlowMushroom = 69,
+  CrystalSpike = 70,
+  CaveMoss = 71,
+  StoneSlab = 72,
+  StoneStairs = 73,
+  RopeLadder = 74,
+  DeepLantern = 75,
 }
 
 export type ItemId =
   | `block:${BlockId}`
+  | "tool:wood-pick"
+  | "tool:wood-hatchet"
+  | "tool:wood-spade"
+  | "tool:wood-club"
   | "tool:rough-pick"
   | "tool:copper-pick"
   | "tool:crystal-pick"
@@ -97,8 +126,14 @@ export interface MachineState {
   energy: number;
   progress: number;
   delay: number;
-  mode?: "near" | "day" | "night";
+  mode?: "near" | "day" | "night" | "compare" | "subtract";
   recipe?: string;
+  delayTicks?: number;
+  lastInput?: number;
+  observedBlock?: BlockId;
+  pulseTicks?: number;
+  extended?: boolean;
+  note?: number;
   storage: Inventory;
 }
 
@@ -108,6 +143,7 @@ export interface DroppedItemState {
   count: number;
   position: Vec3Data;
   velocity: Vec3Data;
+  pickupDelay?: number;
 }
 
 export interface MobState {
@@ -148,6 +184,20 @@ export interface WorldSave {
   mobs: MobState[];
 }
 
+export type BlockShape =
+  | "cube"
+  | "cross"
+  | "wire"
+  | "plate"
+  | "torch"
+  | "rod"
+  | "hopper"
+  | "slab"
+  | "stair"
+  | "piston"
+  | "column"
+  | "ladder";
+
 export interface BlockDefinition {
   id: BlockId;
   name: string;
@@ -162,6 +212,8 @@ export interface BlockDefinition {
   hardness: number;
   tool: "none" | "pick" | "axe" | "spade";
   collectible: boolean;
+  shape?: BlockShape;
+  collisionHeight?: number;
   automation?:
     | "wire"
     | "source"

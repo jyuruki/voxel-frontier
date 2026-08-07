@@ -4,21 +4,21 @@ Voxel Frontier is an original, mobile-friendly procedural voxel survival, explor
 
 **Play:** [jyuruki.github.io/voxel-frontier](https://jyuruki.github.io/voxel-frontier/)
 
-> Frontiers & Nightfall (Stage 2) expands the Automation Alpha foundation with full Survival and Creative starts, exploration, combat, ruins, hostile nights, animated first-person feedback, and collision-safe creatures. The broader roadmap is tracked in [the feature matrix](docs/FEATURE_MATRIX.md).
+> Depths & Circuits (Stage 3) adds true 3D swimming, buoyant creature movement, extensive connected caves and aquifers, physical block drops, a wooden tool tier, 25 new blocks, twelve world-mesh shapes, and a directional signal toolkit. The broader roadmap is tracked in [the feature matrix](docs/FEATURE_MATRIX.md).
 
 ## Highlights
 
-- Deterministic, endless-by-chunk terrain with six climate regions, caves, water, trees, rare Moonshard seams, and ancient Wayfarer ruins
-- 50 original block types with individually designed procedural pixel textures, plus bespoke illustrated inventory art for every block, tool, weapon, part, food, and consumable
+- Deterministic, endless-by-chunk terrain with six climate regions, large caverns, winding tunnels, vertical rifts, deep aquifers, cave flora, mineral strata, trees, rare Moonshard seams, and Wayfarer ruins
+- 75 original block types with individually generated textures and twelve mesh families: cubes, crossed plants/crystals, thin wire, plates, torches, rods, funnels, slabs, stairs, pistons, columns, and ladders
 - Survival starts with an empty pack; Creative supplies the complete infinite catalog, near-instant mining, and immunity from survival damage
-- Smooth capsule-like player controller with acceleration, friction, coyote time, jump buffering, step-up handling, swimming, crouching, and sprinting
+- Smooth capsule-like controller with acceleration, coyote time, buffering, partial-height collision, step-up handling, and immersion-aware swimming with look steering, drag, buoyancy, ascend, dive, and sprint strokes
 - Optional mobile auto-jump for full one-block rises
-- Attenuating 0–15 logic network with toggle relays, AND/OR/NOT matrices, pulse delay, daylight/night/player sensors, and lamps
-- Energy networks with thermal dynamos, flux cells, drills, conveyors, furnaces, fabricators, collector funnels, crates, and linear rams
+- Directional 0–15 logic with thin connected wire, toggles, buttons, plates, daylight/proximity sensors, gates, repeaters, comparators, inverter torches, observers, targets, memory lamps, and tone blocks
+- Energy networks plus physical-item logistics: dynamos, cells, drills, conveyors, furnaces, fabricators, transferring collector funnels, crates, six-block rams, and adhesive retraction
 - Animated first-person hand and held item, mining swings, attack/place/use motion, and seven progressive block-crack textures
 - Five original creature species, melee and ranged combat, weapon reach/cooldowns/knockback/ammo, health targeting, loot, food, medicine, and night spawning
 - A visible eight-minute day/night orbit with stars, sun, moon, twilight, lighting changes, clock, and day counter
-- Real creature AABB collision, gravity, step-up, obstacle avoidance, crowd separation, and recovery for mobs embedded by an older save
+- Creature AABB/partial-height collision, gravity, water immersion, stable buoyancy and swim drag, step-up, crowd separation, and embedded-save recovery
 - Local autosave every 18 seconds plus compressed, checksummed, copyable world keys
 - Host-authoritative WebRTC rooms that work from static GitHub Pages through an invite/answer-key handshake
 - Responsive touch controls, left-handed layout, graphics presets, render distance, FOV, sensitivity, volume controls, and synthesized audio
@@ -29,11 +29,11 @@ The game needs a browser with WebGL and WebRTC. Current Chrome, Edge, Firefox, a
 
 | Desktop input | Action |
 | --- | --- |
-| `W A S D` | Move |
+| `W A S D` | Move; steer a swim in look direction |
 | Mouse | Look |
-| `Space` | Jump |
+| `Space` | Jump; ascend in water |
 | `Shift` | Sprint |
-| `Ctrl` or `C` | Crouch |
+| `Ctrl` or `C` | Crouch; dive in water |
 | Left mouse | Mine or attack |
 | Right mouse | Place or use held food/medicine |
 | `F` | Interact or configure |
@@ -49,7 +49,7 @@ The game needs a browser with WebGL and WebRTC. Current Chrome, Edge, Firefox, a
 2. The guest pastes that invite under **Join a host** and sends the generated answer back.
 3. The host pastes the answer and accepts it. The host's world snapshot synchronizes automatically.
 
-The connection is peer-to-peer; no account or custom game server is required. The host owns terrain, machines, time, creature simulation, combat validation, damage, and loot so Stage 2 encounters stay synchronized. A restrictive corporate network may block direct WebRTC routes because this release uses public STUN but no paid TURN relay.
+The connection is peer-to-peer; no account or custom game server is required. The host owns terrain, machines, time, creature simulation, combat validation, damage, and loot so Stage 3 encounters stay synchronized. A restrictive corporate network may block direct WebRTC routes because this release uses public STUN but no paid TURN relay.
 
 ## Portable world keys
 
@@ -73,12 +73,12 @@ npm test
 # GitHub Pages output is written to out/
 ```
 
-The 11-test suite covers deterministic terrain and ruin generation, negative chunk coordinates, save-key mode/day round trips and corruption detection, smooth player collision, mobile auto-jump, mob wall collision and embedded-save recovery, weapon differentiation, signal attenuation, gate behavior, and a powered drill production loop. Every push to `main` reruns linting, tests, a production export, and GitHub Pages deployment.
+The 18-test suite additionally covers swimming speed and ascent, stable aquatic creature motion, non-cube shape metadata, extensive deterministic cave voids, directional repeater delay, multi-block pistons, physical-drop funnel transfer, and the wooden-tool progression. Every push to `main` reruns linting, tests, a production export, and GitHub Pages deployment.
 
 ## Architecture
 
 - Next.js/React supplies the responsive shell and menus.
-- Three.js renders face-culled per-chunk voxel surfaces from the runtime-generated atlas.
+- Three.js renders face-culled cubes and shape-aware plants, wire, plates, lights, funnels, slabs, stairs, pistons, columns, and ladders from a runtime-generated atlas.
 - The game simulation is framework-independent TypeScript under `app/game/`.
 - Terrain stores only player mutations; untouched chunks regenerate from the seed.
 - Multiplayer uses browser-native WebRTC data channels with the host as authority.

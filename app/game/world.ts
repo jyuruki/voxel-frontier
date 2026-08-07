@@ -42,14 +42,23 @@ export function chunkIndex(lx: number, y: number, lz: number): number {
 }
 
 function defaultMachineState(id: BlockId): MachineState {
+  const momentary = [BlockId.Toggle, BlockId.PulseButton, BlockId.TargetBlock].includes(id);
   return {
     orientation: 0,
-    enabled: id === BlockId.Toggle ? false : true,
+    enabled: !momentary,
     signal: 0,
     energy: id === BlockId.FluxCell ? 250 : 0,
     progress: 0,
     delay: 0,
-    mode: id === BlockId.ProximitySensor ? "near" : undefined,
+    delayTicks: id === BlockId.PulseRepeater ? 2 : undefined,
+    mode: id === BlockId.ProximitySensor
+      ? "near"
+      : id === BlockId.FluxComparator
+        ? "compare"
+        : undefined,
+    pulseTicks: 0,
+    extended: false,
+    lastInput: 0,
     storage: {},
   };
 }
@@ -119,13 +128,19 @@ export class VoxelWorld {
       return BlockId.Soil;
     }
 
-    const caveLarge = valueNoise3(x / 19, y / 11, z / 19, this.seed ^ 0xc2b2ae35);
-    const caveDetail = valueNoise3(x / 8, y / 7, z / 8, this.seed ^ 0x27d4eb2f);
-    const cave = caveLarge * 0.68 + caveDetail * 0.32;
-    if (y > 3 && y < height - 3 && cave > 0.685) {
-      return y < 7 && hash3(x, y, z, this.seed) % 7 === 0
-        ? BlockId.Water
-        : BlockId.Air;
+    const caveRegion = valueNoise3(x / 52, y / 34, z / 52, this.seed ^ 0x7f4a7c15);
+    const cavernLarge = valueNoise3(x / 23, y / 15, z / 23, this.seed ^ 0xc2b2ae35);
+    const cavernDetail = valueNoise3(x / 9, y / 7, z / 9, this.seed ^ 0x27d4eb2f);
+    const cavernField = cavernLarge * 0.7 + cavernDetail * 0.3;
+    const wormA = Math.abs(valueNoise3(x / 18, y / 12, z / 18, this.seed ^ 0x85ebca6b) - 0.5);
+    const wormB = Math.abs(valueNoise3(x / 17, y / 14, z / 17, this.seed ^ 0x165667b1) - 0.5);
+    const fracture = Math.abs(valueNoise3(x / 36, y / 8, z / 36, this.seed ^ 0xd3a2646c) - 0.5);
+    const cavern = cavernField > 0.625 + Math.max(0, y - 24) * 0.002 && caveRegion > 0.25;
+    const windingTunnel = wormA < 0.105 && wormB < 0.135 && caveRegion > 0.2;
+    const verticalRift = fracture < 0.038 && cavernDetail > 0.46 && y < 25;
+    if (y > 2 && y < height - 2 && (cavern || windingTunnel || verticalRift)) {
+      const aquifer = y < 10 && valueNoise3(x / 31, y / 19, z / 31, this.seed ^ 0x94d049bb) > 0.58;
+      return aquifer ? BlockId.Water : BlockId.Air;
     }
 
     const oreRoll = hash3(x, y, z, this.seed ^ 0x165667b1) % 1000;
@@ -135,6 +150,9 @@ export class VoxelWorld {
     if (y < 35 && oreRoll >= 35 && oreRoll < 68) return BlockId.CoalOre;
     if (biome === "Cinder Reach" && y < 24 && oreRoll > 968) return BlockId.Cinnabar;
     if (biome === "Cinder Reach" && y < 20 && oreRoll > 930) return BlockId.SulfurStone;
+    if (oreRoll > 955 && oreRoll < 974 && y > 8 && y < 31) return BlockId.Marble;
+    if (y < 13) return BlockId.Slate;
+    if (y < 30 && valueNoise3(x / 21, y / 9, z / 21, this.seed ^ 0x51ed270b) > 0.61) return BlockId.Limestone;
     return biome === "Cinder Reach" && y > height - 8 ? BlockId.Basalt : BlockId.Stone;
   }
 
@@ -167,6 +185,21 @@ export class VoxelWorld {
               }
             }
           }
+        } else if (biome === "Frostcap Expanse" && featureRoll < 24) {
+          const trunkHeight = 4 + (hash3(x, 3, z, this.seed) % 3);
+          for (let dy = 1; dy <= trunkHeight; dy += 1) {
+            this.setChunkLocal(chunk, lx, height + dy, lz, BlockId.FrostpineLog);
+          }
+          for (let dy = 2; dy <= trunkHeight + 1; dy += 1) {
+            const radius = Math.max(1, Math.min(2, Math.floor((trunkHeight + 2 - dy) / 2) + 1));
+            for (let dx = -radius; dx <= radius; dx += 1) {
+              for (let dz = -radius; dz <= radius; dz += 1) {
+                if (Math.abs(dx) + Math.abs(dz) <= radius + 1 && !(dx === 0 && dz === 0 && dy <= trunkHeight)) {
+                  this.setChunkLocal(chunk, lx + dx, height + dy, lz + dz, BlockId.FrostpineLeaves);
+                }
+              }
+            }
+          }
         } else if (biome === "Sunscar Dunes" && featureRoll < 12) {
           const cactusHeight = 2 + (featureRoll % 3);
           for (let dy = 1; dy <= cactusHeight; dy += 1) {
@@ -183,6 +216,31 @@ export class VoxelWorld {
       }
     }
     this.addRuinLandmark(chunk);
+  }
+
+  private addCaveFeatures(chunk: ChunkData): void {
+    for (let y = 2; y < WORLD_HEIGHT - 2; y += 1) {
+      for (let lz = 1; lz < CHUNK_SIZE - 1; lz += 1) {
+        for (let lx = 1; lx < CHUNK_SIZE - 1; lx += 1) {
+          const index = chunkIndex(lx, y, lz);
+          const id = chunk.blocks[index] as BlockId;
+          if (id !== BlockId.Air) continue;
+          const below = chunk.blocks[chunkIndex(lx, y - 1, lz)] as BlockId;
+          const above = chunk.blocks[chunkIndex(lx, y + 1, lz)] as BlockId;
+          const worldX = chunk.cx * CHUNK_SIZE + lx;
+          const worldZ = chunk.cz * CHUNK_SIZE + lz;
+          if (y >= this.getHeight(worldX, worldZ) - 2) continue;
+          const roll = hash3(worldX, y, worldZ, this.seed ^ 0xa4093822) % 1000;
+          const floor = BLOCKS[below].solid;
+          const headroom = above === BlockId.Air || above === BlockId.Water;
+          if (!floor || !headroom) continue;
+          if (roll < 4 && y < 20) chunk.blocks[index] = BlockId.CrystalSpike;
+          else if (roll < 10 && y < 28) chunk.blocks[index] = BlockId.GlowMushroom;
+          else if (roll < 19) chunk.blocks[index] = BlockId.CaveMushroom;
+          else if (roll < 48) chunk.blocks[index] = BlockId.CaveMoss;
+        }
+      }
+    }
   }
 
   private addRuinLandmark(chunk: ChunkData): void {
@@ -275,6 +333,7 @@ export class VoxelWorld {
       }
     }
     this.addSurfaceFeatures(chunk);
+    this.addCaveFeatures(chunk);
     for (const [keyString, id] of this.mutations) {
       const [x, y, z] = keyString.split(",").map(Number);
       if (floorDiv(x, CHUNK_SIZE) === cx && floorDiv(z, CHUNK_SIZE) === cz) {
@@ -329,8 +388,15 @@ export class VoxelWorld {
     if (lz === CHUNK_SIZE - 1) this.dirtyChunks.add(chunkKey(cx, cz + 1));
   }
 
+  getCollisionHeight(x: number, y: number, z: number): number {
+    const definition = BLOCKS[this.getBlock(x, y, z)];
+    if (!definition.solid) return 0;
+    return definition.collisionHeight ?? 1;
+  }
+
   isSolid(x: number, y: number, z: number): boolean {
-    return BLOCKS[this.getBlock(x, y, z)].solid;
+    const by = Math.floor(y);
+    return this.getCollisionHeight(x, by, z) > y - by;
   }
 
   findSpawn(): Vec3Data {

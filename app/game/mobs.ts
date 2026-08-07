@@ -1,4 +1,4 @@
-import { ItemId, MobState } from "./types";
+import { BlockId, ItemId, MobState } from "./types";
 import { VoxelWorld } from "./world";
 
 export interface MobDefinition {
@@ -8,6 +8,7 @@ export interface MobDefinition {
   height: number;
   passive: boolean;
   speed: number;
+  waterSpeed: number;
   damage: number;
   reach: number;
   loot: Array<{ item: ItemId; min: number; max: number }>;
@@ -21,6 +22,7 @@ export const MOB_DEFINITIONS: Record<MobState["kind"], MobDefinition> = {
     height: 1.18,
     passive: true,
     speed: 0.72,
+    waterSpeed: 0.82,
     damage: 0,
     reach: 0,
     loot: [{ item: "food:glowcut", min: 1, max: 2 }],
@@ -32,6 +34,7 @@ export const MOB_DEFINITIONS: Record<MobState["kind"], MobDefinition> = {
     height: 1.05,
     passive: false,
     speed: 2.05,
+    waterSpeed: 1.72,
     damage: 6,
     reach: 1.2,
     loot: [{ item: "part:carapace", min: 1, max: 2 }],
@@ -43,6 +46,7 @@ export const MOB_DEFINITIONS: Record<MobState["kind"], MobDefinition> = {
     height: 1.24,
     passive: false,
     speed: 2.2,
+    waterSpeed: 0.76,
     damage: 9,
     reach: 1.25,
     loot: [{ item: "part:cinder-core", min: 1, max: 1 }],
@@ -54,6 +58,7 @@ export const MOB_DEFINITIONS: Record<MobState["kind"], MobDefinition> = {
     height: 1.28,
     passive: false,
     speed: 1.35,
+    waterSpeed: 0.72,
     damage: 12,
     reach: 1.45,
     loot: [{ item: "part:carapace", min: 2, max: 4 }],
@@ -65,6 +70,7 @@ export const MOB_DEFINITIONS: Record<MobState["kind"], MobDefinition> = {
     height: 0.88,
     passive: false,
     speed: 2.65,
+    waterSpeed: 1.58,
     damage: 7,
     reach: 1.1,
     loot: [{ item: "part:moonshard", min: 1, max: 2 }],
@@ -72,6 +78,19 @@ export const MOB_DEFINITIONS: Record<MobState["kind"], MobDefinition> = {
 };
 
 const EPSILON = 0.002;
+
+export function mobWaterImmersion(
+  world: VoxelWorld,
+  mob: Pick<MobState, "kind" | "position">,
+): number {
+  const definition = MOB_DEFINITIONS[mob.kind];
+  const heights = [0.12, definition.height * 0.52, definition.height * 0.9];
+  let wet = 0;
+  for (const height of heights) {
+    if (world.getBlock(mob.position.x, mob.position.y + height, mob.position.z) === BlockId.Water) wet += 1;
+  }
+  return wet / heights.length;
+}
 
 export function mobIntersectsSolid(
   world: VoxelWorld,
@@ -88,7 +107,12 @@ export function mobIntersectsSolid(
   for (let x = minX; x <= maxX; x += 1) {
     for (let y = minY; y <= maxY; y += 1) {
       for (let z = minZ; z <= maxZ; z += 1) {
-        if (world.isSolid(x, y, z)) return true;
+        const collisionHeight = world.getCollisionHeight(x, y, z);
+        if (
+          collisionHeight > 0 &&
+          position.y < y + collisionHeight - EPSILON &&
+          position.y + definition.height > y + EPSILON
+        ) return true;
       }
     }
   }
@@ -153,20 +177,42 @@ export function moveMobWithCollision(
   dt: number,
   desiredX: number,
   desiredZ: number,
-): { blocked: boolean; grounded: boolean } {
+  desiredY = 0,
+): { blocked: boolean; grounded: boolean; inWater: boolean } {
   const safeDt = Math.min(0.08, Math.max(0, dt));
   resolveMobPenetration(world, mob);
-  const blend = 1 - Math.exp(-7 * safeDt);
-  mob.velocity.x += (desiredX - mob.velocity.x) * blend;
-  mob.velocity.z += (desiredZ - mob.velocity.z) * blend;
-  mob.velocity.y = Math.max(-18, mob.velocity.y - 19 * safeDt);
+  const immersion = mobWaterImmersion(world, mob);
+  const inWater = immersion > 0;
+  const definition = MOB_DEFINITIONS[mob.kind];
+
+  if (inWater) {
+    const magnitude = Math.hypot(desiredX, desiredZ);
+    if (magnitude > definition.waterSpeed && magnitude > 0) {
+      desiredX = (desiredX / magnitude) * definition.waterSpeed;
+      desiredZ = (desiredZ / magnitude) * definition.waterSpeed;
+    }
+    const waterBlend = 1 - Math.exp(-5.8 * safeDt);
+    mob.velocity.x += (desiredX - mob.velocity.x) * waterBlend;
+    mob.velocity.z += (desiredZ - mob.velocity.z) * waterBlend;
+    const buoyancy = immersion < 0.67 ? 0.72 : 0.08;
+    const targetY = Math.abs(desiredY) > 0.05 ? Math.max(-1.8, Math.min(1.8, desiredY)) : buoyancy;
+    mob.velocity.y += (targetY - mob.velocity.y) * (1 - Math.exp(-4.8 * safeDt));
+    const drag = Math.exp(-0.85 * safeDt);
+    mob.velocity.x *= drag;
+    mob.velocity.z *= drag;
+  } else {
+    const blend = 1 - Math.exp(-7 * safeDt);
+    mob.velocity.x += (desiredX - mob.velocity.x) * blend;
+    mob.velocity.z += (desiredZ - mob.velocity.z) * blend;
+    mob.velocity.y = Math.max(-18, mob.velocity.y - 19 * safeDt);
+  }
 
   const start = { ...mob.position };
   const hitX = moveAxis(world, mob, "x", mob.velocity.x * safeDt);
   const hitZ = moveAxis(world, mob, "z", mob.velocity.z * safeDt);
   let blocked = hitX || hitZ;
 
-  if (blocked && grounded(world, { ...mob, position: start })) {
+  if (!inWater && blocked && grounded(world, { ...mob, position: start })) {
     const flat = { ...mob.position };
     mob.position = { ...start, y: start.y + 1.02 };
     if (!mobIntersectsSolid(world, mob)) {
@@ -183,5 +229,5 @@ export function moveMobWithCollision(
   const hitY = moveAxis(world, mob, "y", mob.velocity.y * safeDt);
   const onGround = hitY && falling;
   if (onGround) mob.velocity.y = 0;
-  return { blocked, grounded: onGround || grounded(world, mob) };
+  return { blocked, grounded: onGround || (!inWater && grounded(world, mob)), inWater };
 }

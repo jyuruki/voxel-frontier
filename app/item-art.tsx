@@ -59,6 +59,31 @@ const BLOCK_ART: Record<BlockId, BlockArt> = {
   [BlockId.MoonshardBlock]: { mark: "✦", accent: "#d5dcff", texture: "crystal" },
   [BlockId.WayfinderBrazier]: { mark: "♨", accent: "#fff09a", texture: "circuit" },
   [BlockId.AshGlass]: { mark: "◩", accent: "#e2eef0", texture: "glass" },
+  [BlockId.PulseRepeater]: { mark: "Ⅱ", accent: "#ff9b72", texture: "circuit" },
+  [BlockId.FluxComparator]: { mark: "≷", accent: "#ffb087", texture: "circuit" },
+  [BlockId.InverterTorch]: { mark: "¬", accent: "#ff6f65", texture: "circuit" },
+  [BlockId.Observer]: { mark: "◉", accent: "#d4eff2", texture: "circuit" },
+  [BlockId.AdhesiveRam]: { mark: "⇆", accent: "#b7df9c", texture: "circuit" },
+  [BlockId.PulseButton]: { mark: "•", accent: "#ffd39b", texture: "circuit" },
+  [BlockId.PressurePlate]: { mark: "▭", accent: "#e6c18f", texture: "circuit" },
+  [BlockId.DaylightSensor]: { mark: "☀", accent: "#ffe6a1", texture: "circuit" },
+  [BlockId.TargetBlock]: { mark: "◎", accent: "#e84f52", texture: "circuit" },
+  [BlockId.LatchLamp]: { mark: "L", accent: "#fff07d", texture: "circuit" },
+  [BlockId.NoteEmitter]: { mark: "♪", accent: "#f0bd78", texture: "grain" },
+  [BlockId.FrostpineLog]: { mark: "◎", accent: "#d8d0b9", texture: "grain" },
+  [BlockId.FrostpineLeaves]: { mark: "♠", accent: "#9ed5cb", texture: "organic" },
+  [BlockId.FrostpinePlanks]: { mark: "≡", accent: "#eee1bd", texture: "grain" },
+  [BlockId.Limestone]: { mark: "≈", accent: "#eee9d7", texture: "brick" },
+  [BlockId.Marble]: { mark: "⌇", accent: "#ffffff", texture: "crystal" },
+  [BlockId.Slate]: { mark: "≣", accent: "#91a8b8", texture: "brick" },
+  [BlockId.CaveMushroom]: { mark: "♟", accent: "#ffc18c", texture: "organic" },
+  [BlockId.GlowMushroom]: { mark: "♟", accent: "#9ffff0", texture: "organic" },
+  [BlockId.CrystalSpike]: { mark: "△", accent: "#c3ffff", texture: "crystal" },
+  [BlockId.CaveMoss]: { mark: "⌁", accent: "#a7d596", texture: "organic" },
+  [BlockId.StoneSlab]: { mark: "▬", accent: "#c6ccce", texture: "brick" },
+  [BlockId.StoneStairs]: { mark: "▟", accent: "#c9ced0", texture: "brick" },
+  [BlockId.RopeLadder]: { mark: "╫", accent: "#e6b77d", texture: "grain" },
+  [BlockId.DeepLantern]: { mark: "✺", accent: "#fff0a1", texture: "circuit" },
 };
 
 function darker(hex: string, factor: number): string {
@@ -88,6 +113,75 @@ function BlockItemArt({ id }: { id: BlockId }) {
               : art.texture === "crystal"
                 ? <><path d="M25 23l7-5 8 10-7 16-10-9zM32 18v26M23 35l17-7" /></>
                 : <><path d="M17 40L43 21M29 46l20-20" /></>;
+  const shape = definition.shape ?? "cube";
+  if (shape !== "cube") {
+    const common = { fill: color, stroke: art.accent, strokeWidth: 2 } as const;
+    return (
+      <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+        {shape === "cross" ? (
+          <>
+            <path d="M30 58h5V30h-5z" fill={left} />
+            <path d="M32 35C15 31 10 20 19 12c8-7 14 1 14 8 2-9 11-14 17-6 7 9-3 18-18 21z" {...common} />
+            <path d="M31 42l-13 8M34 46l12 7" stroke={art.accent} strokeWidth="4" />
+          </>
+        ) : shape === "wire" ? (
+          <>
+            <path d="M7 43l25-14 25 14-25 14z" fill={darker(color, .42)} stroke="#d9fff5" strokeOpacity=".35" />
+            <path d="M11 43h17l4-7 5 7h16M32 36V20M24 47l8-4 8 4" fill="none" stroke={art.accent} strokeWidth="5" />
+            <circle cx="32" cy="36" r="4" fill="#fff2c7" />
+          </>
+        ) : shape === "plate" ? (
+          <>
+            <path d="M8 42l24-13 24 13-24 14z" fill={left} stroke={art.accent} strokeWidth="2" />
+            <path d="M14 42l18-9 18 9-18 9z" fill={color} />
+            <circle cx="25" cy="42" r="4" fill={art.accent} /><circle cx="40" cy="39" r="4" fill={art.accent} />
+            <text x="32" y="25" textAnchor="middle" fill={art.accent} fontSize="15" fontWeight="900">{art.mark}</text>
+          </>
+        ) : shape === "torch" || shape === "rod" ? (
+          <>
+            <path d="M27 58l2-34h7l2 34z" fill={left} stroke="#241b16" strokeWidth="2" />
+            <path d="M21 29l5-17h12l6 17-12 9z" fill={color} stroke={art.accent} strokeWidth="3" />
+            <path d="M27 18h11M24 25h17" stroke={art.accent} strokeWidth="2" />
+          </>
+        ) : shape === "hopper" ? (
+          <>
+            <path d="M7 14h50l-8 22-12 8v14H27V44l-12-8z" fill={color} stroke={art.accent} strokeWidth="2" />
+            <path d="M15 20h34L42 33H22z" fill="#13282a" />
+            <path d="M20 37h24" stroke={art.accent} strokeWidth="3" />
+          </>
+        ) : shape === "slab" ? (
+          <>
+            <path d="M7 31l25-14 25 14-25 14z" fill={color} stroke={art.accent} strokeWidth="2" />
+            <path d="M7 31l25 14v12L7 43z" fill={left} /><path d="M57 31L32 45v12l25-14z" fill={right} />
+            <path d="M16 35l16 9 16-9" fill="none" stroke={art.accent} strokeWidth="2" />
+          </>
+        ) : shape === "stair" ? (
+          <>
+            <path d="M9 46h16V34h15V21h15v36H9z" fill={color} stroke={art.accent} strokeWidth="2" />
+            <path d="M9 46l13 7h33v4H9z" fill={left} />
+          </>
+        ) : shape === "piston" ? (
+          <>
+            <path d="M9 24h33v28H9z" fill={left} stroke={art.accent} strokeWidth="2" />
+            <path d="M42 30h9v16h-9zM51 25h7v26h-7z" fill={color} stroke={art.accent} strokeWidth="2" />
+            <path d="M16 31h18M16 39h18M16 47h18" stroke={art.accent} strokeWidth="3" />
+          </>
+        ) : shape === "column" ? (
+          <>
+            <path d="M22 8h20v50H22z" fill={color} stroke={art.accent} strokeWidth="2" />
+            <path d="M22 20h-9v17h9M42 27h9v17h-9" fill="none" stroke={art.accent} strokeWidth="5" />
+            <path d="M28 13v40M36 13v40" stroke={art.accent} strokeOpacity=".55" strokeWidth="2" />
+          </>
+        ) : shape === "ladder" ? (
+          <>
+            <path d="M16 5h7v54h-7zM41 5h7v54h-7z" fill={left} />
+            {[13, 25, 37, 49].map((y) => <path key={y} d={`M20 ${y}h24v6H20z`} fill={color} stroke={art.accent} strokeWidth="1" />)}
+          </>
+        ) : null}
+      </svg>
+    );
+  }
+
   return (
     <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
       <path d="M8 20L32 7l24 13-24 14z" fill={color} stroke="#eafff7" strokeOpacity=".38" strokeWidth="1.4" />
@@ -105,6 +199,10 @@ function PickArt({ head }: { head: string }) {
 }
 
 function NonBlockItemArt({ item }: { item: ItemId }) {
+  if (item === "tool:wood-pick") return <PickArt head="#b47746" />;
+  if (item === "tool:wood-hatchet") return <><path d="M26 10l22 9-7 17-17-7z" fill="#a96b3f" /><path d="M29 25l7 4-14 30-7-4z" fill="#825235" /><path d="M38 17l9 4-4 8z" fill="#e0a76c" /></>;
+  if (item === "tool:wood-spade") return <><path d="M30 7h7v33h-7z" fill="#8b5736" /><path d="M22 39l12-6 12 6-4 17-8 5-9-5z" fill="#b47746" /><path d="M26 5h15v6H26z" fill="#d39a61" /></>;
+  if (item === "tool:wood-club") return <><path d="M38 5l13 7-19 37-9-5z" fill="#9b613a" /><path d="M16 41l18 10-5 10-18-10z" fill="#6f472f" /><path d="M39 10l8 5M35 19l8 5M31 28l8 5" stroke="#e0a76c" strokeWidth="3" /></>;
   if (item === "tool:rough-pick") return <PickArt head="#8f999b" />;
   if (item === "tool:copper-pick") return <PickArt head="#d88657" />;
   if (item === "tool:crystal-pick") return <PickArt head="#72eee2" />;

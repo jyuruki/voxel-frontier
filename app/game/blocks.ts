@@ -18,6 +18,7 @@ const block = (
   hardness: 1,
   tool: "pick",
   collectible: true,
+  shape: "cube",
   ...overrides,
 });
 
@@ -88,12 +89,16 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
     tool: "axe",
   }),
   [BlockId.FluxWire]: block(BlockId.FluxWire, "Flux Conduit", "#ca5a3f", "Carries logic signals and machine power.", {
+    solid: false,
     hardness: 0.25,
+    shape: "wire",
     automation: "wire",
     emissive: 0.12,
   }),
   [BlockId.Toggle]: block(BlockId.Toggle, "Toggle Relay", "#c78b47", "A player-controlled signal source.", {
+    solid: false,
     hardness: 0.5,
+    shape: "plate",
     automation: "source",
   }),
   [BlockId.FluxLamp]: block(BlockId.FluxLamp, "Flux Lamp", "#f4c95d", "Lights when it receives a signal.", {
@@ -116,6 +121,8 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
   }),
   [BlockId.Conveyor]: block(BlockId.Conveyor, "Vector Belt", "#36434b", "Moves loose resources in its facing direction.", {
     hardness: 1.4,
+    shape: "slab",
+    collisionHeight: 0.28,
     automation: "machine",
   }),
   [BlockId.ArcFurnace]: block(BlockId.ArcFurnace, "Arc Furnace", "#4b555e", "Processes ores using network energy.", {
@@ -126,33 +133,45 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
     hardness: 2.8,
     automation: "machine",
   }),
-  [BlockId.Ram]: block(BlockId.Ram, "Linear Ram", "#6b6971", "Pushes one block when its input rises.", {
+  [BlockId.Ram]: block(BlockId.Ram, "Linear Ram", "#6b6971", "Pushes a line of blocks when its input rises.", {
     hardness: 2,
+    shape: "piston",
     automation: "machine",
   }),
   [BlockId.ProximitySensor]: block(BlockId.ProximitySensor, "Field Sensor", "#6d72a8", "Detects players, daylight, or darkness.", {
+    solid: false,
     hardness: 0.8,
+    shape: "plate",
     automation: "source",
     emissive: 0.15,
   }),
   [BlockId.AndGate]: block(BlockId.AndGate, "AND Matrix", "#436f80", "Outputs only with at least two live inputs.", {
+    solid: false,
     hardness: 0.65,
+    shape: "plate",
     automation: "logic",
   }),
   [BlockId.OrGate]: block(BlockId.OrGate, "OR Matrix", "#486e69", "Outputs when any input is live.", {
+    solid: false,
     hardness: 0.65,
+    shape: "plate",
     automation: "logic",
   }),
   [BlockId.NotGate]: block(BlockId.NotGate, "NOT Matrix", "#725b86", "Inverts its input state.", {
+    solid: false,
     hardness: 0.65,
+    shape: "plate",
     automation: "logic",
   }),
   [BlockId.DelayGate]: block(BlockId.DelayGate, "Pulse Delay", "#845e78", "Delays a signal by four simulation beats.", {
+    solid: false,
     hardness: 0.65,
+    shape: "plate",
     automation: "logic",
   }),
-  [BlockId.Hopper]: block(BlockId.Hopper, "Collector Funnel", "#4d5859", "Collects loose items into adjacent storage.", {
+  [BlockId.Hopper]: block(BlockId.Hopper, "Collector Funnel", "#4d5859", "Collects loose items and transfers them into facing storage.", {
     hardness: 1.5,
+    shape: "hopper",
     automation: "machine",
   }),
   [BlockId.Crate]: block(BlockId.Crate, "Cargo Crate", "#8d603b", "Stores resources for automation networks.", {
@@ -161,7 +180,9 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
     automation: "storage",
   }),
   [BlockId.GlowRod]: block(BlockId.GlowRod, "Glow Rod", "#f0a94b", "A steady handmade light source.", {
+    solid: false,
     hardness: 0.15,
+    shape: "rod",
     emissive: 0.8,
   }),
   [BlockId.Basalt]: block(BlockId.Basalt, "Night Basalt", "#393b44", "Dense volcanic rock.", { hardness: 2.6 }),
@@ -175,6 +196,7 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
   }),
   [BlockId.SunCactus]: block(BlockId.SunCactus, "Sun Cactus", "#578a4e", "A hardy desert plant.", {
     hardness: 0.35,
+    shape: "column",
     tool: "none",
   }),
   [BlockId.StarBloom]: block(BlockId.StarBloom, "Starbloom", "#d56c97", "A luminous prairie flower.", {
@@ -182,6 +204,7 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
     opaque: false,
     hardness: 0.1,
     tool: "none",
+    shape: "cross",
     emissive: 0.2,
   }),
   [BlockId.Bedrock]: block(BlockId.Bedrock, "Deepstone", "#20252a", "The unbreakable floor of the frontier.", {
@@ -209,7 +232,9 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
     tool: "axe",
   }),
   [BlockId.Thornvine]: block(BlockId.Thornvine, "Thornvine", "#476143", "Dense living thorns that slow careless travelers.", {
+    solid: false,
     opaque: false,
+    shape: "cross",
     hardness: 0.3,
     tool: "axe",
   }),
@@ -218,12 +243,89 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
     emissive: 0.42,
   }),
   [BlockId.WayfinderBrazier]: block(BlockId.WayfinderBrazier, "Wayfinder Brazier", "#d47b42", "An old beacon that still burns without fuel.", {
+    solid: false,
     hardness: 1.6,
+    shape: "torch",
     emissive: 0.95,
   }),
   [BlockId.AshGlass]: block(BlockId.AshGlass, "Ashglass", "#9aa7ad", "Smoky translucent glass fused in volcanic heat.", {
     opaque: false,
     hardness: 0.45,
+  }),
+  [BlockId.PulseRepeater]: block(BlockId.PulseRepeater, "Pulse Repeater", "#9a644d", "Carries a full-strength signal forward after a configurable delay.", {
+    solid: false, hardness: 0.35, shape: "plate", automation: "logic",
+  }),
+  [BlockId.FluxComparator]: block(BlockId.FluxComparator, "Flux Comparator", "#8f5a51", "Compares or subtracts rear and side signal strengths.", {
+    solid: false, hardness: 0.4, shape: "plate", automation: "logic",
+  }),
+  [BlockId.InverterTorch]: block(BlockId.InverterTorch, "Inverter Torch", "#e35d52", "Emits a signal until its rear input is powered.", {
+    solid: false, hardness: 0.15, shape: "torch", automation: "logic", emissive: 0.62,
+  }),
+  [BlockId.Observer]: block(BlockId.Observer, "Change Observer", "#68777d", "Pulses when the block in front of its sensing face changes.", {
+    hardness: 1.7, automation: "logic",
+  }),
+  [BlockId.AdhesiveRam]: block(BlockId.AdhesiveRam, "Adhesive Ram", "#65715f", "Pushes a block line and pulls the nearest block back on retraction.", {
+    hardness: 2.2, shape: "piston", automation: "machine",
+  }),
+  [BlockId.PulseButton]: block(BlockId.PulseButton, "Pulse Button", "#b9855c", "A compact manual source that emits a short pulse.", {
+    solid: false, hardness: 0.2, shape: "plate", automation: "source",
+  }),
+  [BlockId.PressurePlate]: block(BlockId.PressurePlate, "Presence Plate", "#a48867", "Outputs while a player, creature, or dropped item rests on it.", {
+    solid: false, hardness: 0.25, shape: "plate", automation: "source",
+  }),
+  [BlockId.DaylightSensor]: block(BlockId.DaylightSensor, "Sun Dial", "#bc945c", "Outputs an analog signal based on daylight.", {
+    solid: false, hardness: 0.45, shape: "plate", automation: "source",
+  }),
+  [BlockId.TargetBlock]: block(BlockId.TargetBlock, "Pulse Target", "#d8c69a", "Emits a pulse when used or struck.", {
+    hardness: 0.8, automation: "source",
+  }),
+  [BlockId.LatchLamp]: block(BlockId.LatchLamp, "Memory Lamp", "#d6a957", "Toggles its lit state on each rising signal edge.", {
+    hardness: 0.55, automation: "sink", emissive: 0.48,
+  }),
+  [BlockId.NoteEmitter]: block(BlockId.NoteEmitter, "Tone Block", "#8c6248", "Plays a synthesized tone on a rising signal.", {
+    hardness: 0.9, tool: "axe", automation: "sink",
+  }),
+  [BlockId.FrostpineLog]: block(BlockId.FrostpineLog, "Frostpine Log", "#66584e", "Pale, tight-grained alpine timber.", {
+    hardness: 1.35, tool: "axe",
+  }),
+  [BlockId.FrostpineLeaves]: block(BlockId.FrostpineLeaves, "Frostpine Needles", "#4f7270", "Cold blue-green alpine foliage.", {
+    opaque: false, hardness: 0.24, tool: "none",
+  }),
+  [BlockId.FrostpinePlanks]: block(BlockId.FrostpinePlanks, "Frostpine Planks", "#aaa18c", "Clean pale planks cut from frostpine.", {
+    hardness: 1.05, tool: "axe",
+  }),
+  [BlockId.Limestone]: block(BlockId.Limestone, "Cloud Limestone", "#b9b5a5", "Soft banded cave stone.", {
+    hardness: 1.45,
+  }),
+  [BlockId.Marble]: block(BlockId.Marble, "Veiled Marble", "#d4d0c8", "Bright stone threaded with dark mineral veins.", {
+    hardness: 2.1,
+  }),
+  [BlockId.Slate]: block(BlockId.Slate, "Deep Slate", "#424d58", "Layered stone compressed in the lower reaches.", {
+    hardness: 2.7,
+  }),
+  [BlockId.CaveMushroom]: block(BlockId.CaveMushroom, "Coppercap", "#b76f49", "A broad cave fungus that grows on dry ledges.", {
+    solid: false, opaque: false, hardness: 0.08, tool: "none", shape: "cross",
+  }),
+  [BlockId.GlowMushroom]: block(BlockId.GlowMushroom, "Lumenbell", "#58c9b4", "A luminous fungus found beside deep aquifers.", {
+    solid: false, opaque: false, hardness: 0.08, tool: "none", shape: "cross", emissive: 0.55,
+  }),
+  [BlockId.CrystalSpike]: block(BlockId.CrystalSpike, "Aether Spike", "#78ded7", "A narrow crystal growth from resonant caverns.", {
+    solid: false, opaque: false, hardness: 1.6, shape: "cross", emissive: 0.32,
+  }),
+  [BlockId.CaveMoss]: block(BlockId.CaveMoss, "Velvet Cave Moss", "#587756", "A soft mat that marks humid cave floors.", {
+    solid: false, opaque: false, hardness: 0.05, tool: "none", shape: "plate",
+  }),
+  [BlockId.StoneSlab]: block(BlockId.StoneSlab, "Roughstone Slab", "#777b7d", "A half-height building slab.", {
+    hardness: 1.5, shape: "slab", collisionHeight: 0.5,
+  }),
+  [BlockId.StoneStairs]: block(BlockId.StoneStairs, "Roughstone Steps", "#7d8182", "Two-tier stone steps.", {
+    hardness: 1.7, shape: "stair", collisionHeight: 0.5,
+  }),
+  [BlockId.RopeLadder]: block(BlockId.RopeLadder, "Ember Rope Ladder", "#9d7048", "A slim climbing lattice for shafts and towers.", {
+    solid: false, opaque: false, hardness: 0.2, tool: "axe", shape: "ladder",
+  }),
+  [BlockId.DeepLantern]: block(BlockId.DeepLantern, "Deep Lantern", "#e4bb62", "A caged lamp built for long cave expeditions.", {
+    solid: false, hardness: 0.3, shape: "rod", emissive: 0.9,
   }),
 };
 
@@ -242,6 +344,10 @@ export function blockForItem(item: ItemId | null): BlockId | null {
 }
 
 export const ITEM_NAMES: Record<string, string> = {
+  "tool:wood-pick": "Emberwood Pick",
+  "tool:wood-hatchet": "Emberwood Hand Axe",
+  "tool:wood-spade": "Emberwood Spade",
+  "tool:wood-club": "Emberwood Club",
   "tool:rough-pick": "Roughstone Pick",
   "tool:copper-pick": "Copper Pick",
   "tool:crystal-pick": "Aether Pick",
@@ -278,6 +384,10 @@ export const RECIPES: Recipe[] = [
   { id: "planks", name: "Cut Planks", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodLog)]: 1 }, output: { item: itemForBlock(BlockId.EmberwoodPlanks), count: 4 }, description: "Shape one log into four building planks." },
   { id: "stone-spear", name: "Roughstone Spear", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2, [itemForBlock(BlockId.Stone)]: 1 }, output: { item: "tool:stone-spear", count: 1 }, description: "An early reach weapon for surviving the first night." },
   { id: "workbench", name: "Tinker Bench", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 4 }, output: { item: itemForBlock(BlockId.Workbench), count: 1 }, description: "Required for engineered components." },
+  { id: "wood-pick", name: "Emberwood Pick", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 3 }, output: { item: "tool:wood-pick", count: 1 }, description: "The first mining tool; harvests roughstone, coal, limestone, and slate." },
+  { id: "wood-hatchet", name: "Emberwood Hand Axe", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 3 }, output: { item: "tool:wood-hatchet", count: 1 }, description: "A simple timber tool for faster logging." },
+  { id: "wood-spade", name: "Emberwood Spade", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, output: { item: "tool:wood-spade", count: 1 }, description: "An early tool for soil, clay, snow, and sand." },
+  { id: "wood-club", name: "Emberwood Club", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, output: { item: "tool:wood-club", count: 1 }, description: "Basic protection while preparing for the first night." },
   { id: "rough-pick", name: "Roughstone Pick", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2, [itemForBlock(BlockId.Stone)]: 3 }, output: { item: "tool:rough-pick", count: 1 }, description: "Mines stone and basic ores efficiently." },
   { id: "hatchet", name: "Emberwood Hatchet", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2, [itemForBlock(BlockId.Stone)]: 2 }, output: { item: "tool:hatchet", count: 1 }, description: "Fells timber and clears thornvine quickly." },
   { id: "spade", name: "Field Spade", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2, [itemForBlock(BlockId.Stone)]: 1 }, output: { item: "tool:spade", count: 1 }, description: "Moves soil, sand and snow efficiently." },
@@ -305,9 +415,27 @@ export const RECIPES: Recipe[] = [
   { id: "or", name: "OR Matrix", station: "workbench", inputs: { "part:logic-wafer": 1 }, output: { item: itemForBlock(BlockId.OrGate), count: 1 }, description: "Accepts any active neighbor." },
   { id: "not", name: "NOT Matrix", station: "workbench", inputs: { "part:logic-wafer": 1, [itemForBlock(BlockId.AetherCrystal)]: 1 }, output: { item: itemForBlock(BlockId.NotGate), count: 1 }, description: "Inverts its input." },
   { id: "delay", name: "Pulse Delay", station: "workbench", inputs: { "part:logic-wafer": 1, "part:flux-coil": 1 }, output: { item: itemForBlock(BlockId.DelayGate), count: 1 }, description: "Adds four beats of delay." },
+  { id: "pulse-repeater", name: "Pulse Repeater", station: "workbench", inputs: { "part:logic-wafer": 1, "part:copper-ingot": 2, [itemForBlock(BlockId.StoneSlab)]: 1 }, output: { item: itemForBlock(BlockId.PulseRepeater), count: 1 }, description: "Restores signal strength with a directional delay." },
+  { id: "flux-comparator", name: "Flux Comparator", station: "workbench", inputs: { "part:logic-wafer": 2, "part:copper-ingot": 2, [itemForBlock(BlockId.AetherCrystal)]: 1 }, output: { item: itemForBlock(BlockId.FluxComparator), count: 1 }, description: "Compares rear and side analog signals." },
+  { id: "inverter-torch", name: "Inverter Torch", station: "workbench", inputs: { "part:copper-ingot": 1, [itemForBlock(BlockId.GlowRod)]: 1 }, output: { item: itemForBlock(BlockId.InverterTorch), count: 2 }, description: "A compact normally-on inverter." },
+  { id: "observer", name: "Change Observer", station: "workbench", inputs: { "part:logic-wafer": 2, [itemForBlock(BlockId.Stone)]: 4, [itemForBlock(BlockId.AetherCrystal)]: 1 }, output: { item: itemForBlock(BlockId.Observer), count: 1 }, description: "Pulses when its watched block changes." },
+  { id: "ram", name: "Linear Ram", station: "workbench", inputs: { "part:gear": 2, "part:copper-ingot": 3, [itemForBlock(BlockId.StoneBrick)]: 3 }, output: { item: itemForBlock(BlockId.Ram), count: 1 }, description: "Pushes up to six movable blocks." },
+  { id: "adhesive-ram", name: "Adhesive Ram", station: "workbench", inputs: { "part:gear": 2, "part:copper-ingot": 3, [itemForBlock(BlockId.Thornvine)]: 2 }, output: { item: itemForBlock(BlockId.AdhesiveRam), count: 1 }, description: "Pushes on extension and pulls on retraction." },
+  { id: "button", name: "Pulse Button", station: "workbench", inputs: { [itemForBlock(BlockId.Stone)]: 1, "part:copper-ingot": 1 }, output: { item: itemForBlock(BlockId.PulseButton), count: 2 }, description: "Emits a short manual pulse." },
+  { id: "pressure-plate", name: "Presence Plate", station: "workbench", inputs: { [itemForBlock(BlockId.StoneSlab)]: 1, "part:copper-ingot": 1 }, output: { item: itemForBlock(BlockId.PressurePlate), count: 1 }, description: "Detects players, creatures, and loose items." },
+  { id: "daylight-sensor", name: "Sun Dial", station: "workbench", inputs: { [itemForBlock(BlockId.Glass)]: 2, "part:logic-wafer": 1, [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, output: { item: itemForBlock(BlockId.DaylightSensor), count: 1 }, description: "Measures daylight as signal strength." },
+  { id: "hopper", name: "Collector Funnel", station: "workbench", inputs: { "part:copper-ingot": 4, [itemForBlock(BlockId.Crate)]: 1 }, output: { item: itemForBlock(BlockId.Hopper), count: 1 }, description: "Collects and transfers loose resources." },
+  { id: "stone-slabs", name: "Roughstone Slabs", station: "hand", inputs: { [itemForBlock(BlockId.Stone)]: 3 }, output: { item: itemForBlock(BlockId.StoneSlab), count: 6 }, description: "Half-height pieces for compact construction." },
+  { id: "stone-steps", name: "Roughstone Steps", station: "workbench", inputs: { [itemForBlock(BlockId.Stone)]: 4 }, output: { item: itemForBlock(BlockId.StoneStairs), count: 4 }, description: "Smooth two-tier steps." },
+  { id: "frostpine-planks", name: "Cut Frostpine Planks", station: "hand", inputs: { [itemForBlock(BlockId.FrostpineLog)]: 1 }, output: { item: itemForBlock(BlockId.FrostpinePlanks), count: 4 }, description: "Cut pale alpine timber into planks." },
+  { id: "deep-lantern", name: "Deep Lantern", station: "workbench", inputs: { [itemForBlock(BlockId.GlowRod)]: 1, "part:copper-ingot": 2, [itemForBlock(BlockId.Glass)]: 1 }, output: { item: itemForBlock(BlockId.DeepLantern), count: 1 }, description: "A bright caged light for cave expeditions." },
 ];
 
 export const TOOL_POWER: Record<string, number> = {
+  "tool:wood-pick": 1.45,
+  "tool:wood-hatchet": 1.75,
+  "tool:wood-spade": 1.65,
+  "tool:wood-club": 0.9,
   "tool:rough-pick": 2.1,
   "tool:copper-pick": 3.4,
   "tool:crystal-pick": 5.2,
@@ -375,8 +503,53 @@ function textureDetail(blockId: BlockId, x: number, y: number): number {
     case BlockId.MoonshardBlock: return x === 7 || x === 8 || y === 7 || y === 8 || x === y || x + y === 15 ? 0.26 : -0.06;
     case BlockId.WayfinderBrazier: return y > 4 && Math.abs(x - 8) < Math.max(2, 8 - y / 2) ? 0.34 : -0.13;
     case BlockId.AshGlass: return x === y + 3 || x + y === 12 || (x + y) % 19 === 0 ? 0.2 : -0.09;
+    case BlockId.PulseRepeater: return y === 7 || y === 8 || (x === 5 && y > 4 && y < 12) ? 0.24 : -0.08;
+    case BlockId.FluxComparator: return x === 4 || x === 11 || (y === 8 && x > 4 && x < 12) ? 0.23 : -0.09;
+    case BlockId.InverterTorch: return x > 6 && x < 10 && y > 2 ? 0.32 : -0.12;
+    case BlockId.Observer: return Math.hypot(x - 8, y - 8) < 4 ? 0.22 : (x + y) % 8 === 0 ? -0.12 : 0;
+    case BlockId.AdhesiveRam: return (x > 3 && x < 12 && y > 3 && y < 12) ? 0.13 : -0.1;
+    case BlockId.PulseButton: return Math.abs(x - 8) + Math.abs(y - 8) < 5 ? 0.28 : -0.1;
+    case BlockId.PressurePlate: return x === 2 || x === 13 || y === 2 || y === 13 ? 0.18 : -0.04;
+    case BlockId.DaylightSensor: return (x + y) % 4 === 0 ? 0.19 : -0.08;
+    case BlockId.TargetBlock: return Math.floor(Math.hypot(x - 7.5, y - 7.5)) % 4 < 2 ? 0.2 : -0.14;
+    case BlockId.LatchLamp: return Math.abs(x - 7.5) + Math.abs(y - 7.5) < 7 ? 0.28 : -0.11;
+    case BlockId.NoteEmitter: return (x - 8) ** 2 + (y - 8) ** 2 < 20 ? -0.18 : (x + y) % 7 === 0 ? 0.12 : 0;
+    case BlockId.FrostpineLog: return x % 3 === 0 ? -0.12 : y % 6 === 0 ? 0.09 : 0;
+    case BlockId.FrostpineLeaves: return (x * 7 + y * 3) % 11 === 0 ? 0.17 : -0.02;
+    case BlockId.FrostpinePlanks: return y % 4 === 0 ? -0.12 : x % 7 === 0 ? 0.08 : 0;
+    case BlockId.Limestone: return y % 5 === 0 || y % 5 === 1 ? -0.08 : (x + y) % 17 === 0 ? 0.1 : 0;
+    case BlockId.Marble: return Math.abs(x - ((y * 5 + 3) % 16)) < 2 ? -0.16 : 0.04;
+    case BlockId.Slate: return y % 3 === 0 ? -0.1 : x % 9 === 0 ? 0.08 : 0;
+    case BlockId.CaveMushroom: return y < 7 ? 0.2 : x > 6 && x < 10 ? -0.03 : -0.12;
+    case BlockId.GlowMushroom: return y < 8 ? 0.29 : x > 6 && x < 10 ? 0.08 : -0.13;
+    case BlockId.CrystalSpike: return Math.abs(x - 8) < Math.max(1, y / 5) ? 0.28 : -0.12;
+    case BlockId.CaveMoss: return (x * 3 + y * 7) % 9 < 3 ? 0.16 : -0.07;
+    case BlockId.StoneSlab: return y === 7 || (x + y) % 13 === 0 ? -0.13 : 0;
+    case BlockId.StoneStairs: return y === 5 || y === 10 || x === 8 ? -0.13 : 0.03;
+    case BlockId.RopeLadder: return x === 3 || x === 12 || y % 5 === 0 ? 0.17 : -0.13;
+    case BlockId.DeepLantern: return (x > 4 && x < 12 && y > 3 && y < 13) ? 0.32 : -0.13;
     default: return 0;
   }
+}
+
+function plantPixel(blockId: BlockId, x: number, y: number): boolean {
+  if (blockId === BlockId.StarBloom) {
+    const stem = x >= 7 && x <= 8 && y >= 7;
+    const petals = Math.abs(x - 7.5) + Math.abs(y - 5.5) <= 4.2 || ((x === 3 || x === 12) && y >= 4 && y <= 7);
+    return stem || petals;
+  }
+  if (blockId === BlockId.CaveMushroom || blockId === BlockId.GlowMushroom) {
+    const cap = y >= 3 && y <= 7 && Math.abs(x - 7.5) <= 6 - Math.abs(y - 5);
+    const stem = x >= 6 && x <= 9 && y >= 7;
+    return cap || stem;
+  }
+  if (blockId === BlockId.CrystalSpike) {
+    return y >= 1 && Math.abs(x - 7.5) <= Math.max(0.8, (y - 1) * 0.32);
+  }
+  if (blockId === BlockId.Thornvine) {
+    return Math.abs(x - y) <= 1 || Math.abs(x + y - 15) <= 1 || (x + y * 3) % 17 === 0;
+  }
+  return true;
 }
 
 function paintTile(
@@ -397,7 +570,9 @@ function paintTile(
       image.data[index] = Math.max(0, Math.min(255, (base.r + offset) * 255));
       image.data[index + 1] = Math.max(0, Math.min(255, (base.g + offset) * 255));
       image.data[index + 2] = Math.max(0, Math.min(255, (base.b + offset) * 255));
-      image.data[index + 3] = [BlockId.EmberwoodLeaves, BlockId.Thornvine].includes(blockId) && hash3(x, y, blockId, 17) % 9 === 0 ? 0 : 255;
+      const cutoutLeaves = [BlockId.EmberwoodLeaves, BlockId.FrostpineLeaves].includes(blockId) && hash3(x, y, blockId, 17) % 9 === 0;
+      const cutoutPlant = BLOCKS[blockId].shape === "cross" && !plantPixel(blockId, x, y);
+      image.data[index + 3] = cutoutLeaves || cutoutPlant ? 0 : 255;
     }
   }
   context.putImageData(image, column * TILE_SIZE, row * TILE_SIZE);
@@ -452,4 +627,15 @@ export const AUTOMATION_BLOCKS = [
   BlockId.DelayGate,
   BlockId.Hopper,
   BlockId.Crate,
+  BlockId.PulseRepeater,
+  BlockId.FluxComparator,
+  BlockId.InverterTorch,
+  BlockId.Observer,
+  BlockId.AdhesiveRam,
+  BlockId.PulseButton,
+  BlockId.PressurePlate,
+  BlockId.DaylightSensor,
+  BlockId.TargetBlock,
+  BlockId.LatchLamp,
+  BlockId.NoteEmitter,
 ];

@@ -25,12 +25,10 @@ const MACHINE_COST: Partial<Record<BlockId, number>> = {
   [BlockId.Conveyor]: 2,
   [BlockId.ArcFurnace]: 10,
   [BlockId.Fabricator]: 15,
-  [BlockId.Ram]: 8,
-  [BlockId.Hopper]: 2,
 };
 
 export interface AutomationEvent {
-  type: "mined" | "smelted" | "crafted" | "pushed" | "fuel";
+  type: "mined" | "smelted" | "crafted" | "pushed" | "pulled" | "fuel" | "note";
   position: Vec3Data;
   item?: ItemId;
 }
@@ -48,16 +46,57 @@ function adjacentKeys(key: string): string[] {
   return NEIGHBORS.map((offset) => worldKey(x + offset.x, y + offset.y, z + offset.z));
 }
 
+function directionalOutputTarget(
+  world: VoxelWorld,
+  key: string,
+  id: BlockId,
+  state: MachineState,
+): string | null {
+  const [x, y, z] = parseWorldKey(key);
+  const facing = FACING[state.orientation];
+  if (id === BlockId.PulseRepeater || id === BlockId.FluxComparator) {
+    return worldKey(x + facing.x, y, z + facing.z);
+  }
+  if (id === BlockId.Observer) {
+    return worldKey(x - facing.x, y, z - facing.z);
+  }
+  return null;
+}
+
+function emittedSignal(world: VoxelWorld, sourceKey: string, targetKey: string): number {
+  const state = world.machines.get(sourceKey);
+  if (!state) return 0;
+  const [x, y, z] = parseWorldKey(sourceKey);
+  const id = world.getBlock(x, y, z);
+  const directional = directionalOutputTarget(world, sourceKey, id, state);
+  return directional && directional !== targetKey ? 0 : state.signal;
+}
+
 function maxAdjacentSignal(world: VoxelWorld, key: string): number {
   let maximum = 0;
   for (const neighbor of adjacentKeys(key)) {
-    maximum = Math.max(maximum, world.machines.get(neighbor)?.signal ?? 0);
+    maximum = Math.max(maximum, emittedSignal(world, neighbor, key));
   }
   return maximum;
 }
 
 function activeAdjacentSignals(world: VoxelWorld, key: string): number {
-  return adjacentKeys(key).filter((neighbor) => (world.machines.get(neighbor)?.signal ?? 0) > 0).length;
+  return adjacentKeys(key).filter((neighbor) => emittedSignal(world, neighbor, key) > 0).length;
+}
+
+function rearKey(key: string, state: MachineState): string {
+  const [x, y, z] = parseWorldKey(key);
+  const facing = FACING[state.orientation];
+  return worldKey(x - facing.x, y, z - facing.z);
+}
+
+function sideKeys(key: string, state: MachineState): [string, string] {
+  const [x, y, z] = parseWorldKey(key);
+  const facing = FACING[state.orientation];
+  return [
+    worldKey(x + facing.z, y, z - facing.x),
+    worldKey(x - facing.z, y, z + facing.x),
+  ];
 }
 
 function sensorOutput(
@@ -73,71 +112,161 @@ function sensorOutput(
   ) ? 15 : 0;
 }
 
-function propagateSignals(world: VoxelWorld, players: Vec3Data[], timeOfDay: number): void {
-  for (let pass = 0; pass < 3; pass += 1) {
-    const previous = new Map<string, number>();
-    for (const [key, state] of world.machines) previous.set(key, state.signal);
+function daylightOutput(timeOfDay: number): number {
+  const daylight = Math.sin(((timeOfDay - 0.2) / 0.56) * Math.PI);
+  return Math.max(0, Math.min(15, Math.round(daylight * 15)));
+}
 
-    for (const [key, state] of world.machines) {
-      const [x, y, z] = parseWorldKey(key);
-      const id = world.getBlock(x, y, z);
-      state.signal = 0;
-      if (id === BlockId.Toggle) state.signal = state.enabled ? 15 : 0;
-      else if (id === BlockId.ProximitySensor) {
-        state.signal = sensorOutput(state, { x, y, z }, players, timeOfDay);
-      } else if (id === BlockId.AndGate) {
-        const count = adjacentKeys(key).filter((neighbor) => (previous.get(neighbor) ?? 0) > 0).length;
-        state.signal = count >= 2 ? 15 : 0;
-      } else if (id === BlockId.OrGate) {
-        const count = adjacentKeys(key).filter((neighbor) => (previous.get(neighbor) ?? 0) > 0).length;
-        state.signal = count >= 1 ? 15 : 0;
-      } else if (id === BlockId.NotGate) {
-        const count = adjacentKeys(key).filter((neighbor) => (previous.get(neighbor) ?? 0) > 0).length;
-        state.signal = count === 0 ? 15 : 0;
-      } else if (id === BlockId.DelayGate) {
-        const active = adjacentKeys(key).some((neighbor) => (previous.get(neighbor) ?? 0) > 0);
-        state.delay = active ? Math.min(4, state.delay + 1) : 0;
-        state.signal = state.delay >= 4 ? 15 : 0;
-      }
-    }
+function entityOnPlate(world: VoxelWorld, position: Vec3Data, players: Vec3Data[]): boolean {
+  const near = (entity: Vec3Data) =>
+    Math.abs(entity.x - (position.x + 0.5)) < 0.72 &&
+    Math.abs(entity.z - (position.z + 0.5)) < 0.72 &&
+    entity.y >= position.y - 0.15 &&
+    entity.y <= position.y + 1.35;
+  return players.some(near) || world.mobs.some((mob) => near(mob.position)) || world.drops.some((drop) => near(drop.position));
+}
 
-    const queue: Array<[string, number]> = [];
-    for (const [key, state] of world.machines) {
-      const [x, y, z] = parseWorldKey(key);
-      const id = world.getBlock(x, y, z);
-      if (state.signal > 0 && id !== BlockId.FluxWire) queue.push([key, state.signal]);
-    }
-    let cursor = 0;
-    while (cursor < queue.length) {
-      const [key, strength] = queue[cursor++];
-      if (strength <= 1) continue;
-      for (const neighbor of adjacentKeys(key)) {
-        const state = world.machines.get(neighbor);
-        if (!state) continue;
-        const [nx, ny, nz] = parseWorldKey(neighbor);
-        if (world.getBlock(nx, ny, nz) !== BlockId.FluxWire) continue;
-        const nextSignal = strength - 1;
-        if (state.signal < nextSignal) {
-          state.signal = nextSignal;
-          queue.push([neighbor, nextSignal]);
-        }
-      }
-    }
+function analogAt(world: VoxelWorld, key: string): number {
+  const state = world.machines.get(key);
+  if (!state) return 0;
+  const stored = Object.values(state.storage).reduce((sum, count) => sum + count, 0);
+  return Math.max(state.signal, Math.min(15, Math.ceil(stored / 4)));
+}
 
-    for (const [key, state] of world.machines) {
-      const [x, y, z] = parseWorldKey(key);
-      const id = world.getBlock(x, y, z);
-      if (
-        id !== BlockId.FluxWire &&
-        id !== BlockId.Toggle &&
-        id !== BlockId.ProximitySensor &&
-        id !== BlockId.AndGate &&
-        id !== BlockId.OrGate &&
-        id !== BlockId.NotGate &&
-        id !== BlockId.DelayGate
-      ) state.signal = maxAdjacentSignal(world, key);
+function updatePrimarySources(world: VoxelWorld, players: Vec3Data[], timeOfDay: number): void {
+  for (const [key, state] of world.machines) {
+    const [x, y, z] = parseWorldKey(key);
+    const id = world.getBlock(x, y, z);
+    if (id === BlockId.FluxWire) state.signal = 0;
+    else if (id === BlockId.Toggle) state.signal = state.enabled ? 15 : 0;
+    else if (id === BlockId.PulseButton || id === BlockId.TargetBlock) {
+      state.signal = (state.pulseTicks ?? 0) > 0 ? 15 : 0;
+      state.pulseTicks = Math.max(0, (state.pulseTicks ?? 0) - 1);
+    } else if (id === BlockId.ProximitySensor) {
+      state.signal = sensorOutput(state, { x, y, z }, players, timeOfDay);
+    } else if (id === BlockId.PressurePlate) {
+      state.signal = entityOnPlate(world, { x, y, z }, players) ? 15 : 0;
+    } else if (id === BlockId.DaylightSensor) {
+      state.signal = daylightOutput(timeOfDay);
     }
   }
+}
+
+function updateLogic(world: VoxelWorld): void {
+  for (const [key, state] of world.machines) {
+    const [x, y, z] = parseWorldKey(key);
+    const id = world.getBlock(x, y, z);
+    if (id === BlockId.AndGate) {
+      state.signal = activeAdjacentSignals(world, key) >= 2 ? 15 : 0;
+    } else if (id === BlockId.OrGate) {
+      state.signal = activeAdjacentSignals(world, key) >= 1 ? 15 : 0;
+    } else if (id === BlockId.NotGate) {
+      state.signal = activeAdjacentSignals(world, key) === 0 ? 15 : 0;
+    } else if (id === BlockId.DelayGate) {
+      const active = activeAdjacentSignals(world, key) > 0;
+      state.delay = active ? Math.min(4, state.delay + 1) : 0;
+      state.signal = state.delay >= 4 ? 15 : 0;
+    } else if (id === BlockId.PulseRepeater) {
+      const input = emittedSignal(world, rearKey(key, state), key);
+      const targetDelay = Math.max(1, Math.min(4, state.delayTicks ?? 2));
+      state.delay = input > 0 ? Math.min(targetDelay, state.delay + 1) : 0;
+      state.signal = state.delay >= targetDelay ? 15 : 0;
+    } else if (id === BlockId.FluxComparator) {
+      const rear = analogAt(world, rearKey(key, state));
+      const sides = sideKeys(key, state).map((side) => emittedSignal(world, side, key));
+      const side = Math.max(...sides);
+      state.signal = state.mode === "subtract"
+        ? Math.max(0, rear - side)
+        : rear >= side
+          ? rear
+          : 0;
+    } else if (id === BlockId.InverterTorch) {
+      state.signal = emittedSignal(world, rearKey(key, state), key) > 0 ? 0 : 15;
+    } else if (id === BlockId.Observer) {
+      const facing = FACING[state.orientation];
+      const observed = world.getBlock(x + facing.x, y, z + facing.z);
+      if (state.observedBlock !== undefined && observed !== state.observedBlock) state.pulseTicks = 2;
+      state.observedBlock = observed;
+      state.signal = (state.pulseTicks ?? 0) > 0 ? 15 : 0;
+      state.pulseTicks = Math.max(0, (state.pulseTicks ?? 0) - 1);
+    }
+  }
+}
+
+function propagateWires(world: VoxelWorld): void {
+  const queue: Array<[string, number]> = [];
+  for (const [key, state] of world.machines) {
+    const [x, y, z] = parseWorldKey(key);
+    const id = world.getBlock(x, y, z);
+    if (state.signal <= 0 || id === BlockId.FluxWire) continue;
+    const directional = directionalOutputTarget(world, key, id, state);
+    if (directional) {
+      const [dx, dy, dz] = parseWorldKey(directional);
+      if (world.machines.has(directional) && world.getBlock(dx, dy, dz) === BlockId.FluxWire) {
+        const wire = world.machines.get(directional)!;
+        const strength = Math.max(0, state.signal - 1);
+        if (wire.signal < strength) {
+          wire.signal = strength;
+          queue.push([directional, strength]);
+        }
+      }
+    } else queue.push([key, state.signal]);
+  }
+
+  let cursor = 0;
+  while (cursor < queue.length) {
+    const [key, strength] = queue[cursor++];
+    if (strength <= 1) continue;
+    for (const neighbor of adjacentKeys(key)) {
+      const state = world.machines.get(neighbor);
+      if (!state) continue;
+      const [nx, ny, nz] = parseWorldKey(neighbor);
+      if (world.getBlock(nx, ny, nz) !== BlockId.FluxWire) continue;
+      const nextSignal = strength - 1;
+      if (state.signal < nextSignal) {
+        state.signal = nextSignal;
+        queue.push([neighbor, nextSignal]);
+      }
+    }
+  }
+}
+
+function updateSignalConsumers(world: VoxelWorld, events: AutomationEvent[]): void {
+  const logicIds = new Set<BlockId>([
+    BlockId.FluxWire, BlockId.Toggle, BlockId.ProximitySensor, BlockId.AndGate,
+    BlockId.OrGate, BlockId.NotGate, BlockId.DelayGate, BlockId.PulseRepeater,
+    BlockId.FluxComparator, BlockId.InverterTorch, BlockId.Observer,
+    BlockId.PulseButton, BlockId.PressurePlate, BlockId.DaylightSensor, BlockId.TargetBlock,
+  ]);
+  for (const [key, state] of world.machines) {
+    const [x, y, z] = parseWorldKey(key);
+    const id = world.getBlock(x, y, z);
+    if (logicIds.has(id)) continue;
+    const input = maxAdjacentSignal(world, key);
+    if (id === BlockId.LatchLamp) {
+      if (input > 0 && (state.lastInput ?? 0) === 0) state.enabled = !state.enabled;
+      state.lastInput = input;
+      state.signal = state.enabled ? 15 : 0;
+    } else {
+      state.signal = input;
+      if (id === BlockId.NoteEmitter && input > 0 && (state.lastInput ?? 0) === 0) {
+        events.push({ type: "note", position: { x, y, z } });
+      }
+      state.lastInput = input;
+    }
+  }
+}
+
+function propagateSignals(
+  world: VoxelWorld,
+  players: Vec3Data[],
+  timeOfDay: number,
+  events: AutomationEvent[],
+): void {
+  updatePrimarySources(world, players, timeOfDay);
+  updateLogic(world);
+  propagateWires(world);
+  updateSignalConsumers(world, events);
 }
 
 function componentFrom(world: VoxelWorld, start: string, visited: Set<string>): string[] {
@@ -170,6 +299,7 @@ function spawnDrop(
     count,
     position: { ...position },
     velocity: { ...velocity },
+    pickupDelay: 0.28,
   };
   world.drops.push(drop);
   return drop;
@@ -215,11 +345,7 @@ function runConveyor(world: VoxelWorld, key: string, state: MachineState): void 
   }
 }
 
-function runFurnace(
-  state: MachineState,
-  position: Vec3Data,
-  events: AutomationEvent[],
-): void {
+function runFurnace(state: MachineState, position: Vec3Data, events: AutomationEvent[]): void {
   const ore = itemForBlock(BlockId.CopperOre);
   if (itemCount(state.storage, ore) <= 0) {
     state.progress = 0;
@@ -233,11 +359,7 @@ function runFurnace(
   events.push({ type: "smelted", position, item: "part:copper-ingot" });
 }
 
-function runFabricator(
-  state: MachineState,
-  position: Vec3Data,
-  events: AutomationEvent[],
-): void {
+function runFabricator(state: MachineState, position: Vec3Data, events: AutomationEvent[]): void {
   const recipe = state.recipe ?? "flux-coil";
   const recipes: Record<string, { inputs: Array<[ItemId, number]>; output: ItemId }> = {
     "flux-coil": {
@@ -267,38 +389,106 @@ function runFabricator(
 }
 
 function runHopper(world: VoxelWorld, key: string, state: MachineState): void {
+  if (!state.enabled) return;
   const [x, y, z] = parseWorldKey(key);
   const facing = FACING[state.orientation];
   const outputKey = worldKey(x + facing.x, y, z + facing.z);
   const output = world.machines.get(outputKey);
-  const storage = output?.storage ?? state.storage;
   for (let index = world.drops.length - 1; index >= 0; index -= 1) {
     const drop = world.drops[index];
-    if (Math.hypot(drop.position.x - (x + 0.5), drop.position.y - (y + 0.5), drop.position.z - (z + 0.5)) < 1.45) {
-      addItem(storage, drop.item, drop.count);
+    if (Math.hypot(drop.position.x - (x + 0.5), drop.position.y - (y + 0.65), drop.position.z - (z + 0.5)) < 1.2) {
+      addItem(state.storage, drop.item, drop.count);
       world.drops.splice(index, 1);
+    }
+  }
+  if (!output) return;
+  const entry = Object.entries(state.storage).find(([, count]) => count > 0);
+  if (!entry) return;
+  const [item] = entry as [ItemId, number];
+  addItem(state.storage, item, -1);
+  addItem(output.storage, item, 1);
+}
+
+function movable(id: BlockId): boolean {
+  return id !== BlockId.Air && id !== BlockId.Water && id !== BlockId.Bedrock && id !== BlockId.RelicCache;
+}
+
+function cloneMachine(state: MachineState | undefined): MachineState | undefined {
+  return state ? { ...state, storage: { ...state.storage } } : undefined;
+}
+
+function pushLine(world: VoxelWorld, key: string, state: MachineState): boolean {
+  const [x, y, z] = parseWorldKey(key);
+  const facing = FACING[state.orientation];
+  const line: Array<{ x: number; y: number; z: number; id: BlockId; state?: MachineState }> = [];
+  for (let distance = 1; distance <= 7; distance += 1) {
+    const position = { x: x + facing.x * distance, y, z: z + facing.z * distance };
+    const id = world.getBlock(position.x, position.y, position.z);
+    if (id === BlockId.Air || id === BlockId.Water) {
+      for (let index = line.length - 1; index >= 0; index -= 1) {
+        const source = line[index];
+        const destination = {
+          x: source.x + facing.x,
+          y: source.y,
+          z: source.z + facing.z,
+        };
+        world.setBlock(destination.x, destination.y, destination.z, source.id);
+        if (source.state) world.machines.set(worldKey(destination.x, destination.y, destination.z), source.state);
+      }
+      if (line.length > 0) world.setBlock(line[0].x, line[0].y, line[0].z, BlockId.Air);
+      return true;
+    }
+    if (!movable(id) || distance > 6) return false;
+    line.push({
+      ...position,
+      id,
+      state: cloneMachine(world.machines.get(worldKey(position.x, position.y, position.z))),
+    });
+  }
+  return false;
+}
+
+function pullBlock(world: VoxelWorld, key: string, state: MachineState): boolean {
+  const [x, y, z] = parseWorldKey(key);
+  const facing = FACING[state.orientation];
+  const front = { x: x + facing.x, y, z: z + facing.z };
+  const source = { x: x + facing.x * 2, y, z: z + facing.z * 2 };
+  const id = world.getBlock(source.x, source.y, source.z);
+  if (world.getBlock(front.x, front.y, front.z) !== BlockId.Air || !movable(id)) return false;
+  const machine = cloneMachine(world.machines.get(worldKey(source.x, source.y, source.z)));
+  world.setBlock(front.x, front.y, front.z, id);
+  if (machine) world.machines.set(worldKey(front.x, front.y, front.z), machine);
+  world.setBlock(source.x, source.y, source.z, BlockId.Air);
+  return true;
+}
+
+function runPistons(world: VoxelWorld, events: AutomationEvent[]): void {
+  for (const [key, state] of Array.from(world.machines)) {
+    const [x, y, z] = parseWorldKey(key);
+    const id = world.getBlock(x, y, z);
+    if (id !== BlockId.Ram && id !== BlockId.AdhesiveRam) continue;
+    const powered = state.signal > 0 && state.enabled;
+    if (powered && !state.extended) {
+      if (pushLine(world, key, state)) {
+        state.extended = true;
+        events.push({ type: "pushed", position: { x, y, z } });
+      }
+    } else if (!powered && state.extended) {
+      state.extended = false;
+      if (id === BlockId.AdhesiveRam && pullBlock(world, key, state)) {
+        events.push({ type: "pulled", position: { x, y, z } });
+      }
     }
   }
 }
 
-function runRam(
-  world: VoxelWorld,
-  key: string,
-  state: MachineState,
-  events: AutomationEvent[],
-): void {
-  const rising = state.signal > 0 && state.delay === 0;
-  state.delay = state.signal > 0 ? 1 : 0;
-  if (!rising) return;
-  const [x, y, z] = parseWorldKey(key);
-  const facing = FACING[state.orientation];
-  const front = { x: x + facing.x, y, z: z + facing.z };
-  const destination = { x: front.x + facing.x, y, z: front.z + facing.z };
-  const id = world.getBlock(front.x, front.y, front.z);
-  if (id === BlockId.Air || id === BlockId.Bedrock || world.getBlock(destination.x, destination.y, destination.z) !== BlockId.Air) return;
-  world.setBlock(destination.x, destination.y, destination.z, id);
-  world.setBlock(front.x, front.y, front.z, BlockId.Air);
-  events.push({ type: "pushed", position: { x, y, z } });
+function runUnpoweredDevices(world: VoxelWorld, events: AutomationEvent[]): void {
+  for (const [key, state] of Array.from(world.machines)) {
+    const [x, y, z] = parseWorldKey(key);
+    const id = world.getBlock(x, y, z);
+    if (id === BlockId.Hopper) runHopper(world, key, state);
+  }
+  runPistons(world, events);
 }
 
 function runPoweredMachine(
@@ -314,15 +504,9 @@ function runPoweredMachine(
   else if (id === BlockId.Conveyor) runConveyor(world, key, state);
   else if (id === BlockId.ArcFurnace) runFurnace(state, position, events);
   else if (id === BlockId.Fabricator) runFabricator(state, position, events);
-  else if (id === BlockId.Hopper) runHopper(world, key, state);
-  else if (id === BlockId.Ram) runRam(world, key, state, events);
 }
 
-function distributeEnergy(
-  world: VoxelWorld,
-  component: string[],
-  events: AutomationEvent[],
-): void {
+function distributeEnergy(world: VoxelWorld, component: string[], events: AutomationEvent[]): void {
   let available = 0;
   const consumers: Array<[string, MachineState, BlockId, number]> = [];
   const cells: MachineState[] = [];
@@ -379,7 +563,8 @@ function distributeEnergy(
 export class AutomationSystem {
   tick(world: VoxelWorld, players: Vec3Data[], timeOfDay: number): AutomationEvent[] {
     const events: AutomationEvent[] = [];
-    propagateSignals(world, players, timeOfDay);
+    propagateSignals(world, players, timeOfDay, events);
+    runUnpoweredDevices(world, events);
     const visited = new Set<string>();
     for (const key of world.machines.keys()) {
       if (visited.has(key)) continue;
@@ -403,4 +588,3 @@ export class AutomationSystem {
     };
   }
 }
-

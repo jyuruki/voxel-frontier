@@ -5,7 +5,7 @@ export type NetworkMessage =
   | { type: "snapshot"; save: WorldSave }
   | { type: "request-snapshot" }
   | { type: "block"; x: number; y: number; z: number; id: BlockId }
-  | { type: "request-block"; x: number; y: number; z: number; id: BlockId }
+  | { type: "request-block"; x: number; y: number; z: number; id: BlockId; item?: ItemId | null }
   | { type: "machine"; key: string; state: MachineState }
   | { type: "player"; player: PlayerSnapshot }
   | { type: "mob-state"; mobs: MobState[]; drops: DroppedItemState[]; timeOfDay: number; dayCount: number }

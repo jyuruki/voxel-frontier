@@ -85,15 +85,15 @@ function creativeInventory(): Inventory {
 function defaultHotbar(mode: GameMode): Array<ItemId | null> {
   if (mode === "survival") return Array<ItemId | null>(HOTBAR_SIZE).fill(null);
   return [
-    "tool:rough-pick",
+    "tool:crystal-pick",
     itemForBlock(BlockId.Stone),
     itemForBlock(BlockId.FluxWire),
     itemForBlock(BlockId.Toggle),
-    itemForBlock(BlockId.ThermalGenerator),
-    itemForBlock(BlockId.BoreDrill),
-    itemForBlock(BlockId.Conveyor),
-    itemForBlock(BlockId.Hopper),
-    itemForBlock(BlockId.FluxLamp),
+    itemForBlock(BlockId.PulseRepeater),
+    itemForBlock(BlockId.FluxComparator),
+    itemForBlock(BlockId.InverterTorch),
+    itemForBlock(BlockId.Observer),
+    itemForBlock(BlockId.Ram),
   ];
 }
 
@@ -198,7 +198,20 @@ function formatFrontierTime(timeOfDay: number): string {
   return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")} · ${phase}`;
 }
 
-function paintBlockUv(geometry: THREE.BoxGeometry, id: BlockId): void {
+function blockVisualBounds(id: BlockId): { x: number; y: number; z: number } {
+  const definition = BLOCKS[id];
+  const shape = definition.shape ?? "cube";
+  if (shape === "wire") return { x: 0.94, y: 0.08, z: 0.94 };
+  if (shape === "plate") return { x: 0.88, y: 0.2, z: 0.88 };
+  if (shape === "cross") return { x: 0.92, y: 0.96, z: 0.92 };
+  if (shape === "torch" || shape === "rod") return { x: 0.4, y: 0.96, z: 0.4 };
+  if (shape === "slab") return { x: 1, y: definition.collisionHeight ?? 0.5, z: 1 };
+  if (shape === "column") return { x: 0.64, y: 1, z: 0.64 };
+  if (shape === "ladder") return { x: 0.72, y: 1, z: 0.16 };
+  return { x: 1, y: 1, z: 1 };
+}
+
+function paintBlockUv(geometry: THREE.BufferGeometry, id: BlockId): void {
   const uv = tileUv(id);
   const attribute = geometry.getAttribute("uv") as THREE.BufferAttribute;
   for (let index = 0; index < attribute.count; index += 1) {
@@ -387,8 +400,8 @@ export class GameEngine {
       this.spawnInitialMobs();
     }
     this.objective = this.mode === "creative"
-      ? "Creative systems online — build, explore, or test a factory."
-      : "Gather Emberwood by hand and prepare for nightfall.";
+      ? "Creative systems online — prototype a directional circuit or map the deep."
+      : "Gather Emberwood, build a bench, and craft your first wooden tools.";
 
     this.audio = new FrontierAudio(this.settings, this.world.seedText);
     this.renderer = new THREE.WebGLRenderer({
@@ -632,7 +645,9 @@ export class GameEngine {
     this.targetedMob = this.findTargetedMob(direction, reach);
     if (this.currentHit && !this.targetedMob) {
       const { x, y, z } = this.currentHit.block;
-      this.selection.position.set(x + 0.5, y + 0.5, z + 0.5);
+      const bounds = blockVisualBounds(this.currentHit.id);
+      this.selection.position.set(x + 0.5, y + bounds.y / 2, z + 0.5);
+      this.selection.scale.set(bounds.x, bounds.y, bounds.z);
       this.selection.visible = true;
     } else {
       this.selection.visible = false;
@@ -695,9 +710,25 @@ export class GameEngine {
     const power = selected ? TOOL_POWER[selected] ?? 0.62 : 0.62;
     if (block.tool === "none") return Math.max(1, power);
     if (block.tool === "pick" && selected?.includes("pick")) return power;
-    if (block.tool === "axe" && selected === "tool:hatchet") return power;
-    if (block.tool === "spade" && selected === "tool:spade") return power;
+    if (block.tool === "axe" && ["tool:wood-hatchet", "tool:hatchet"].includes(selected ?? "")) return power;
+    if (block.tool === "spade" && ["tool:wood-spade", "tool:spade"].includes(selected ?? "")) return power;
     return 0.48;
+  }
+
+  private canHarvest(id: BlockId, selected: ItemId | null): boolean {
+    const definition = BLOCKS[id];
+    if (!definition.collectible) return false;
+    if (definition.tool !== "pick") return true;
+    const woodenTier = ["tool:wood-pick", "tool:rough-pick", "tool:copper-pick", "tool:crystal-pick"];
+    const stoneTier = ["tool:rough-pick", "tool:copper-pick", "tool:crystal-pick"];
+    const copperTier = ["tool:copper-pick", "tool:crystal-pick"];
+    if ([BlockId.AetherCrystal, BlockId.MoonshardOre].includes(id)) return copperTier.includes(selected ?? "");
+    if ([BlockId.CopperOre, BlockId.Cinnabar, BlockId.SulfurStone].includes(id)) return stoneTier.includes(selected ?? "");
+    return woodenTier.includes(selected ?? "");
+  }
+
+  private blockDrop(id: BlockId): ItemId {
+    return id === BlockId.StarBloom ? "food:starfruit" : itemForBlock(id);
   }
 
   private mineTarget(dt: number): void {
@@ -722,8 +753,9 @@ export class GameEngine {
       this.miningProgress = 0;
     }
     this.miningProgress += (dt * this.toolPower(id)) / Math.max(0.15, BLOCKS[id].hardness);
-    this.breakOverlay.position.set(x + 0.5, y + 0.5, z + 0.5);
-    this.breakOverlay.scale.setScalar(1);
+    const bounds = blockVisualBounds(id);
+    this.breakOverlay.position.set(x + 0.5, y + bounds.y / 2, z + 0.5);
+    this.breakOverlay.scale.set(bounds.x, bounds.y, bounds.z);
     this.breakOverlay.material = this.breakMaterials[Math.min(6, Math.floor(Math.max(0, this.miningProgress) * 7))];
     this.breakOverlay.visible = true;
     if (this.mineSoundTimer <= 0) {
@@ -733,14 +765,21 @@ export class GameEngine {
     }
     if (this.miningProgress < 1) return;
     const selected = this.hotbar[this.selectedSlot];
-    const canCollectCrystal = id !== BlockId.AetherCrystal || selected === "tool:copper-pick" || selected === "tool:crystal-pick";
+    const canHarvest = this.canHarvest(id, selected);
     this.applyBlockChange(x, y, z, BlockId.Air);
-    if (this.mode === "survival" && id === BlockId.StarBloom) this.collectItem("food:starfruit", 1);
-    else if (this.mode === "survival" && BLOCKS[id].collectible && canCollectCrystal) this.collectItem(itemForBlock(id), 1);
-    else if (id === BlockId.AetherCrystal) this.callbacks.onToast("The crystal shattered. A Copper Pick can harvest it.");
+    if (this.mode === "survival" && canHarvest && this.network.role !== "guest") {
+      this.spawnDrop(this.blockDrop(id), 1, { x: x + 0.5, y: y - 0.05, z: z + 0.5 });
+    } else if (this.mode === "survival" && !canHarvest) {
+      const requirement = id === BlockId.AetherCrystal || id === BlockId.MoonshardOre
+        ? "A Copper Pick or better is required to harvest that crystal."
+        : id === BlockId.CopperOre || id === BlockId.Cinnabar || id === BlockId.SulfurStone
+          ? "A Roughstone Pick or better is required to harvest that ore."
+          : "An Emberwood Pick or better is required to collect that block.";
+      this.callbacks.onToast(requirement);
+    }
     this.audio.play("break");
     if (this.mode === "survival" && id === BlockId.EmberwoodLog) {
-      this.objective = "Open the pack, cut planks, then craft a Roughstone Spear before night.";
+      this.objective = "Cut planks, build a Tinker Bench, then craft an Emberwood Pick.";
     }
     this.miningProgress = 0;
     this.miningKey = "";
@@ -768,7 +807,10 @@ export class GameEngine {
       if (id === BlockId.ThermalGenerator) machine.storage[itemForBlock(BlockId.CoalOre)] = 4;
       this.broadcastMachine(worldKey(x, y, z), machine);
     }
-    if (this.mode === "survival") changeItem(this.inventory, item, -1);
+    if (this.mode === "survival") {
+      changeItem(this.inventory, item, -1);
+      this.clearDepletedHotbar();
+    }
     this.audio.play("place");
     this.viewModel.swing("place");
   }
@@ -788,11 +830,27 @@ export class GameEngine {
       used = true;
     }
     if (!used) return false;
-    if (this.mode === "survival") changeItem(this.inventory, item, -1);
+    if (this.mode === "survival") {
+      changeItem(this.inventory, item, -1);
+      this.clearDepletedHotbar();
+    }
     this.viewModel.swing("use");
     this.audio.play("craft");
     this.callbacks.onToast(`${itemName(item)} used.`);
     return true;
+  }
+
+  private clearDepletedHotbar(): void {
+    if (this.mode === "creative") return;
+    let selectedRemoved = false;
+    for (let slot = 0; slot < this.hotbar.length; slot += 1) {
+      const item = this.hotbar[slot];
+      if (item && !itemAvailable(this.inventory, item)) {
+        this.hotbar[slot] = null;
+        if (slot === this.selectedSlot) selectedRemoved = true;
+      }
+    }
+    if (selectedRemoved) this.viewModel.setItem(null);
   }
 
   private collectItem(item: ItemId, count: number): void {
@@ -816,6 +874,7 @@ export class GameEngine {
         y: 2.2 + this.wildlifeRandom(),
         z: Math.sin(angle) * (0.5 + this.wildlifeRandom()),
       },
+      pickupDelay: 0.32,
     });
   }
 
@@ -829,7 +888,10 @@ export class GameEngine {
       this.callbacks.onToast(`${itemName(selected ?? stats.ammo)} needs ${itemName(stats.ammo)} ammunition.`);
       return;
     }
-    if (stats.ammo && this.mode === "survival") changeItem(this.inventory, stats.ammo, -1);
+    if (stats.ammo && this.mode === "survival") {
+      changeItem(this.inventory, stats.ammo, -1);
+      this.clearDepletedHotbar();
+    }
     this.attackCooldown = stats.cooldown;
     this.viewModel.swing("attack");
     this.audio.play(selected === "tool:aether-repeater" ? "shoot" : "attack");
@@ -876,7 +938,9 @@ export class GameEngine {
   private applyBlockChange(x: number, y: number, z: number, id: BlockId, fromNetwork = false): void {
     this.world.setBlock(x, y, z, id);
     if (fromNetwork) return;
-    const message: NetworkMessage = { type: this.network.role === "guest" ? "request-block" : "block", x, y, z, id };
+    const message: NetworkMessage = this.network.role === "guest"
+      ? { type: "request-block", x, y, z, id, item: this.hotbar[this.selectedSlot] }
+      : { type: "block", x, y, z, id };
     this.network.send(message);
   }
 
@@ -891,6 +955,26 @@ export class GameEngine {
       this.broadcastMachine(key, state);
       this.audio.play("click");
       this.callbacks.onToast(state.enabled ? "Toggle relay: ON" : "Toggle relay: OFF");
+      return;
+    }
+    if ((id === BlockId.PulseButton || id === BlockId.TargetBlock) && state) {
+      state.pulseTicks = 8;
+      state.enabled = true;
+      this.broadcastMachine(key, state);
+      this.audio.play("click");
+      this.callbacks.onToast(id === BlockId.PulseButton ? "Pulse button fired." : "Target pulse fired.");
+      return;
+    }
+    if (id === BlockId.PulseRepeater && state) {
+      state.delayTicks = ((state.delayTicks ?? 2) % 4) + 1;
+      this.broadcastMachine(key, state);
+      this.callbacks.onToast(`Pulse repeater: ${state.delayTicks} beat delay`);
+      return;
+    }
+    if (id === BlockId.FluxComparator && state) {
+      state.mode = state.mode === "subtract" ? "compare" : "subtract";
+      this.broadcastMachine(key, state);
+      this.callbacks.onToast(`Flux comparator: ${state.mode}`);
       return;
     }
     if (id === BlockId.ProximitySensor && state) {
@@ -926,10 +1010,12 @@ export class GameEngine {
 
   private rotateTargetedMachine(): void {
     if (!this.currentHit) return;
-    const key = worldKey(this.currentHit.block.x, this.currentHit.block.y, this.currentHit.block.z);
+    const { x, y, z } = this.currentHit.block;
+    const key = worldKey(x, y, z);
     const state = this.world.machines.get(key);
     if (!state) return;
     state.orientation = ((state.orientation + 1) % 4) as 0 | 1 | 2 | 3;
+    this.world.setBlock(x, y, z, this.world.getBlock(x, y, z));
     this.broadcastMachine(key, state);
     this.callbacks.onToast("Machine rotated clockwise.");
   }
@@ -1045,6 +1131,7 @@ export class GameEngine {
   private updateDrops(dt: number): void {
     for (let index = this.world.drops.length - 1; index >= 0; index -= 1) {
       const drop = this.world.drops[index];
+      drop.pickupDelay = Math.max(0, (drop.pickupDelay ?? 0) - dt);
       drop.velocity.y -= 13 * dt;
       drop.velocity.x *= Math.exp(-1.8 * dt);
       drop.velocity.z *= Math.exp(-1.8 * dt);
@@ -1063,7 +1150,7 @@ export class GameEngine {
         drop.position.y - (this.physics.position.y + 0.8),
         drop.position.z - this.physics.position.z,
       );
-      if (localDistance < 1.25) {
+      if (localDistance < 1.25 && (drop.pickupDelay ?? 0) <= 0) {
         this.collectItem(drop.item, drop.count);
         this.world.drops.splice(index, 1);
         this.audio.play("click");
@@ -1075,7 +1162,7 @@ export class GameEngine {
           drop.position.y - (player.position.y + 0.8),
           drop.position.z - player.position.z,
         );
-        if (distance >= 1.25) continue;
+        if (distance >= 1.25 || (drop.pickupDelay ?? 0) > 0) continue;
         this.network.send({ type: "give-item", item: drop.item, count: drop.count }, peerId);
         this.world.drops.splice(index, 1);
         break;
@@ -1272,14 +1359,8 @@ export class GameEngine {
         desiredX -= (dx / distance) * 2.5;
         desiredZ -= (dz / distance) * 2.5;
       }
-      const probeX = mob.position.x + desiredX * Math.min(0.28, dt * 2);
-      const probeZ = mob.position.z + desiredZ * Math.min(0.28, dt * 2);
-      if (this.world.getBlock(probeX, mob.position.y + 0.1, probeZ) === BlockId.Water) {
-        mob.yaw += Math.PI * 0.72;
-        desiredX *= -0.35;
-        desiredZ *= -0.35;
-      }
-      const movement = moveMobWithCollision(this.world, mob, dt, desiredX, desiredZ);
+      const desiredY = Math.max(-1.4, Math.min(1.4, (targetPosition.y - mob.position.y) * 0.65));
+      const movement = moveMobWithCollision(this.world, mob, dt, desiredX, desiredZ, desiredY);
       if (movement.blocked) {
         mob.yaw += Math.PI * (0.45 + this.wildlifeRandom() * 0.45);
         mob.targetTimer = 0.6;
@@ -1360,9 +1441,20 @@ export class GameEngine {
   private createDropMesh(item: ItemId): THREE.Mesh {
     const blockId = blockForItem(item);
     if (blockId !== null) {
-      const geometry = new THREE.BoxGeometry(0.26, 0.26, 0.26);
+      const shape = BLOCKS[blockId].shape ?? "cube";
+      const geometry: THREE.BufferGeometry = shape === "cross"
+        ? new THREE.PlaneGeometry(0.34, 0.42)
+        : shape === "wire" || shape === "plate"
+          ? new THREE.BoxGeometry(0.34, 0.055, 0.34)
+          : shape === "torch" || shape === "rod" || shape === "ladder"
+            ? new THREE.BoxGeometry(0.09, 0.38, 0.09)
+            : shape === "slab"
+              ? new THREE.BoxGeometry(0.32, 0.16, 0.32)
+              : shape === "hopper"
+                ? new THREE.CylinderGeometry(0.11, 0.21, 0.28, 4)
+                : new THREE.BoxGeometry(0.26, 0.26, 0.26);
       paintBlockUv(geometry, blockId);
-      return new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ map: this.atlas, transparent: !BLOCKS[blockId].opaque, alphaTest: 0.08 }));
+      return new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ map: this.atlas, transparent: !BLOCKS[blockId].opaque, alphaTest: 0.08, side: THREE.DoubleSide }));
     }
     const geometry: THREE.BufferGeometry = item.startsWith("tool:")
       ? new THREE.BoxGeometry(0.09, 0.46, 0.09)
@@ -1514,7 +1606,11 @@ export class GameEngine {
       this.callbacks.onToast(`Joined world “${message.save.seed}”`);
     } else if (message.type === "request-block" && this.network.role === "host") {
       if (Number.isInteger(message.x) && Number.isInteger(message.y) && Number.isInteger(message.z)) {
+        const removed = this.world.getBlock(message.x, message.y, message.z);
         this.applyBlockChange(message.x, message.y, message.z, message.id, true);
+        if (message.id === BlockId.Air && this.canHarvest(removed, message.item ?? null)) {
+          this.spawnDrop(this.blockDrop(removed), 1, { x: message.x + 0.5, y: message.y - 0.05, z: message.z + 0.5 });
+        }
         this.network.send({ ...message, type: "block" });
       }
     } else if (message.type === "block") {
@@ -1608,6 +1704,7 @@ export class GameEngine {
   }
 
   private emitHud(networkStatus?: string): void {
+    this.clearDepletedHotbar();
     const mobDefinition = this.targetedMob ? MOB_DEFINITIONS[this.targetedMob.kind] : null;
     this.callbacks.onHud({
       health: this.health,
@@ -1675,9 +1772,11 @@ export class GameEngine {
     }
     this.audio.play("craft");
     if (this.mode === "survival") {
-      this.objective = recipe.output.item === "tool:stone-spear"
-        ? "You are armed. Explore by day; hostile creatures emerge after dusk."
-        : this.objective;
+      this.objective = recipe.output.item === "tool:wood-pick"
+        ? "Your Emberwood Pick can harvest stone and coal. Upgrade before mining copper."
+        : recipe.output.item === "tool:stone-spear"
+          ? "You are armed. Explore by day; hostile creatures emerge after dusk."
+          : this.objective;
       this.callbacks.onToast(`Crafted ${recipe.name}.`);
     } else this.callbacks.onToast(`${recipe.name} is already available in the Creative catalog.`);
     this.emitHud();
@@ -1721,6 +1820,8 @@ export class GameEngine {
     const state = this.world.machines.get(key);
     if (!state) return;
     state.orientation = ((state.orientation + 1) % 4) as 0 | 1 | 2 | 3;
+    const [x, y, z] = parseWorldKey(key);
+    this.world.setBlock(x, y, z, this.world.getBlock(x, y, z));
     this.broadcastMachine(key, state);
   }
 
@@ -1731,6 +1832,12 @@ export class GameEngine {
     const id = this.world.getBlock(x, y, z);
     if (id === BlockId.ProximitySensor && ["near", "day", "night"].includes(value)) {
       state.mode = value as "near" | "day" | "night";
+    }
+    if (id === BlockId.FluxComparator && ["compare", "subtract"].includes(value)) {
+      state.mode = value as "compare" | "subtract";
+    }
+    if (id === BlockId.PulseRepeater && ["1", "2", "3", "4"].includes(value)) {
+      state.delayTicks = Number(value);
     }
     if (id === BlockId.Fabricator && ["flux-coil", "logic-wafer", "gear"].includes(value)) state.recipe = value;
     this.broadcastMachine(key, state);

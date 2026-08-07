@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AutomationSystem } from "../app/game/automation";
-import { itemForBlock } from "../app/game/blocks";
+import { BLOCKS, RECIPES, itemForBlock } from "../app/game/blocks";
 import { weaponStats } from "../app/game/combat";
-import { mobIntersectsSolid, moveMobWithCollision, resolveMobPenetration } from "../app/game/mobs";
+import { mobIntersectsSolid, mobWaterImmersion, moveMobWithCollision, resolveMobPenetration } from "../app/game/mobs";
 import { PlayerPhysics } from "../app/game/physics";
 import { decodeWorldKey, encodeWorldKey } from "../app/game/save";
 import { BlockId, CHUNK_SIZE, InputFrame, MobState, SAVE_VERSION, WorldSave } from "../app/game/types";
@@ -224,4 +224,151 @@ test("a fueled, signaled bore drill mines and ejects an item", () => {
   for (let tick = 0; tick < 20; tick += 1) automation.tick(world, [], 0.5);
   assert.ok(world.drops.length >= 1, "drill should eject at least one resource");
   assert.ok(world.mutations.size >= 5, "drill should add a mined-air mutation");
+});
+
+
+test("swimming is slower than land movement and supports deliberate ascent", () => {
+  const waterWorld = new VoxelWorld("swim bench");
+  const landWorld = new VoxelWorld("land bench");
+  for (const world of [waterWorld, landWorld]) {
+    for (let x = -3; x <= 22; x += 1) {
+      for (let z = -3; z <= 3; z += 1) world.setBlock(x, 40, z, BlockId.Stone);
+    }
+  }
+  for (let x = -3; x <= 22; x += 1) {
+    for (let z = -3; z <= 3; z += 1) {
+      for (let y = 41; y <= 45; y += 1) waterWorld.setBlock(x, y, z, BlockId.Water);
+    }
+  }
+  const input: InputFrame = {
+    forward: 1, strafe: 0, lookX: 0, lookY: 0, jump: false, sprint: false,
+    crouch: false, mine: false, place: false, interact: false,
+  };
+  const swimmer = new PlayerPhysics({ x: 0.5, y: 41, z: 0.5 });
+  const walker = new PlayerPhysics({ x: 0.5, y: 41, z: 0.5 });
+  swimmer.yaw = walker.yaw = -Math.PI / 2;
+  for (let frame = 0; frame < 40; frame += 1) {
+    swimmer.update(1 / 20, input, waterWorld);
+    walker.update(1 / 20, input, landWorld);
+  }
+  assert.equal(swimmer.swimming, true);
+  assert.ok(swimmer.position.x - 0.5 < (walker.position.x - 0.5) * 0.72, "water should impose meaningful drag");
+
+  const climber = new PlayerPhysics({ x: 0.5, y: 41, z: 0.5 });
+  const ascend = { ...input, forward: 0, jump: true };
+  for (let frame = 0; frame < 30; frame += 1) climber.update(1 / 20, ascend, waterWorld);
+  assert.ok(climber.position.y > 42.4, `swimmer did not ascend; y=${climber.position.y}`);
+});
+
+test("creatures remain buoyant and collision-safe while crossing water", () => {
+  const world = new VoxelWorld("aquatic mob bench");
+  for (let x = -4; x <= 10; x += 1) {
+    for (let z = -3; z <= 3; z += 1) {
+      world.setBlock(x, 40, z, BlockId.Stone);
+      for (let y = 41; y <= 43; y += 1) world.setBlock(x, y, z, BlockId.Water);
+    }
+  }
+  const mob: MobState = {
+    id: "swimming-mireling",
+    kind: "mireling",
+    position: { x: 0.5, y: 41.05, z: 0.5 },
+    velocity: { x: 0, y: 0, z: 0 },
+    health: 36,
+    yaw: -Math.PI / 2,
+    targetTimer: 2,
+  };
+  assert.ok(mobWaterImmersion(world, mob) > 0.6);
+  for (let frame = 0; frame < 120; frame += 1) moveMobWithCollision(world, mob, 1 / 30, 1.3, 0);
+  assert.equal(mobIntersectsSolid(world, mob), false);
+  assert.ok(mob.position.y > 40.95 && mob.position.y < 44.35, `mob water height became unstable: ${mob.position.y}`);
+  assert.ok(mob.position.x > 2, "mob should make steady progress through water");
+});
+
+test("plants, circuits, lights, logistics, and builders use distinct partial shapes", () => {
+  assert.equal(BLOCKS[BlockId.StarBloom].shape, "cross");
+  assert.equal(BLOCKS[BlockId.CaveMushroom].shape, "cross");
+  assert.equal(BLOCKS[BlockId.FluxWire].shape, "wire");
+  assert.equal(BLOCKS[BlockId.PulseRepeater].shape, "plate");
+  assert.equal(BLOCKS[BlockId.InverterTorch].shape, "torch");
+  assert.equal(BLOCKS[BlockId.Hopper].shape, "hopper");
+  assert.equal(BLOCKS[BlockId.Ram].shape, "piston");
+  assert.equal(BLOCKS[BlockId.StoneSlab].collisionHeight, 0.5);
+  assert.equal(BLOCKS[BlockId.StarBloom].solid, false);
+  assert.equal(BLOCKS[BlockId.FluxWire].solid, false);
+});
+
+test("expanded cave fields create substantial deterministic underground voids", () => {
+  const first = new VoxelWorld("deep survey");
+  const second = new VoxelWorld("deep survey");
+  let undergroundVoids = 0;
+  const samples: BlockId[] = [];
+  for (let x = -16; x < 16; x += 1) {
+    for (let z = -16; z < 16; z += 1) {
+      const ceiling = Math.max(4, first.getHeight(x, z) - 3);
+      for (let y = 3; y < ceiling; y += 1) {
+        const id = first.getBlock(x, y, z);
+        if (id === BlockId.Air || id === BlockId.Water) undergroundVoids += 1;
+        if ((x + z + y) % 17 === 0) samples.push(id);
+      }
+    }
+  }
+  assert.ok(undergroundVoids > 180, `expected extensive caves, found ${undergroundVoids} void cells`);
+  let cursor = 0;
+  for (let x = -16; x < 16; x += 1) {
+    for (let z = -16; z < 16; z += 1) {
+      const ceiling = Math.max(4, second.getHeight(x, z) - 3);
+      for (let y = 3; y < ceiling; y += 1) {
+        if ((x + z + y) % 17 === 0) assert.equal(second.getBlock(x, y, z), samples[cursor++]);
+      }
+    }
+  }
+});
+
+test("directional repeaters delay, restore, and emit only toward their facing side", () => {
+  const world = new VoxelWorld("repeater bench");
+  world.setBlock(0, 42, 1, BlockId.Toggle);
+  world.setBlock(0, 42, 0, BlockId.PulseRepeater);
+  world.setBlock(0, 42, -1, BlockId.FluxWire);
+  world.setBlock(1, 42, 0, BlockId.FluxWire);
+  world.machines.get("0,42,1")!.enabled = true;
+  world.machines.get("0,42,0")!.delayTicks = 2;
+  const automation = new AutomationSystem();
+  automation.tick(world, [], 0.5);
+  assert.equal(world.machines.get("0,42,-1")!.signal, 0);
+  automation.tick(world, [], 0.5);
+  assert.equal(world.machines.get("0,42,-1")!.signal, 14);
+  assert.equal(world.machines.get("1,42,0")!.signal, 0);
+});
+
+test("rams push block lines and collector funnels transfer physical drops", () => {
+  const world = new VoxelWorld("logistics bench");
+  world.setBlock(0, 42, 0, BlockId.Ram);
+  world.setBlock(1, 42, 0, BlockId.Toggle);
+  world.setBlock(0, 42, -1, BlockId.Stone);
+  world.setBlock(0, 42, -2, BlockId.Limestone);
+  world.machines.get("1,42,0")!.enabled = true;
+  const automation = new AutomationSystem();
+  automation.tick(world, [], 0.5);
+  assert.equal(world.getBlock(0, 42, -1), BlockId.Air);
+  assert.equal(world.getBlock(0, 42, -2), BlockId.Stone);
+  assert.equal(world.getBlock(0, 42, -3), BlockId.Limestone);
+
+  world.setBlock(5, 42, 0, BlockId.Hopper);
+  world.setBlock(5, 42, -1, BlockId.Crate);
+  world.drops.push({
+    id: "physical-stone-drop",
+    item: itemForBlock(BlockId.Stone),
+    count: 1,
+    position: { x: 5.5, y: 42.7, z: 0.5 },
+    velocity: { x: 0, y: 0, z: 0 },
+  });
+  automation.tick(world, [], 0.5);
+  assert.equal(world.drops.length, 0);
+  assert.equal(world.machines.get("5,42,-1")!.storage[itemForBlock(BlockId.Stone)], 1);
+});
+
+test("the Emberwood tool tier establishes early survival progression", () => {
+  const woodenTools = ["wood-pick", "wood-hatchet", "wood-spade", "wood-club"];
+  for (const id of woodenTools) assert.ok(RECIPES.some((recipe) => recipe.id === id), `missing recipe ${id}`);
+  assert.ok(RECIPES.find((recipe) => recipe.id === "rough-pick")!.inputs[itemForBlock(BlockId.Stone)] > 0);
 });
