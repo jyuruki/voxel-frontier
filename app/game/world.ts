@@ -34,7 +34,13 @@ export function isEmberdeepCoordinate(x: number): boolean {
 
 export function isVillageChunk(cx: number, cz: number, seed: number): boolean {
   if (isEmberdeepCoordinate(cx * CHUNK_SIZE)) return false;
-  return hash3(cx, 193, cz, seed ^ 0x6a09e667) % 31 === 0;
+  const regionSize = 8;
+  const regionX = Math.floor(cx / regionSize);
+  const regionZ = Math.floor(cz / regionSize);
+  if (hash3(regionX, 193, regionZ, seed ^ 0x6a09e667) % 100 >= 82) return false;
+  const candidateX = regionX * regionSize + 1 + (hash3(regionX, 211, regionZ, seed ^ 0xbb67ae85) % (regionSize - 2));
+  const candidateZ = regionZ * regionSize + 1 + (hash3(regionX, 223, regionZ, seed ^ 0x3c6ef372) % (regionSize - 2));
+  return cx === candidateX && cz === candidateZ;
 }
 
 export const chunkKey = (cx: number, cz: number): string => `${cx},${cz}`;
@@ -73,6 +79,56 @@ function defaultMachineState(id: BlockId): MachineState {
   };
 }
 
+interface VeinConfig {
+  id: BlockId;
+  minY: number;
+  maxY: number;
+  cell: [number, number, number];
+  radius: [number, number, number];
+  chance: number;
+  salt: number;
+}
+
+const OVERWORLD_VEINS: VeinConfig[] = [
+  { id: BlockId.DiamondOre, minY: 2, maxY: 10, cell: [10, 6, 10], radius: [1.7, 1.15, 1.7], chance: 55, salt: 0x2f6e2b1 },
+  { id: BlockId.MoonshardOre, minY: 2, maxY: 11, cell: [11, 7, 11], radius: [1.55, 1.2, 1.55], chance: 42, salt: 0x8c3d713 },
+  { id: BlockId.AetherCrystal, minY: 3, maxY: 14, cell: [10, 7, 10], radius: [1.6, 1.3, 1.6], chance: 48, salt: 0x6d54a91 },
+  { id: BlockId.GoldOre, minY: 3, maxY: 18, cell: [9, 6, 9], radius: [2, 1.25, 1.8], chance: 105, salt: 0x49ad221 },
+  { id: BlockId.FluxstoneOre, minY: 3, maxY: 23, cell: [9, 6, 9], radius: [2.1, 1.3, 1.8], chance: 115, salt: 0x734eb17 },
+  { id: BlockId.CopperOre, minY: 7, maxY: 28, cell: [8, 6, 8], radius: [2.15, 1.45, 1.9], chance: 135, salt: 0x1c69b35 },
+  { id: BlockId.IronOre, minY: 4, maxY: 34, cell: [8, 6, 8], radius: [2.25, 1.5, 2.05], chance: 165, salt: 0x5b81f43 },
+  { id: BlockId.CoalOre, minY: 5, maxY: 39, cell: [8, 7, 8], radius: [2.5, 1.75, 2.3], chance: 210, salt: 0x3ea9c67 },
+];
+
+function blockInVein(x: number, y: number, z: number, seed: number, config: VeinConfig): boolean {
+  if (y < config.minY || y > config.maxY) return false;
+  const [cellX, cellY, cellZ] = config.cell;
+  const gx = Math.floor(x / cellX);
+  const gy = Math.floor(y / cellY);
+  const gz = Math.floor(z / cellZ);
+  const active = hash3(gx, gy, gz, seed ^ config.salt) % 1000;
+  if (active >= config.chance) return false;
+  const [radiusX, radiusY, radiusZ] = config.radius;
+  const roomX = Math.max(1, Math.floor(cellX - radiusX * 2));
+  const roomY = Math.max(1, Math.floor(cellY - radiusY * 2));
+  const roomZ = Math.max(1, Math.floor(cellZ - radiusZ * 2));
+  const anchorX = gx * cellX + radiusX + (hash3(gx, gy + 17, gz, seed ^ (config.salt + 1)) % roomX);
+  const anchorY = gy * cellY + radiusY + (hash3(gx + 31, gy, gz, seed ^ (config.salt + 2)) % roomY);
+  const anchorZ = gz * cellZ + radiusZ + (hash3(gx, gy, gz + 47, seed ^ (config.salt + 3)) % roomZ);
+  const distance = ((x - anchorX) / radiusX) ** 2
+    + ((y - anchorY) / radiusY) ** 2
+    + ((z - anchorZ) / radiusZ) ** 2;
+  const roughness = ((hash3(x, y, z, seed ^ (config.salt + 4)) % 101) - 50) / 420;
+  return distance + roughness <= 1;
+}
+
+function overworldOreAt(x: number, y: number, z: number, seed: number): BlockId | null {
+  for (const config of OVERWORLD_VEINS) {
+    if (blockInVein(x, y, z, seed, config)) return config.id;
+  }
+  return null;
+}
+
 export class VoxelWorld {
   readonly seedText: string;
   readonly seed: number;
@@ -81,6 +137,7 @@ export class VoxelWorld {
   readonly machines = new Map<string, MachineState>();
   readonly drops: DroppedItemState[] = [];
   readonly mobs: MobState[] = [];
+  readonly waterLevels = new Map<string, number>();
   readonly dirtyChunks = new Set<string>();
   private readonly heightCache = new Map<string, number>();
 
@@ -101,13 +158,16 @@ export class VoxelWorld {
       this.heightCache.set(cacheKey, height);
       return height;
     }
-    const continental = fractalNoise2(x / 82, z / 82, this.seed ^ 0x91e10da5, 5);
-    const detail = fractalNoise2(x / 27, z / 27, this.seed ^ 0xa54ff53a, 3);
-    const ridgeNoise = Math.abs(fractalNoise2(x / 48, z / 48, this.seed ^ 0x5a17c9e3, 4) - 0.5) * 2;
-    const ridges = Math.max(0, ridgeNoise - 0.47) * 16;
+    const continental = fractalNoise2(x / 105, z / 105, this.seed ^ 0x91e10da5, 5);
+    const detail = fractalNoise2(x / 31, z / 31, this.seed ^ 0xa54ff53a, 3);
+    const hillField = fractalNoise2(x / 72, z / 72, this.seed ^ 0x1f83d9ab, 4);
+    const mountainRegion = Math.max(0, Math.min(1, (fractalNoise2(x / 245, z / 245, this.seed ^ 0x5a17c9e3, 4) - 0.56) / 0.24));
+    const ridgeNoise = 1 - Math.abs(fractalNoise2(x / 46, z / 46, this.seed ^ 0x510e527f, 4) * 2 - 1);
+    const rollingHills = Math.max(0, hillField - 0.42) * 12;
+    const mountains = mountainRegion * (4 + ridgeNoise * ridgeNoise * 17);
     const height = Math.max(
       7,
-      Math.min(WORLD_HEIGHT - 9, Math.floor(12 + continental * 14 + detail * 5 + ridges)),
+      Math.min(WORLD_HEIGHT - 5, Math.floor(11 + continental * 13 + detail * 4 + rollingHills + mountains)),
     );
     this.heightCache.set(cacheKey, height);
     return height;
@@ -141,11 +201,11 @@ export class VoxelWorld {
       if (y > 3 && y < height - 2 && (cavernA > 0.67 || cavernB < 0.07)) return y <= 5 ? BlockId.Emberflow : BlockId.Air;
       const emberRoll = hash3(x, y, z, this.seed ^ 0x9b05688c) % 1000;
       const seam = valueNoise3(localX / 5, y / 4, z / 5, this.seed ^ 0x1f83d9ab);
-      if (y < 13 && seam > 0.68 && emberRoll < 180) return BlockId.DiamondOre;
-      if (y < 21 && seam < 0.3 && emberRoll < 230) return BlockId.GoldOre;
-      if (y < 25 && emberRoll > 948) return BlockId.FluxstoneOre;
-      if (emberRoll > 985) return BlockId.EmberGlow;
-      if (y < 8 && emberRoll < 34) return BlockId.Riftstone;
+      if (y < 13 && seam > 0.75 && emberRoll < 72) return BlockId.DiamondOre;
+      if (y < 21 && seam < 0.23 && emberRoll < 86) return BlockId.GoldOre;
+      if (y < 25 && emberRoll > 988) return BlockId.FluxstoneOre;
+      if (emberRoll > 993) return BlockId.EmberGlow;
+      if (y < 8 && emberRoll < 9) return BlockId.Riftstone;
       return BlockId.Emberrock;
     }
     const biome = this.getBiome(x, z);
@@ -180,24 +240,15 @@ export class VoxelWorld {
       return aquifer ? BlockId.Water : BlockId.Air;
     }
 
-    const oreRoll = hash3(x, y, z, this.seed ^ 0x165667b1) % 1000;
-    const metalVein = valueNoise3(x / 5.2, y / 4.1, z / 5.2, this.seed ^ 0x6a09e667);
-    const crystalVein = valueNoise3(x / 4.4, y / 3.7, z / 4.4, this.seed ^ 0xbb67ae85);
-    if (y < 10 && crystalVein > 0.7 && oreRoll < 185) return BlockId.DiamondOre;
-    if (y < 18 && metalVein < 0.29 && oreRoll < 205) return BlockId.GoldOre;
-    if (y < 24 && crystalVein < 0.3 && oreRoll < 245) return BlockId.FluxstoneOre;
-    if (y < 34 && metalVein > 0.69 && oreRoll < 285) return BlockId.IronOre;
-    if (y < 39 && metalVein > 0.62 && oreRoll > 720) return BlockId.CoalOre;
-    if (y < 8 && oreRoll > 992) return BlockId.Riftstone;
-    if (y < 11 && oreRoll < 5) return BlockId.MoonshardOre;
-    if (y < 14 && oreRoll < 11) return BlockId.AetherCrystal;
-    if (y < 25 && oreRoll >= 11 && oreRoll < 35) return BlockId.CopperOre;
-    if (y < 35 && oreRoll >= 35 && oreRoll < 68) return BlockId.CoalOre;
-    if (biome === "Cinder Reach" && y < 24 && oreRoll > 968) return BlockId.Cinnabar;
-    if (biome === "Cinder Reach" && y < 20 && oreRoll > 930) return BlockId.SulfurStone;
-    if (oreRoll > 955 && oreRoll < 974 && y > 8 && y < 31) return BlockId.Marble;
+    const ore = overworldOreAt(x, y, z, this.seed);
+    if (ore !== null) return ore;
+    const stoneRoll = hash3(x, y, z, this.seed ^ 0x165667b1) % 1000;
+    if (y < 8 && stoneRoll > 997) return BlockId.Riftstone;
+    if (biome === "Cinder Reach" && y < 24 && stoneRoll > 991) return BlockId.Cinnabar;
+    if (biome === "Cinder Reach" && y < 20 && stoneRoll > 982 && stoneRoll <= 991) return BlockId.SulfurStone;
+    if (stoneRoll > 992 && y > 8 && y < 31) return BlockId.Marble;
     if (y < 13) return BlockId.Slate;
-    if (y < 30 && valueNoise3(x / 21, y / 9, z / 21, this.seed ^ 0x51ed270b) > 0.61) return BlockId.Limestone;
+    if (y < 30 && valueNoise3(x / 18, y / 8, z / 18, this.seed ^ 0x51ed270b) > 0.76) return BlockId.Limestone;
     return biome === "Cinder Reach" && y > height - 8 ? BlockId.Basalt : BlockId.Stone;
   }
 
@@ -324,7 +375,7 @@ export class VoxelWorld {
           for (let dy = 1; dy <= 3; dy += 1) {
             if (!edge) this.forceChunkLocal(chunk, lx, baseY + dy, lz, BlockId.Air);
             else if (lx === doorX && lz === doorZ && dy <= 2) this.forceChunkLocal(chunk, lx, baseY + dy, lz, dy === 1 ? BlockId.TimberDoor : BlockId.Air);
-            else if (dy === 2 && ((lx + lz) & 1) === 0) this.forceChunkLocal(chunk, lx, baseY + dy, lz, BlockId.IronBars);
+            else if (dy === 2 && ((lx + lz) & 1) === 0) this.forceChunkLocal(chunk, lx, baseY + dy, lz, BlockId.GlassPane);
             else this.forceChunkLocal(chunk, lx, baseY + dy, lz, (lx + lz) % 3 === 0 ? BlockId.TimberFrame : BlockId.VillageWall);
           }
           this.forceChunkLocal(chunk, lx, baseY + 4, lz, (lx + lz) % 2 === 0 ? BlockId.Thatch : BlockId.RoofTile);
@@ -332,6 +383,7 @@ export class VoxelWorld {
       }
       this.forceChunkLocal(chunk, x0 + 2, baseY + 1, z0 + 2, BlockId.FrontierBed);
       this.forceChunkLocal(chunk, x0 + 1, baseY + 1, z0 + 2, BlockId.Bookshelf);
+      this.forceChunkLocal(chunk, x0 + 3, baseY + 1, z0 + 2, BlockId.FlowerPot);
     };
     buildCottage(1, 1, 5, 3);
     buildCottage(10, 10, 10, 12);
@@ -340,7 +392,8 @@ export class VoxelWorld {
     for (let lx = 6; lx <= 9; lx += 1) for (let lz = 6; lz <= 9; lz += 1) this.forceChunkLocal(chunk, lx, baseY + 4, lz, BlockId.MarketCanopy);
     for (const [lx, lz] of [[1, 7], [14, 7], [7, 1], [7, 14]]) this.forceChunkLocal(chunk, lx, baseY + 1, lz, BlockId.WayfinderBrazier);
 
-    for (let index = 0; index < 3; index += 1) {
+    const professions = ["farmer", "blacksmith", "builder", "riftwright"] as const;
+    for (let index = 0; index < professions.length; index += 1) {
       const id = `wayfarer-${chunk.cx}-${chunk.cz}-${index}`;
       if (this.mobs.some((mob) => mob.id === id)) continue;
       this.mobs.push({
@@ -356,6 +409,7 @@ export class VoxelWorld {
         voiceTimer: 3 + index * 2,
         activity: "wander",
         home: { x: baseX + 8, y: baseY + 1, z: baseZ + 8 },
+        profession: professions[index],
       });
     }
   }
@@ -500,7 +554,7 @@ export class VoxelWorld {
     ] as BlockId;
   }
 
-  setBlock(x: number, y: number, z: number, id: BlockId, record = true): void {
+  private writeBlock(x: number, y: number, z: number, id: BlockId, record = true): void {
     const bx = Math.floor(x);
     const by = Math.floor(y);
     const bz = Math.floor(z);
@@ -514,12 +568,84 @@ export class VoxelWorld {
     chunk.revision += 1;
     const key = worldKey(bx, by, bz);
     if (record) this.mutations.set(key, id);
+    if (id !== BlockId.Water) this.waterLevels.delete(key);
     if (BLOCKS[id].automation && !this.machines.has(key)) {
       this.machines.set(key, defaultMachineState(id));
     } else if (!BLOCKS[id].automation) {
       this.machines.delete(key);
     }
     this.markDirty(cx, cz, positiveMod(bx, CHUNK_SIZE), positiveMod(bz, CHUNK_SIZE));
+  }
+
+  setBlock(x: number, y: number, z: number, id: BlockId, record = true): void {
+    const bx = Math.floor(x);
+    const by = Math.floor(y);
+    const bz = Math.floor(z);
+    this.writeBlock(bx, by, bz, id, record);
+    if (id === BlockId.Water) this.waterLevels.delete(worldKey(bx, by, bz));
+    else if (id === BlockId.Air) this.flowWaterInto(bx, by, bz, record);
+  }
+
+  getWaterLevel(x: number, y: number, z: number): number {
+    const bx = Math.floor(x);
+    const by = Math.floor(y);
+    const bz = Math.floor(z);
+    if (this.getBlock(bx, by, bz) !== BlockId.Water) return 0;
+    return this.waterLevels.get(worldKey(bx, by, bz)) ?? 0;
+  }
+
+  flowWaterInto(x: number, y: number, z: number, record = true, maxLevel = 7): Array<[number, number, number]> {
+    const bx = Math.floor(x);
+    const by = Math.floor(y);
+    const bz = Math.floor(z);
+    if (by <= 0 || by >= WORLD_HEIGHT || this.getBlock(bx, by, bz) !== BlockId.Air) return [];
+
+    let seedLevel = Number.POSITIVE_INFINITY;
+    for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]]) {
+      const nx = bx + dx;
+      const ny = by + dy;
+      const nz = bz + dz;
+      if (this.getBlock(nx, ny, nz) !== BlockId.Water) continue;
+      const neighborLevel = this.waterLevels.get(worldKey(nx, ny, nz)) ?? 0;
+      seedLevel = Math.min(seedLevel, dy === 1 ? Math.max(1, neighborLevel) : neighborLevel + 1);
+    }
+    if (!Number.isFinite(seedLevel) || seedLevel > maxLevel) return [];
+
+    const changed: Array<[number, number, number]> = [];
+    const queue: Array<{ x: number; y: number; z: number; level: number }> = [];
+    const best = new Map<string, number>();
+    const placeFlow = (fx: number, fy: number, fz: number, level: number): boolean => {
+      if (fy <= 0 || fy >= WORLD_HEIGHT || level > maxLevel) return false;
+      const key = worldKey(fx, fy, fz);
+      const block = this.getBlock(fx, fy, fz);
+      if (block === BlockId.Water) {
+        const existing = this.waterLevels.get(key) ?? 0;
+        if (existing <= level) return false;
+      } else if (block !== BlockId.Air) return false;
+      const previousBest = best.get(key);
+      if (previousBest !== undefined && previousBest <= level) return false;
+      best.set(key, level);
+      if (block !== BlockId.Water) changed.push([fx, fy, fz]);
+      this.writeBlock(fx, fy, fz, BlockId.Water, record);
+      this.waterLevels.set(key, level);
+      queue.push({ x: fx, y: fy, z: fz, level });
+      return true;
+    };
+
+    placeFlow(bx, by, bz, seedLevel);
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current) break;
+      if (this.getBlock(current.x, current.y - 1, current.z) === BlockId.Air) {
+        placeFlow(current.x, current.y - 1, current.z, current.level);
+        continue;
+      }
+      if (current.level >= maxLevel) continue;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        placeFlow(current.x + dx, current.y, current.z + dz, current.level + 1);
+      }
+    }
+    return changed;
   }
 
   private markDirty(cx: number, cz: number, lx: number, lz: number): void {
@@ -571,6 +697,19 @@ export class VoxelWorld {
         Number.isInteger(z) &&
         BLOCKS[id]
       ) this.mutations.set(worldKey(x, y, z), id);
+    }
+  }
+
+  serializeWaterLevels(): Array<[string, number]> {
+    return Array.from(this.waterLevels, ([key, level]) => [key, level]);
+  }
+
+  loadWaterLevels(levels: Array<[string, number]> = []): void {
+    this.waterLevels.clear();
+    for (const [key, level] of levels) {
+      if (typeof key === "string" && Number.isInteger(level) && level >= 1 && level <= 7) {
+        this.waterLevels.set(key, level);
+      }
     }
   }
 

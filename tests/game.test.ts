@@ -3,7 +3,15 @@ import test from "node:test";
 import { AutomationSystem } from "../app/game/automation";
 import { BLOCKS, RECIPES, itemForBlock } from "../app/game/blocks";
 import { weaponStats } from "../app/game/combat";
-import { mobIntersectsSolid, mobWaterImmersion, moveMobWithCollision, resolveMobPenetration } from "../app/game/mobs";
+import {
+  HOTBAR_START,
+  INVENTORY_SLOT_COUNT,
+  createInventoryLayout,
+  hotbarFromLayout,
+  moveInventorySlot,
+  shiftInventorySlot,
+} from "../app/game/inventory";
+import { MOB_DEFINITIONS, mobIntersectsSolid, mobWaterImmersion, moveMobWithCollision, resolveMobPenetration } from "../app/game/mobs";
 import { PlayerPhysics } from "../app/game/physics";
 import { decodeWorldKey, encodeWorldKey } from "../app/game/save";
 import { BlockId, CHUNK_SIZE, InputFrame, MobState, SAVE_VERSION, WorldSave } from "../app/game/types";
@@ -27,6 +35,19 @@ test("procedural terrain is deterministic for a seed", () => {
   assert.ok(samples.some(([x, , z]) => first.getHeight(x, z) !== different.getHeight(x, z)));
 });
 
+test("terrain mixes broad lowlands, rolling hills, and rare tall mountains", () => {
+  const world = new VoxelWorld("Copper Skies");
+  const heights: number[] = [];
+  for (let x = -512; x <= 512; x += 8) {
+    for (let z = -512; z <= 512; z += 8) heights.push(world.getHeight(x, z));
+  }
+  const tall = heights.filter((height) => height >= 34).length / heights.length;
+  const hilly = heights.filter((height) => height >= 27).length / heights.length;
+  assert.ok(Math.max(...heights) - Math.min(...heights) >= 24, "terrain should have meaningful vertical range");
+  assert.ok(hilly > 0.08 && hilly < 0.32, `rolling terrain balance drifted to ${(hilly * 100).toFixed(1)}%`);
+  assert.ok(tall > 0.008 && tall < 0.09, `mountain balance drifted to ${(tall * 100).toFixed(1)}%`);
+});
+
 test("block mutations work across negative chunk boundaries", () => {
   const world = new VoxelWorld("negative coordinates");
   world.setBlock(-17, 42, -1, BlockId.FluxLamp);
@@ -37,6 +58,45 @@ test("block mutations work across negative chunk boundaries", () => {
   restored.loadMutations(world.serializeMutations());
   assert.equal(restored.getBlock(-17, 42, -1), BlockId.FluxLamp);
   assert.equal(restored.getBlock(-16, 42, 0), BlockId.Toggle);
+});
+
+test("water enters a mined opening, thins by level, and stops after seven blocks", () => {
+  const world = new VoxelWorld("finite water bench");
+  for (let x = -2; x <= 11; x += 1) {
+    for (let z = -2; z <= 2; z += 1) world.setBlock(x, 40, z, BlockId.Stone);
+  }
+  world.setBlock(0, 41, 0, BlockId.Water);
+  world.setBlock(1, 41, 0, BlockId.Air);
+  for (let x = 1; x <= 7; x += 1) {
+    assert.equal(world.getBlock(x, 41, 0), BlockId.Water);
+    assert.equal(world.getWaterLevel(x, 41, 0), x);
+  }
+  assert.equal(world.getBlock(8, 41, 0), BlockId.Air);
+  const restored = new VoxelWorld("finite water bench");
+  restored.loadMutations(world.serializeMutations());
+  restored.loadWaterLevels(world.serializeWaterLevels());
+  assert.equal(restored.getBlock(7, 41, 0), BlockId.Water);
+  assert.equal(restored.getWaterLevel(7, 41, 0), 7);
+});
+
+test("the 36-slot inventory keeps items unique and supports drag and shift transfer", () => {
+  const inventory = {
+    "tool:rough-pick": 1,
+    [itemForBlock(BlockId.Stone)]: 32,
+    "part:coal": 9,
+  };
+  const legacyHotbar = ["tool:rough-pick", "tool:rough-pick", "part:coal"] as const;
+  let layout = createInventoryLayout(inventory, undefined, [...legacyHotbar]);
+  assert.equal(layout.length, INVENTORY_SLOT_COUNT);
+  assert.equal(layout.filter((item) => item === "tool:rough-pick").length, 1, "one tool must not appear in multiple slots");
+  assert.equal(hotbarFromLayout(layout)[0], "tool:rough-pick");
+  assert.equal(hotbarFromLayout(layout)[1], null);
+  layout = moveInventorySlot(layout, HOTBAR_START, 4);
+  assert.equal(layout[4], "tool:rough-pick");
+  layout = shiftInventorySlot(layout, 4);
+  assert.equal(layout[HOTBAR_START], "tool:rough-pick", "shift-click should fill the hotbar left to right");
+  layout = shiftInventorySlot(layout, HOTBAR_START);
+  assert.equal(layout[1], "tool:rough-pick", "shift-click from the hotbar should fill the first open upper slot");
 });
 
 test("player collision stops cleanly at walls without high-speed tunneling", () => {
@@ -161,8 +221,8 @@ test("combat equipment has distinct reach, damage, ammo, and timing", () => {
 test("Wayfarer ruins generate deterministically with an interactable Relic Cache", () => {
   const first = new VoxelWorld("ruin survey");
   let cache: { x: number; y: number; z: number } | null = null;
-  for (let cx = -6; cx <= 6 && !cache; cx += 1) {
-    for (let cz = -6; cz <= 6 && !cache; cz += 1) {
+  for (let cx = -8; cx <= 8 && !cache; cx += 1) {
+    for (let cz = -8; cz <= 8 && !cache; cz += 1) {
       const blocks = first.getChunk(cx, cz).blocks;
       const index = blocks.indexOf(BlockId.RelicCache);
       if (index < 0) continue;
@@ -295,6 +355,18 @@ test("plants, circuits, lights, logistics, and builders use distinct partial sha
   assert.equal(BLOCKS[BlockId.StoneSlab].collisionHeight, 0.5);
   assert.equal(BLOCKS[BlockId.StarBloom].solid, false);
   assert.equal(BLOCKS[BlockId.FluxWire].solid, false);
+  assert.equal(BLOCKS[BlockId.GlassPane].shape, "pane");
+});
+
+test("recognizable livestock and complete home-building recipes are available", () => {
+  for (const kind of ["sheep", "cow", "pig", "chicken"] as const) {
+    assert.equal(MOB_DEFINITIONS[kind].name.toLowerCase(), kind);
+    assert.equal(MOB_DEFINITIONS[kind].passive, true);
+  }
+  assert.ok(RECIPES.some((recipe) => recipe.id === "clear-glass" && recipe.inputs[itemForBlock(BlockId.Sand)] > 0));
+  assert.ok(RECIPES.some((recipe) => recipe.id === "timber-door"));
+  assert.ok(RECIPES.some((recipe) => recipe.id === "glass-panes"));
+  assert.ok(RECIPES.some((recipe) => recipe.id === "timber-shutters"));
 });
 
 test("expanded cave fields create substantial deterministic underground voids", () => {
@@ -431,20 +503,33 @@ test("creatures traverse one-block rises with a continuous jump arc", () => {
   assert.equal(mobIntersectsSolid(world, mob), false);
 });
 
-test("caves contain the complete Version 4 ore progression", () => {
+test("caves contain rare clustered veins while stone and deep slate dominate", () => {
   const world = new VoxelWorld("v4 ore survey");
   const found = new Set<BlockId>();
   const ores = [BlockId.CoalOre, BlockId.IronOre, BlockId.GoldOre, BlockId.FluxstoneOre, BlockId.DiamondOre];
+  let oreCount = 0;
+  let rockCount = 0;
+  let solidCount = 0;
+  const veinNeighbors = new Set<BlockId>();
   for (let x = -16; x <= 16; x += 1) {
     for (let z = -16; z <= 16; z += 1) {
       const ceiling = world.getHeight(x, z) - 3;
       for (let y = 1; y < ceiling; y += 1) {
         const id = world.getBlock(x, y, z);
-        if (ores.includes(id)) found.add(id);
+        if (id !== BlockId.Air && id !== BlockId.Water) solidCount += 1;
+        if (id === BlockId.Stone || id === BlockId.Slate) rockCount += 1;
+        if (ores.includes(id)) {
+          found.add(id);
+          oreCount += 1;
+          if ([[1, 0, 0], [0, 1, 0], [0, 0, 1]].some(([dx, dy, dz]) => world.getBlock(x + dx, y + dy, z + dz) === id)) veinNeighbors.add(id);
+        }
       }
     }
   }
   for (const ore of ores) assert.ok(found.has(ore), `missing ${BLOCKS[ore].name} in cave survey`);
+  assert.ok(oreCount / solidCount < 0.05, `ore abundance is too high: ${((oreCount / solidCount) * 100).toFixed(2)}%`);
+  assert.ok(rockCount / solidCount > 0.72, "stone and deep slate should overwhelmingly dominate underground rock");
+  assert.ok(veinNeighbors.size >= 4, "ores should usually occur in connected veins rather than isolated sprinkles");
 });
 
 test("a Hearth Furnace consumes coal and smelts raw ore into ingots", () => {
@@ -473,10 +558,28 @@ test("villages generate deterministically with homes, markets, and resident Wayf
   }
   assert.ok(village, "expected a valid village in the survey area");
   const villageWayfarers = first.mobs.filter((mob) => mob.kind === "wayfarer" && mob.id.startsWith(`wayfarer-${village.cx}-${village.cz}`));
-  assert.equal(villageWayfarers.length, 3);
+  assert.equal(villageWayfarers.length, 4);
+  assert.deepEqual(new Set(villageWayfarers.map((mob) => mob.profession)), new Set(["farmer", "blacksmith", "builder", "riftwright"]));
   assert.ok(villageWayfarers.every((mob) => mob.home && mob.activity));
   const second = new VoxelWorld("v4 survey");
   assert.ok(second.getChunk(village.cx, village.cz).blocks.includes(BlockId.TradePost));
+});
+
+test("village candidates are spaced and substantially rarer than Version 4 chunk rolls", () => {
+  const world = new VoxelWorld("village spacing survey");
+  let candidates = 0;
+  const regionCounts = new Map<string, number>();
+  for (let cx = -40; cx <= 40; cx += 1) {
+    for (let cz = -40; cz <= 40; cz += 1) {
+      if (!isVillageChunk(cx, cz, world.seed)) continue;
+      candidates += 1;
+      const key = `${Math.floor(cx / 8)},${Math.floor(cz / 8)}`;
+      regionCounts.set(key, (regionCounts.get(key) ?? 0) + 1);
+    }
+  }
+  const rate = candidates / (81 * 81);
+  assert.ok(rate > 0.008 && rate < 0.018, `village candidate rate drifted to ${(rate * 100).toFixed(2)}%`);
+  assert.ok(Array.from(regionCounts.values()).every((count) => count === 1), "each generation region should have at most one village candidate");
 });
 
 test("the Emberdeep is a distinct deterministic dimension with original terrain", () => {

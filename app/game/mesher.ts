@@ -142,6 +142,11 @@ function addFullCube(
   lz: number,
 ): void {
   const uv = tileUv(id);
+  const liquidTop = BLOCKS[id].liquid
+    ? id === BlockId.Water
+      ? Math.max(0.22, 0.88 - world.getWaterLevel(x, y, z) * 0.095)
+      : 0.88
+    : 1;
   for (const face of FACES) {
     const neighbor = world.getBlock(
       x + face.normal[0],
@@ -151,8 +156,8 @@ function addFullCube(
     if (!shouldRenderFace(id, neighbor)) continue;
     const baseIndex = buffers.positions.length / 3;
     for (const corner of face.corners) {
-      const waterOffset = BLOCKS[id].liquid && corner[1] === 1 ? -0.12 : 0;
-      buffers.positions.push(lx + corner[0], y + corner[1] + waterOffset, lz + corner[2]);
+      const localY = corner[1] === 1 ? liquidTop : 0;
+      buffers.positions.push(lx + corner[0], y + localY, lz + corner[2]);
       buffers.normals.push(...face.normal);
     }
     buffers.uvs.push(uv.u0, uv.v0, uv.u1, uv.v0, uv.u1, uv.v1, uv.u0, uv.v1);
@@ -364,6 +369,33 @@ function addFence(
   for (const [active, min, max] of arms) if (active) addCuboid(buffers, id, lx, y, lz, min, max);
 }
 
+function addPane(
+  world: VoxelWorld,
+  buffers: GeometryBuffers,
+  id: BlockId,
+  x: number,
+  y: number,
+  z: number,
+  lx: number,
+  lz: number,
+): void {
+  const connects = (neighbor: BlockId) => BLOCKS[neighbor].solid || BLOCKS[neighbor].shape === "pane";
+  const north = connects(world.getBlock(x, y, z - 1));
+  const east = connects(world.getBlock(x + 1, y, z));
+  const south = connects(world.getBlock(x, y, z + 1));
+  const west = connects(world.getBlock(x - 1, y, z));
+  if (!north && !east && !south && !west) {
+    addCuboid(buffers, id, lx, y, lz, [0.47, 0, 0.06], [0.53, 1, 0.94]);
+    addCuboid(buffers, id, lx, y, lz, [0.06, 0, 0.47], [0.94, 1, 0.53]);
+    return;
+  }
+  addCuboid(buffers, id, lx, y, lz, [0.47, 0, 0.47], [0.53, 1, 0.53]);
+  if (north) addCuboid(buffers, id, lx, y, lz, [0.47, 0, 0], [0.53, 1, 0.5]);
+  if (south) addCuboid(buffers, id, lx, y, lz, [0.47, 0, 0.5], [0.53, 1, 1]);
+  if (west) addCuboid(buffers, id, lx, y, lz, [0, 0, 0.47], [0.5, 1, 0.53]);
+  if (east) addCuboid(buffers, id, lx, y, lz, [0.5, 0, 0.47], [1, 1, 0.53]);
+}
+
 export function buildChunkGeometries(
   world: VoxelWorld,
   cx: number,
@@ -403,6 +435,7 @@ export function buildChunkGeometries(
         else if (shape === "portal") addPortal(buffers, id, lx, y, lz, orientation);
         else if (shape === "door") addDoor(buffers, id, lx, y, lz, orientation);
         else if (shape === "fence") addFence(world, buffers, id, x, y, z, lx, lz);
+        else if (shape === "pane") addPane(world, buffers, id, x, y, z, lx, lz);
       }
     }
   }

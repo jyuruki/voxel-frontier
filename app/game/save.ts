@@ -37,9 +37,15 @@ function validateSave(value: unknown): asserts value is WorldSave {
   if (!save.player || !Array.isArray(save.player.hotbar) || typeof save.player.inventory !== "object") {
     throw new Error("The player state is incomplete.");
   }
+  if (save.player.inventorySlots !== undefined && (!Array.isArray(save.player.inventorySlots) || save.player.inventorySlots.length > 36)) {
+    throw new Error("The saved inventory layout is invalid.");
+  }
   if (!Array.isArray(save.mutations) || !Array.isArray(save.machines)) throw new Error("The terrain state is incomplete.");
   if (!Array.isArray(save.drops) || !Array.isArray(save.mobs)) throw new Error("The entity state is incomplete.");
   if (save.mutations.length > 1_000_000) throw new Error("This save contains too many block changes.");
+  if (save.waterLevels !== undefined && (!Array.isArray(save.waterLevels) || save.waterLevels.length > 1_000_000)) {
+    throw new Error("The saved water state is invalid.");
+  }
 }
 
 export function encodeWorldKey(save: WorldSave): string {

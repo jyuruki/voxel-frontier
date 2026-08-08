@@ -12,6 +12,17 @@ import {
 } from "./blocks";
 import { AutomationSystem } from "./automation";
 import { FrontierAudio } from "./audio";
+import {
+  HOTBAR_SIZE,
+  HOTBAR_START,
+  INVENTORY_SLOT_COUNT,
+  addItemToLayout,
+  createInventoryLayout,
+  hotbarFromLayout,
+  moveInventorySlot as moveSlotInLayout,
+  reconcileInventoryLayout,
+  shiftInventorySlot as shiftSlotInLayout,
+} from "./inventory";
 import { WeaponStats, weaponStats } from "./combat";
 import { buildChunkGeometries } from "./mesher";
 import { NetworkMessage, NetworkSession } from "./network";
@@ -29,6 +40,7 @@ import {
   HudState,
   InputFrame,
   Inventory,
+  InventoryLayout,
   ItemId,
   MachineState,
   MobState,
@@ -36,6 +48,7 @@ import {
   Recipe,
   SAVE_VERSION,
   Vec3Data,
+  VillagerProfession,
   WorldSave,
   WORLD_HEIGHT,
 } from "./types";
@@ -54,12 +67,16 @@ export interface TradeOffer {
   cost: { item: ItemId; count: number };
   reward: { item: ItemId; count: number };
   note: string;
+  stock: number;
+  maxStock: number;
 }
 
 export interface TradePanelData {
   mobId: string;
   name: string;
+  profession: string;
   offers: TradeOffer[];
+  marks: number;
 }
 
 export interface GameEngineCallbacks {
@@ -88,7 +105,6 @@ interface ChunkMeshSet {
   revision: number;
 }
 
-const HOTBAR_SIZE = 9;
 const AUTOSAVE_SECONDS = 18;
 
 function cloneInventory(inventory: Inventory): Inventory {
@@ -222,13 +238,48 @@ function formatFrontierTime(timeOfDay: number): string {
   return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")} · ${phase}`;
 }
 
-const WAYFARER_OFFERS: TradeOffer[] = [
-  { id: "coal-for-iron", name: "Foundry Bundle", cost: { item: "part:coal", count: 10 }, reward: { item: "part:iron-ingot", count: 2 }, note: "Useful when the nearest iron seam is still out of reach." },
-  { id: "iron-for-gold", name: "Gilded Exchange", cost: { item: "part:iron-ingot", count: 4 }, reward: { item: "part:gold-ingot", count: 1 }, note: "Trade practical metal for a rarer conductor." },
-  { id: "gold-for-diamond", name: "Lapidary Parcel", cost: { item: "part:gold-ingot", count: 3 }, reward: { item: "part:diamond", count: 1 }, note: "A cut crystal from a distant Wayfarer mine." },
-  { id: "fruit-for-fiber", name: "Weaver's Roll", cost: { item: "food:starfruit", count: 5 }, reward: { item: "part:soft-fiber", count: 3 }, note: "Warm fiber for beds, fleece, and journals." },
-  { id: "diamond-for-rift", name: "Riftwright's Core", cost: { item: "part:diamond", count: 4 }, reward: { item: "part:rift-core", count: 1 }, note: "The stabilizer required to craft a Rift Gate." },
-];
+type TradeProfession = VillagerProfession | "market";
+type TradeTemplate = Omit<TradeOffer, "stock">;
+
+const PROFESSION_NAMES: Record<TradeProfession, string> = {
+  farmer: "Farmer",
+  blacksmith: "Blacksmith",
+  builder: "Builder",
+  riftwright: "Riftwright",
+  market: "Market Clerk",
+};
+
+const TRADE_CATALOG: Record<TradeProfession, TradeTemplate[]> = {
+  farmer: [
+    { id: "farmer-buys-fruit", name: "Produce Delivery", cost: { item: "food:starfruit", count: 4 }, reward: { item: "currency:frontier-mark", count: 3 }, note: "Sell ripe Starfruit to the village pantry.", maxStock: 6 },
+    { id: "farmer-buys-feathers", name: "Feather Bundle", cost: { item: "part:feather", count: 4 }, reward: { item: "currency:frontier-mark", count: 2 }, note: "Sell clean feathers for bedding and fletching.", maxStock: 5 },
+    { id: "farmer-sells-fiber", name: "Fleece Bale", cost: { item: "currency:frontier-mark", count: 5 }, reward: { item: "part:soft-fiber", count: 4 }, note: "Buy prepared fiber for a bed or woven block.", maxStock: 4 },
+    { id: "farmer-sells-food", name: "Travel Rations", cost: { item: "currency:frontier-mark", count: 3 }, reward: { item: "food:starfruit", count: 5 }, note: "A small ration for long cave trips.", maxStock: 4 },
+  ],
+  blacksmith: [
+    { id: "smith-buys-coal", name: "Forge Fuel", cost: { item: "part:coal", count: 8 }, reward: { item: "currency:frontier-mark", count: 4 }, note: "Sell coal to keep the village forge hot.", maxStock: 6 },
+    { id: "smith-buys-copper", name: "Copper Order", cost: { item: "block:10", count: 4 }, reward: { item: "currency:frontier-mark", count: 5 }, note: "Sell raw copper ore for local machine work.", maxStock: 5 },
+    { id: "smith-sells-iron", name: "Iron Pair", cost: { item: "currency:frontier-mark", count: 7 }, reward: { item: "part:iron-ingot", count: 2 }, note: "Buy two furnace-ready iron ingots.", maxStock: 4 },
+    { id: "smith-sells-pick", name: "Iron Pick", cost: { item: "currency:frontier-mark", count: 18 }, reward: { item: "tool:iron-pick", count: 1 }, note: "A finished deep-mining tool, limited to one per restock.", maxStock: 1 },
+  ],
+  builder: [
+    { id: "builder-buys-stone", name: "Masonry Contract", cost: { item: "block:3", count: 16 }, reward: { item: "currency:frontier-mark", count: 4 }, note: "Sell common Roughstone for village repairs.", maxStock: 6 },
+    { id: "builder-sells-panes", name: "Window Crate", cost: { item: "currency:frontier-mark", count: 5 }, reward: { item: "block:112", count: 8 }, note: "Slim Clearglass Panes for a finished home.", maxStock: 5 },
+    { id: "builder-sells-door", name: "Door & Shutter Set", cost: { item: "currency:frontier-mark", count: 6 }, reward: { item: "block:97", count: 1 }, note: "A fitted timber door for a cottage or workshop.", maxStock: 4 },
+    { id: "builder-sells-roof", name: "Roofing Lot", cost: { item: "currency:frontier-mark", count: 7 }, reward: { item: "block:103", count: 6 }, note: "Weatherproof fired-clay roof tiles.", maxStock: 4 },
+  ],
+  riftwright: [
+    { id: "rift-buys-shards", name: "Crystal Commission", cost: { item: "part:moonshard", count: 2 }, reward: { item: "currency:frontier-mark", count: 7 }, note: "Sell cut Moonshards for dimensional research.", maxStock: 4 },
+    { id: "rift-sells-flux", name: "Fluxstone Packet", cost: { item: "currency:frontier-mark", count: 6 }, reward: { item: "part:flux-dust", count: 4 }, note: "Signal dust for advanced logic circuits.", maxStock: 4 },
+    { id: "rift-sells-diamond", name: "Cut Diamond", cost: { item: "currency:frontier-mark", count: 20 }, reward: { item: "part:diamond", count: 1 }, note: "A scarce cut crystal from a distant mine.", maxStock: 2 },
+    { id: "rift-sells-core", name: "Rift Core", cost: { item: "currency:frontier-mark", count: 40 }, reward: { item: "part:rift-core", count: 1 }, note: "The stabilizer required for a Rift Gate.", maxStock: 1 },
+  ],
+  market: [
+    { id: "market-buys-fiber", name: "Textile Delivery", cost: { item: "part:soft-fiber", count: 5 }, reward: { item: "currency:frontier-mark", count: 4 }, note: "Sell surplus fleece at the village counter.", maxStock: 5 },
+    { id: "market-buys-iron", name: "Tooling Order", cost: { item: "part:iron-ingot", count: 2 }, reward: { item: "currency:frontier-mark", count: 5 }, note: "Sell refined iron to the shared workshop.", maxStock: 4 },
+    { id: "market-sells-coal", name: "Emergency Fuel", cost: { item: "currency:frontier-mark", count: 3 }, reward: { item: "part:coal", count: 6 }, note: "A small fuel reserve for stranded travelers.", maxStock: 3 },
+  ],
+};
 
 function blockVisualBounds(id: BlockId): { x: number; y: number; z: number } {
   const definition = BLOCKS[id];
@@ -240,6 +291,7 @@ function blockVisualBounds(id: BlockId): { x: number; y: number; z: number } {
   if (shape === "slab") return { x: 1, y: definition.collisionHeight ?? 0.5, z: 1 };
   if (shape === "bed") return { x: 1, y: 0.58, z: 1 };
   if (shape === "portal" || shape === "door") return { x: 0.94, y: 1, z: 0.2 };
+  if (shape === "pane") return { x: 0.94, y: 1, z: 0.1 };
   if (shape === "fence") return { x: 0.76, y: 1, z: 0.76 };
   if (shape === "column") return { x: 0.64, y: 1, z: 0.64 };
   if (shape === "ladder") return { x: 0.72, y: 1, z: 0.16 };
@@ -258,6 +310,10 @@ function paintBlockUv(geometry: THREE.BufferGeometry, id: BlockId): void {
 }
 
 const CREATURE_PALETTES: Record<MobState["kind"], { base: string; accent: string; mark: string; eye: number }> = {
+  sheep: { base: "#dedbd1", accent: "#b8b2a7", mark: "#6a615a", eye: 0x211d1b },
+  cow: { base: "#8c684f", accent: "#eee7d7", mark: "#3a2a24", eye: 0x191512 },
+  pig: { base: "#d78f91", accent: "#efb4ad", mark: "#8f555b", eye: 0x24191b },
+  chicken: { base: "#ece8d9", accent: "#cf473d", mark: "#e0a53e", eye: 0x171412 },
   glowgrazer: { base: "#426c70", accent: "#8ce6d4", mark: "#315056", eye: 0xffe59a },
   mireling: { base: "#405e55", accent: "#86bd91", mark: "#263f3b", eye: 0xffca5c },
   cinderling: { base: "#713c38", accent: "#f48a45", mark: "#2b2428", eye: 0xffe073 },
@@ -278,7 +334,15 @@ function createCreatureTexture(kind: MobState["kind"], accent = false): THREE.Ca
   context.fillRect(0, 0, 16, 16);
   context.fillStyle = accent ? palette.base : palette.mark;
 
-  if (kind === "glowgrazer") {
+  if (kind === "cow") {
+    for (const [x, y, w, h] of [[1, 1, 5, 4], [10, 0, 5, 6], [4, 9, 6, 4], [12, 12, 4, 4]]) context.fillRect(x, y, w, h);
+  } else if (kind === "sheep") {
+    for (let y = 0; y < 16; y += 4) for (let x = (y / 4) % 2 ? 0 : 2; x < 16; x += 5) context.fillRect(x, y, 3, 2);
+  } else if (kind === "pig") {
+    for (const [x, y] of [[2, 3], [11, 2], [6, 8], [13, 12], [2, 13]]) context.fillRect(x, y, 2, 1);
+  } else if (kind === "chicken") {
+    for (const [x, y, w] of [[1, 2, 4], [9, 1, 5], [4, 8, 3], [11, 12, 4]]) context.fillRect(x, y, w, 2);
+  } else if (kind === "glowgrazer") {
     for (const [x, y, w] of [[1, 2, 4], [10, 1, 3], [6, 7, 4], [0, 12, 3], [12, 11, 4]]) context.fillRect(x, y, w, 2);
   } else if (kind === "mireling") {
     for (let y = 1; y < 16; y += 4) for (let x = (y / 4) % 2 ? 0 : 2; x < 16; x += 5) context.fillRect(x, y, 3, 2);
@@ -353,6 +417,7 @@ export class GameEngine {
   private physics: PlayerPhysics;
   private settings: GameSettings;
   private inventory: Inventory;
+  private inventorySlots: InventoryLayout;
   private hotbar: Array<ItemId | null>;
   private selectedSlot = 0;
   private health = 100;
@@ -383,6 +448,7 @@ export class GameEngine {
   private miningProgress = 0;
   private mineSoundTimer = 0;
   private stepSoundTimer = 0;
+  private inventoryFullToastTimer = 0;
   private objective = "Gather Emberwood by hand and prepare for nightfall.";
   private dayCount = 1;
   private nightAnnouncementDay = 0;
@@ -414,7 +480,10 @@ export class GameEngine {
     this.addLook(event.movementX, event.movementY);
   };
   private readonly onMouseDown = (event: MouseEvent) => {
-    if (event.button === 0) this.input.mine = true;
+    if (event.button === 0) {
+      this.input.mine = true;
+      this.viewModel.swing("attack");
+    }
     if (event.button === 2) this.input.place = true;
     if (document.pointerLockElement !== this.canvas) void this.canvas.requestPointerLock();
     void this.audio.unlock();
@@ -429,6 +498,8 @@ export class GameEngine {
     this.setSelectedSlot(this.selectedSlot + (event.deltaY > 0 ? 1 : -1));
   };
   private readonly onKeyDown = (event: KeyboardEvent) => {
+    const target = event.target as HTMLElement | null;
+    if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
     if (event.repeat && ["KeyE", "KeyF", "KeyG", "Escape"].includes(event.code)) return;
     if (event.code === "KeyW") this.input.forward = 1;
     if (event.code === "KeyS") this.input.forward = -1;
@@ -438,7 +509,10 @@ export class GameEngine {
     if (event.code === "ShiftLeft") this.input.sprint = true;
     if (event.code === "ControlLeft" || event.code === "KeyC") this.input.crouch = true;
     if (event.code === "KeyF") this.tapInteract();
-    if (event.code === "KeyE") this.callbacks.onInventory();
+    if (event.code === "KeyE") {
+      event.preventDefault();
+      this.callbacks.onInventory();
+    }
     if (event.code === "KeyG") this.callbacks.onGuide();
     if (event.code === "KeyR") this.rotateTargetedMachine();
     if (event.code === "Escape") this.callbacks.onPause();
@@ -469,14 +543,15 @@ export class GameEngine {
     this.wildlifeRandom = seededRandom(hashString(`wildlife:${this.world.seedText}`));
     if (loaded) {
       this.world.loadMutations(loaded.mutations);
+      this.world.loadWaterLevels(loaded.waterLevels);
       for (const [key, state] of loaded.machines) {
         this.world.machines.set(key, { ...state, storage: cloneInventory(state.storage) });
       }
       this.world.drops.push(...loaded.drops.map((drop) => ({ ...drop, position: { ...drop.position }, velocity: { ...drop.velocity } })));
       this.world.mobs.push(...loaded.mobs.map((mob) => ({ ...mob, position: { ...mob.position }, velocity: { ...mob.velocity } })));
       this.inventory = cloneInventory(loaded.player.inventory);
-      this.hotbar = [...loaded.player.hotbar].slice(0, HOTBAR_SIZE).map((item) => item ?? null);
-      while (this.hotbar.length < HOTBAR_SIZE) this.hotbar.push(null);
+      this.inventorySlots = createInventoryLayout(this.inventory, loaded.player.inventorySlots, loaded.player.hotbar);
+      this.hotbar = hotbarFromLayout(this.inventorySlots);
       this.selectedSlot = Math.max(0, Math.min(HOTBAR_SIZE - 1, loaded.player.selectedSlot));
       this.health = loaded.player.health;
       this.hunger = loaded.player.hunger;
@@ -489,6 +564,8 @@ export class GameEngine {
     } else {
       this.inventory = this.mode === "creative" ? creativeInventory() : {};
       this.hotbar = defaultHotbar(this.mode);
+      this.inventorySlots = createInventoryLayout(this.inventory, undefined, this.hotbar);
+      this.hotbar = hotbarFromLayout(this.inventorySlots);
       this.physics = new PlayerPhysics(this.world.findSpawn());
       this.spawnInitialMobs();
     }
@@ -626,6 +703,7 @@ export class GameEngine {
     this.input.lookX = 0;
     this.input.lookY = 0;
     this.attackCooldown = Math.max(0, this.attackCooldown - dt);
+    this.inventoryFullToastTimer = Math.max(0, this.inventoryFullToastTimer - dt);
     this.riftCooldown = Math.max(0, this.riftCooldown - dt);
     this.hazardCooldown = Math.max(0, this.hazardCooldown - dt);
 
@@ -937,6 +1015,14 @@ export class GameEngine {
       this.hunger = Math.min(100, this.hunger + 32);
       this.health = Math.min(100, this.health + 6);
       used = true;
+    } else if (item === "food:pork" && (this.hunger < 100 || this.health < 100)) {
+      this.hunger = Math.min(100, this.hunger + 24);
+      this.health = Math.min(100, this.health + 3);
+      used = true;
+    } else if (item === "food:chicken" && (this.hunger < 100 || this.health < 100)) {
+      this.hunger = Math.min(100, this.hunger + 16);
+      this.health = Math.min(100, this.health + 2);
+      used = true;
     } else if (item === "consumable:mender-tonic" && this.health < 100) {
       this.health = Math.min(100, this.health + 46);
       used = true;
@@ -954,23 +1040,22 @@ export class GameEngine {
 
   private clearDepletedHotbar(): void {
     if (this.mode === "creative") return;
-    let selectedRemoved = false;
-    for (let slot = 0; slot < this.hotbar.length; slot += 1) {
-      const item = this.hotbar[slot];
-      if (item && !itemAvailable(this.inventory, item)) {
-        this.hotbar[slot] = null;
-        if (slot === this.selectedSlot) selectedRemoved = true;
-      }
-    }
-    if (selectedRemoved) this.viewModel.setItem(null);
+    const selected = this.hotbar[this.selectedSlot];
+    this.inventorySlots = reconcileInventoryLayout(this.inventorySlots, this.inventory);
+    this.hotbar = hotbarFromLayout(this.inventorySlots);
+    if (selected && !itemAvailable(this.inventory, selected)) this.viewModel.setItem(null);
   }
 
-  private collectItem(item: ItemId, count: number): void {
+  private canStoreItem(item: ItemId): boolean {
+    return itemAvailable(this.inventory, item) || this.inventorySlots.some((slot) => slot === null);
+  }
+
+  private collectItem(item: ItemId, count: number): boolean {
+    if (this.mode !== "creative" && !this.canStoreItem(item)) return false;
     changeItem(this.inventory, item, count);
-    if (!this.hotbar.includes(item)) {
-      const emptySlot = this.hotbar.indexOf(null);
-      if (emptySlot >= 0) this.hotbar[emptySlot] = item;
-    }
+    this.inventorySlots = addItemToLayout(this.inventorySlots, item, true);
+    this.hotbar = hotbarFromLayout(this.inventorySlots);
+    return true;
   }
 
   private spawnDrop(item: ItemId, count: number, position: MobState["position"]): void {
@@ -1057,17 +1142,73 @@ export class GameEngine {
     this.network.send(message);
   }
 
+  private professionForMob(mob: MobState): VillagerProfession {
+    if (mob.profession) return mob.profession;
+    const professions: VillagerProfession[] = ["farmer", "blacksmith", "builder", "riftwright"];
+    mob.profession = professions[hashString(mob.id) % professions.length];
+    return mob.profession;
+  }
+
+  private buildTradePanel(mobId: string): TradePanelData | null {
+    let profession: TradeProfession;
+    let name: string;
+    let stock: Record<string, number>;
+    if (mobId.startsWith("post:")) {
+      const key = mobId.slice(5);
+      const [x, y, z] = parseWorldKey(key);
+      if (this.world.getBlock(x, y, z) !== BlockId.TradePost) return null;
+      const state = this.world.machines.get(key);
+      if (!state) return null;
+      profession = "market";
+      name = "Village Market";
+      if (state.tradeRestockDay !== this.dayCount) {
+        state.tradeStock = {};
+        state.tradeRestockDay = this.dayCount;
+      }
+      state.tradeStock ??= {};
+      stock = state.tradeStock;
+    } else {
+      const mob = this.world.mobs.find((candidate) => candidate.id === mobId && candidate.kind === "wayfarer");
+      if (!mob) return null;
+      profession = this.professionForMob(mob);
+      name = `Village ${PROFESSION_NAMES[profession]}`;
+      if (mob.tradeRestockDay !== this.dayCount) {
+        mob.tradeStock = {};
+        mob.tradeRestockDay = this.dayCount;
+      }
+      mob.tradeStock ??= {};
+      stock = mob.tradeStock;
+    }
+    const offers = TRADE_CATALOG[profession].map((offer) => {
+      if (stock[offer.id] === undefined) stock[offer.id] = offer.maxStock;
+      return {
+        ...offer,
+        cost: { ...offer.cost },
+        reward: { ...offer.reward },
+        stock: stock[offer.id],
+      };
+    });
+    return {
+      mobId,
+      name,
+      profession: PROFESSION_NAMES[profession],
+      offers,
+      marks: this.inventory["currency:frontier-mark"] ?? 0,
+    };
+  }
+
+  getTradePanel(mobId: string): TradePanelData | null {
+    return this.buildTradePanel(mobId);
+  }
+
   private interactTarget(): void {
     if (this.targetedMob?.kind === "wayfarer") {
       this.audio.playCreature("wayfarer", "idle", Math.hypot(
         this.targetedMob.position.x - this.physics.position.x,
         this.targetedMob.position.z - this.physics.position.z,
       ));
-      this.callbacks.onTrade({
-        mobId: this.targetedMob.id,
-        name: `Wayfarer ${this.targetedMob.id.slice(-3).toUpperCase()}`,
-        offers: WAYFARER_OFFERS.map((offer) => ({ ...offer, cost: { ...offer.cost }, reward: { ...offer.reward } })),
-      });
+      const panel = this.buildTradePanel(this.targetedMob.id);
+      if (panel) this.callbacks.onTrade(panel);
       return;
     }
     if (!this.currentHit) return;
@@ -1123,11 +1264,8 @@ export class GameEngine {
       return;
     }
     if (id === BlockId.TradePost) {
-      this.callbacks.onTrade({
-        mobId: `post:${key}`,
-        name: "Wayfarer Market",
-        offers: WAYFARER_OFFERS.map((offer) => ({ ...offer, cost: { ...offer.cost }, reward: { ...offer.reward } })),
-      });
+      const panel = this.buildTradePanel(`post:${key}`);
+      if (panel) this.callbacks.onTrade(panel);
       return;
     }
     if (id === BlockId.RelicCache) {
@@ -1355,7 +1493,14 @@ export class GameEngine {
         drop.position.z - this.physics.position.z,
       );
       if (localDistance < 1.25 && (drop.pickupDelay ?? 0) <= 0) {
-        this.collectItem(drop.item, drop.count);
+        if (!this.collectItem(drop.item, drop.count)) {
+          drop.pickupDelay = 0.7;
+          if (this.inventoryFullToastTimer <= 0) {
+            this.inventoryFullToastTimer = 2.5;
+            this.callbacks.onToast("Inventory full · move or use an item before collecting another type.");
+          }
+          continue;
+        }
         this.world.drops.splice(index, 1);
         this.audio.play("click");
         continue;
@@ -1384,13 +1529,10 @@ export class GameEngine {
       const z = Math.floor(spawn.z + Math.sin(angle) * distance) + 0.5;
       const y = this.world.getHeight(x, z) + 1;
       const biome = this.world.getBiome(x, z);
-      const kind: MobState["kind"] = biome === "Cinder Reach"
+      const livestock: Array<MobState["kind"]> = ["sheep", "cow", "pig", "chicken"];
+      const kind: MobState["kind"] = biome === "Cinder Reach" && index % 4 === 0
         ? "cinderling"
-        : index % 7 === 0
-          ? "thornback"
-          : index % 3 === 0
-          ? "mireling"
-          : "glowgrazer";
+        : livestock[index % livestock.length];
       const mob: MobState = {
         id: `mob-${index}-${Math.floor(random() * 1e7).toString(36)}`,
         kind,
@@ -1532,11 +1674,21 @@ export class GameEngine {
     }
 
     if (mob.kind === "wayfarer") {
+      const professionColor: Record<VillagerProfession, number> = {
+        farmer: 0x789a57,
+        blacksmith: 0x596873,
+        builder: 0xb87949,
+        riftwright: 0x7862a8,
+      };
+      const profession = mob.profession ?? "farmer";
+      const professionMaterial = rememberColor(new THREE.MeshLambertMaterial({ color: professionColor[profession] }));
       addPart(visual, [0.56, 0.82, 0.34], [0, 1.02, 0], bodyMaterial, "body");
+      addPart(visual, [0.48, 0.46, 0.05], [0, 1.08, -0.2], professionMaterial, "apron");
       addPart(visual, [0.48, 0.44, 0.46], [0, 1.62, -0.02], accentMaterial, "head");
       addPart(visual, [0.16, 0.14, 0.12], [0, 1.56, -0.29], accentMaterial, "nose");
       for (const x of [-0.13, 0.13]) addPart(visual, [0.07, 0.07, 0.035], [x, 1.68, -0.26], eyeMaterial);
       addPart(visual, [0.64, 0.1, 0.58], [0, 1.9, -0.01], darkMaterial);
+      addPart(visual, [0.66, 0.055, 0.6], [0, 1.94, -0.01], professionMaterial, "hat-band");
       addPart(visual, [0.45, 0.2, 0.42], [0, 2.01, 0], bodyMaterial);
       addPart(visual, [0.46, 0.52, 0.18], [0, 1.08, 0.25], darkMaterial, "pack");
       for (const [index, x] of [-0.18, 0.18].entries()) addPivotPart(`leg-${index}`, [x, 0.62, 0], [0.2, 0.62, 0.22], darkMaterial);
@@ -1544,12 +1696,31 @@ export class GameEngine {
       return root;
     }
 
+    if (mob.kind === "chicken") {
+      addPart(visual, [0.5, 0.46, 0.62], [0, 0.47, 0.04], bodyMaterial, "body");
+      addPart(visual, [0.36, 0.36, 0.38], [0, 0.78, -0.33], bodyMaterial, "head");
+      addPart(visual, [0.24, 0.12, 0.25], [0, 0.72, -0.62], darkMaterial, "beak");
+      addPart(visual, [0.13, 0.22, 0.1], [0, 1.03, -0.34], accentMaterial, "comb");
+      addPart(visual, [0.1, 0.13, 0.08], [0, 0.57, -0.58], accentMaterial, "wattle");
+      for (const x of [-0.12, 0.12]) addPart(visual, [0.055, 0.065, 0.035], [x, 0.84, -0.535], eyeMaterial);
+      for (const [index, x] of [-0.3, 0.3].entries()) {
+        const wing = addPivotPart(`arm-${index}`, [x, 0.64, 0.02], [0.14, 0.38, 0.44], bodyMaterial);
+        wing.rotation.z = x < 0 ? -0.2 : 0.2;
+      }
+      for (const [index, x] of [-0.13, 0.13].entries()) addPivotPart(`leg-${index}`, [x, 0.27, 0.05], [0.07, 0.27, 0.07], darkMaterial);
+      const tail = addPart(visual, [0.34, 0.42, 0.12], [0, 0.65, 0.39], bodyMaterial, "tail");
+      tail.rotation.x = -0.35;
+      return root;
+    }
+
     const thornback = mob.kind === "thornback";
-    const bodyWidth = thornback ? 1.02 : mob.kind === "mireling" ? 0.86 : 0.78;
-    const bodyLength = thornback ? 1.2 : mob.kind === "mireling" ? 0.92 : 1.02;
+    const bodyWidth = thornback ? 1.02 : mob.kind === "cow" ? 1 : mob.kind === "sheep" ? 0.9 : mob.kind === "mireling" ? 0.86 : mob.kind === "pig" ? 0.76 : 0.78;
+    const bodyLength = thornback ? 1.2 : mob.kind === "cow" ? 1.28 : mob.kind === "sheep" ? 1.08 : mob.kind === "mireling" ? 0.92 : mob.kind === "pig" ? 0.94 : 1.02;
     addPart(visual, [bodyWidth, 0.58, bodyLength], [0, 0.68, 0.04], bodyMaterial, "body");
+    if (mob.kind === "sheep") addPart(visual, [bodyWidth + 0.12, 0.64, bodyLength + 0.12], [0, 0.71, 0.04], bodyMaterial, "fleece");
     if (mob.kind === "mireling") addPart(visual, [0.72, 0.24, 0.72], [0, 1.02, 0.13], darkMaterial, "shell");
-    const head = addPart(visual, [0.56, 0.5, 0.54], [0, 0.84, -bodyLength / 2 - 0.18], accentMaterial, "head");
+    const headMaterial = mob.kind === "sheep" ? darkMaterial : accentMaterial;
+    const head = addPart(visual, [0.56, 0.5, 0.54], [0, 0.84, -bodyLength / 2 - 0.18], headMaterial, "head");
     head.rotation.x = mob.kind === "mireling" ? -0.08 : 0;
     addPart(visual, [0.38, 0.22, 0.28], [0, 0.73, -bodyLength / 2 - 0.52], darkMaterial, "muzzle");
     for (const x of [-0.17, 0.17]) addPart(visual, [0.07, 0.08, 0.04], [x, 0.93, -bodyLength / 2 - 0.465], eyeMaterial);
@@ -1563,6 +1734,25 @@ export class GameEngine {
         const cheek = addPart(visual, [0.22, 0.12, 0.18], [x, 0.79, -0.78], accentMaterial);
         cheek.rotation.z = x < 0 ? -0.38 : 0.38;
       }
+    } else if (mob.kind === "cow") {
+      for (const x of [-0.22, 0.22]) {
+        const horn = addPart(visual, [0.08, 0.27, 0.08], [x, 1.18, -bodyLength / 2 - 0.2], darkMaterial);
+        horn.rotation.z = x < 0 ? -0.48 : 0.48;
+        const ear = addPart(visual, [0.23, 0.09, 0.15], [x * 1.42, 1.04, -bodyLength / 2 - 0.18], bodyMaterial);
+        ear.rotation.z = x < 0 ? -0.28 : 0.28;
+      }
+      addPart(visual, [0.34, 0.14, 0.3], [0, 0.38, 0.18], accentMaterial, "udder");
+    } else if (mob.kind === "sheep") {
+      for (const x of [-0.29, 0.29]) {
+        const ear = addPart(visual, [0.22, 0.09, 0.15], [x, 0.98, -bodyLength / 2 - 0.22], darkMaterial);
+        ear.rotation.z = x < 0 ? -0.3 : 0.3;
+      }
+    } else if (mob.kind === "pig") {
+      for (const x of [-0.22, 0.22]) {
+        const ear = addPart(visual, [0.2, 0.2, 0.08], [x, 1.1, -bodyLength / 2 - 0.2], accentMaterial);
+        ear.rotation.z = x < 0 ? -0.42 : 0.42;
+      }
+      addPart(visual, [0.34, 0.22, 0.25], [0, 0.75, -bodyLength / 2 - 0.54], accentMaterial, "snout");
     } else if (mob.kind === "glowgrazer") {
       for (const x of [-0.22, 0.22]) {
         const horn = addPart(visual, [0.09, 0.3, 0.09], [x, 1.22, -0.6], accentMaterial);
@@ -1576,7 +1766,7 @@ export class GameEngine {
         crest.rotation.z = x * 0.8;
       }
       for (const z of [-0.18, 0.28]) addPart(visual, [0.22, 0.12, 0.22], [0, 1.02, z], accentMaterial);
-    } else {
+    } else if (mob.kind === "mireling") {
       for (const x of [-0.3, 0.3]) {
         const fin = addPart(visual, [0.28, 0.08, 0.2], [x, 0.78, -0.46], accentMaterial);
         fin.rotation.z = x < 0 ? -0.5 : 0.5;
@@ -1807,10 +1997,12 @@ export class GameEngine {
         ? new THREE.PlaneGeometry(0.34, 0.42)
         : shape === "wire" || shape === "plate"
           ? new THREE.BoxGeometry(0.34, 0.055, 0.34)
-          : shape === "torch" || shape === "rod" || shape === "ladder"
+            : shape === "torch" || shape === "rod" || shape === "ladder"
             ? new THREE.BoxGeometry(0.09, 0.38, 0.09)
             : shape === "slab"
               ? new THREE.BoxGeometry(0.32, 0.16, 0.32)
+              : shape === "pane"
+                ? new THREE.BoxGeometry(0.34, 0.36, 0.045)
               : shape === "hopper"
                 ? new THREE.CylinderGeometry(0.11, 0.21, 0.28, 4)
                 : new THREE.BoxGeometry(0.26, 0.26, 0.26);
@@ -2023,9 +2215,10 @@ export class GameEngine {
     } else if (message.type === "damage" && this.network.role === "guest") {
       this.damage(message.amount, message.source);
     } else if (message.type === "give-item" && this.network.role === "guest") {
-      this.collectItem(message.item, message.count);
-      this.audio.play("click");
-      this.callbacks.onToast(`Collected ${message.count} × ${itemName(message.item)}.`);
+      if (this.collectItem(message.item, message.count)) {
+        this.audio.play("click");
+        this.callbacks.onToast(`Collected ${message.count} × ${itemName(message.item)}.`);
+      } else this.callbacks.onToast(`Inventory full · could not collect ${itemName(message.item)}.`);
     } else if (message.type === "request-sleep" && this.network.role === "host") {
       const night = this.timeOfDay < 0.22 || this.timeOfDay > 0.78;
       if (!night) {
@@ -2082,6 +2275,7 @@ export class GameEngine {
     this.world = new VoxelWorld(save.seed);
     this.wildlifeRandom = seededRandom(hashString(`wildlife:${this.world.seedText}`));
     this.world.loadMutations(save.mutations);
+    this.world.loadWaterLevels(save.waterLevels);
     for (const [key, state] of save.machines) {
       this.world.machines.set(key, { ...state, storage: cloneInventory(state.storage) });
     }
@@ -2092,6 +2286,8 @@ export class GameEngine {
     this.mode = save.mode ?? this.mode;
     this.inventory = this.mode === "creative" ? creativeInventory() : {};
     this.hotbar = defaultHotbar(this.mode);
+    this.inventorySlots = createInventoryLayout(this.inventory, undefined, this.hotbar);
+    this.hotbar = hotbarFromLayout(this.inventorySlots);
     this.selectedSlot = 0;
     this.health = 100;
     this.hunger = 100;
@@ -2117,6 +2313,7 @@ export class GameEngine {
       stamina: this.stamina,
       selectedSlot: this.selectedSlot,
       hotbar: [...this.hotbar],
+      inventorySlots: [...this.inventorySlots],
       inventory: cloneInventory(this.inventory),
       targetedBlock: this.currentHit?.id ?? null,
       miningProgress: this.miningProgress,
@@ -2173,6 +2370,7 @@ export class GameEngine {
     }
     if (this.mode === "survival") {
       for (const [item, count] of Object.entries(recipe.inputs)) changeItem(this.inventory, item as ItemId, -count);
+      this.clearDepletedHotbar();
       this.collectItem(recipe.output.item, recipe.output.count);
     }
     this.audio.play("craft");
@@ -2206,9 +2404,9 @@ export class GameEngine {
 
   transferFromMachine(key: string, item: ItemId, count = 1): boolean {
     const state = this.world.machines.get(key);
-    if (!state || !itemAvailable(state.storage, item, count)) return false;
+    if (!state || !itemAvailable(state.storage, item, count) || !this.canStoreItem(item)) return false;
     changeItem(state.storage, item, -count);
-    changeItem(this.inventory, item, count);
+    this.collectItem(item, count);
     this.broadcastMachine(key, state);
     this.emitHud();
     return true;
@@ -2249,33 +2447,88 @@ export class GameEngine {
   }
 
   trade(mobId: string, offerId: string): boolean {
-    const offer = WAYFARER_OFFERS.find((candidate) => candidate.id === offerId);
-    if (!offer) return false;
-    if (!mobId.startsWith("post:")) {
-      const merchant = this.world.mobs.find((mob) => mob.id === mobId && mob.kind === "wayfarer");
-      if (!merchant || Math.hypot(merchant.position.x - this.physics.position.x, merchant.position.z - this.physics.position.z) > 6) {
-        this.callbacks.onToast("That Wayfarer is no longer close enough to trade.");
+    const panel = this.buildTradePanel(mobId);
+    const offer = panel?.offers.find((candidate) => candidate.id === offerId);
+    if (!panel || !offer) return false;
+    if (mobId.startsWith("post:")) {
+      const [x, , z] = parseWorldKey(mobId.slice(5));
+      if (Math.hypot(x + 0.5 - this.physics.position.x, z + 0.5 - this.physics.position.z) > 7) {
+        this.callbacks.onToast("The village market is no longer close enough.");
         return false;
       }
+    } else {
+      const merchant = this.world.mobs.find((mob) => mob.id === mobId && mob.kind === "wayfarer");
+      if (!merchant || Math.hypot(merchant.position.x - this.physics.position.x, merchant.position.z - this.physics.position.z) > 6) {
+        this.callbacks.onToast("That villager is no longer close enough to trade.");
+        return false;
+      }
+    }
+    if (offer.stock <= 0) {
+      this.callbacks.onToast("That offer is sold out until the next village restock.");
+      return false;
     }
     if (this.mode === "survival" && !itemAvailable(this.inventory, offer.cost.item, offer.cost.count)) {
       this.callbacks.onToast(`You need ${offer.cost.count} ${itemName(offer.cost.item)}.`);
       return false;
     }
-    if (this.mode === "survival") changeItem(this.inventory, offer.cost.item, -offer.cost.count);
-    this.collectItem(offer.reward.item, offer.reward.count);
-    this.clearDepletedHotbar();
+    if (this.mode === "survival") {
+      changeItem(this.inventory, offer.cost.item, -offer.cost.count);
+      this.clearDepletedHotbar();
+    }
+    if (!this.collectItem(offer.reward.item, offer.reward.count)) {
+      if (this.mode === "survival") changeItem(this.inventory, offer.cost.item, offer.cost.count);
+      this.inventorySlots = addItemToLayout(this.inventorySlots, offer.cost.item, false);
+      this.hotbar = hotbarFromLayout(this.inventorySlots);
+      this.callbacks.onToast("Make room in your inventory before completing that trade.");
+      return false;
+    }
+    if (mobId.startsWith("post:")) {
+      const key = mobId.slice(5);
+      const state = this.world.machines.get(key);
+      if (state?.tradeStock) {
+        state.tradeStock[offer.id] = Math.max(0, offer.stock - 1);
+        this.broadcastMachine(key, state);
+      }
+    } else {
+      const merchant = this.world.mobs.find((mob) => mob.id === mobId && mob.kind === "wayfarer");
+      if (merchant?.tradeStock) merchant.tradeStock[offer.id] = Math.max(0, offer.stock - 1);
+    }
     this.audio.play("trade");
-    this.callbacks.onToast(`Trade complete · ${offer.reward.count} ${itemName(offer.reward.item)}.`);
+    this.callbacks.onToast(`Trade complete · ${offer.reward.count} ${itemName(offer.reward.item)} · ${Math.max(0, offer.stock - 1)} use${offer.stock - 1 === 1 ? "" : "s"} left.`);
     this.emitHud();
+    const refreshed = this.buildTradePanel(mobId);
+    if (refreshed) this.callbacks.onTrade(refreshed);
     return true;
   }
 
   assignHotbar(slot: number, item: ItemId): void {
-    if (slot < 0 || slot >= HOTBAR_SIZE || !itemAvailable(this.inventory, item)) return;
-    this.hotbar[slot] = item;
-    this.selectedSlot = slot;
-    this.viewModel.setItem(item);
+    this.assignInventorySlot(HOTBAR_START + slot, item);
+  }
+
+  assignInventorySlot(slot: number, item: ItemId): void {
+    if (slot < 0 || slot >= INVENTORY_SLOT_COUNT || !itemAvailable(this.inventory, item)) return;
+    const existing = this.inventorySlots.indexOf(item);
+    if (existing >= 0 && existing !== slot) this.inventorySlots[existing] = null;
+    this.inventorySlots[slot] = item;
+    this.hotbar = hotbarFromLayout(this.inventorySlots);
+    if (slot >= HOTBAR_START) this.selectedSlot = slot - HOTBAR_START;
+    this.viewModel.setItem(this.hotbar[this.selectedSlot]);
+    this.emitHud();
+  }
+
+  moveInventorySlot(from: number, to: number): void {
+    this.inventorySlots = moveSlotInLayout(this.inventorySlots, from, to);
+    this.hotbar = hotbarFromLayout(this.inventorySlots);
+    this.viewModel.setItem(this.hotbar[this.selectedSlot]);
+    this.audio.play("click");
+    this.emitHud();
+  }
+
+  shiftInventorySlot(slot: number): void {
+    this.inventorySlots = shiftSlotInLayout(this.inventorySlots, slot);
+    this.hotbar = hotbarFromLayout(this.inventorySlots);
+    this.viewModel.setItem(this.hotbar[this.selectedSlot]);
+    this.audio.play("click");
     this.emitHud();
   }
 
@@ -2298,6 +2551,7 @@ export class GameEngine {
 
   setAction(action: "jump" | "sprint" | "crouch" | "mine" | "place" | "interact", active: boolean): void {
     this.input[action] = active;
+    if (action === "mine" && active) this.viewModel.swing("attack");
     if (active) void this.audio.unlock();
   }
 
@@ -2353,6 +2607,7 @@ export class GameEngine {
         stamina: this.stamina,
         inventory: cloneInventory(this.inventory),
         hotbar: [...this.hotbar],
+        inventorySlots: [...this.inventorySlots],
         selectedSlot: this.selectedSlot,
       },
       timeOfDay: this.timeOfDay,
@@ -2364,6 +2619,7 @@ export class GameEngine {
       ]),
       drops: this.world.drops.map((drop) => ({ ...drop, position: { ...drop.position }, velocity: { ...drop.velocity } })),
       mobs: this.world.mobs.map((mob) => ({ ...mob, position: { ...mob.position }, velocity: { ...mob.velocity } })),
+      waterLevels: this.world.serializeWaterLevels(),
     };
   }
 

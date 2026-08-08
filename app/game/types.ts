@@ -118,6 +118,10 @@ export enum BlockId {
   Gravel = 109,
   PolishedStone = 110,
   GoldTrim = 111,
+  GlassPane = 112,
+  TimberShutter = 113,
+  FlowerPot = 114,
+  CarvedStone = 115,
 }
 
 export type ItemId =
@@ -151,9 +155,13 @@ export type ItemId =
   | "part:moonshard"
   | "part:carapace"
   | "part:cinder-core"
+  | "part:feather"
+  | "currency:frontier-mark"
   | "ammo:aether-bolt"
   | "food:starfruit"
   | "food:glowcut"
+  | "food:pork"
+  | "food:chicken"
   | "consumable:mender-tonic";
 
 export interface Vec3Data {
@@ -163,6 +171,10 @@ export interface Vec3Data {
 }
 
 export type Inventory = Record<string, number>;
+
+export type InventoryLayout = Array<ItemId | null>;
+
+export type VillagerProfession = "farmer" | "blacksmith" | "builder" | "riftwright";
 
 export interface MachineState {
   orientation: 0 | 1 | 2 | 3;
@@ -179,6 +191,8 @@ export interface MachineState {
   pulseTicks?: number;
   extended?: boolean;
   note?: number;
+  tradeStock?: Record<string, number>;
+  tradeRestockDay?: number;
   storage: Inventory;
 }
 
@@ -193,7 +207,7 @@ export interface DroppedItemState {
 
 export interface MobState {
   id: string;
-  kind: "mireling" | "glowgrazer" | "cinderling" | "thornback" | "nightwisp" | "wayfarer";
+  kind: "sheep" | "cow" | "pig" | "chicken" | "mireling" | "glowgrazer" | "cinderling" | "thornback" | "nightwisp" | "wayfarer";
   position: Vec3Data;
   velocity: Vec3Data;
   health: number;
@@ -205,6 +219,9 @@ export interface MobState {
   jumpCooldown?: number;
   activity?: "idle" | "wander" | "curious";
   home?: Vec3Data;
+  profession?: VillagerProfession;
+  tradeStock?: Record<string, number>;
+  tradeRestockDay?: number;
 }
 
 export type MutationTuple = [number, number, number, BlockId];
@@ -223,6 +240,7 @@ export interface WorldSave {
     stamina: number;
     inventory: Inventory;
     hotbar: Array<ItemId | null>;
+    inventorySlots?: InventoryLayout;
     selectedSlot: number;
   };
   timeOfDay: number;
@@ -231,6 +249,7 @@ export interface WorldSave {
   machines: Array<[string, MachineState]>;
   drops: DroppedItemState[];
   mobs: MobState[];
+  waterLevels?: Array<[string, number]>;
 }
 
 export type BlockShape =
@@ -249,7 +268,8 @@ export type BlockShape =
   | "bed"
   | "portal"
   | "door"
-  | "fence";
+  | "fence"
+  | "pane";
 
 export interface BlockDefinition {
   id: BlockId;
@@ -320,6 +340,7 @@ export interface HudState {
   stamina: number;
   selectedSlot: number;
   hotbar: Array<ItemId | null>;
+  inventorySlots: InventoryLayout;
   inventory: Inventory;
   targetedBlock: BlockId | null;
   miningProgress: number;

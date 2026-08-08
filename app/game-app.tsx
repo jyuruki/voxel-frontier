@@ -6,12 +6,12 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
-import { BLOCKS, RECIPES, itemName } from "./game/blocks";
+import { ALL_ITEMS, BLOCKS, RECIPES, itemDescription, itemName } from "./game/blocks";
 import { GameEngine, MachinePanelData, TradePanelData } from "./game/engine";
+import { HOTBAR_START, INVENTORY_SLOT_COUNT } from "./game/inventory";
 import { ItemArt } from "./item-art";
 import { NetworkSession } from "./game/network";
 import {
@@ -39,6 +39,7 @@ const EMPTY_HUD: HudState = {
   stamina: 100,
   selectedSlot: 0,
   hotbar: [],
+  inventorySlots: Array(INVENTORY_SLOT_COUNT).fill(null),
   inventory: {},
   targetedBlock: null,
   miningProgress: 0,
@@ -63,6 +64,80 @@ function ItemIcon({ item, count, compact = false }: { item: ItemId; count?: numb
       <ItemArt item={item} />
       {count !== undefined && <span className="item-icon__count">{count}</span>}
     </span>
+  );
+}
+
+function InventorySlotGrid({
+  slots,
+  inventory,
+  creative,
+  selectedHotbar,
+  onMove,
+  onShift,
+}: {
+  slots: Array<ItemId | null>;
+  inventory: Record<string, number>;
+  creative: boolean;
+  selectedHotbar: number;
+  onMove: (from: number, to: number) => void;
+  onShift: (slot: number) => void;
+}) {
+  const [picked, setPicked] = useState<number | null>(null);
+  const move = (from: number, to: number) => {
+    if (from !== to) onMove(from, to);
+    setPicked(null);
+  };
+  return (
+    <div className="slot-grid" role="grid" aria-label="Four row inventory; bottom row is the hotbar">
+      {Array.from({ length: INVENTORY_SLOT_COUNT }, (_, index) => {
+        const item = slots[index] ?? null;
+        const isHotbar = index >= HOTBAR_START;
+        const hotbarNumber = isHotbar ? index - HOTBAR_START + 1 : null;
+        return (
+          <button
+            type="button"
+            key={index}
+            role="gridcell"
+            draggable={Boolean(item)}
+            className={`inventory-slot ${isHotbar ? "inventory-slot--hotbar" : ""} ${hotbarNumber === selectedHotbar + 1 ? "inventory-slot--selected" : ""} ${picked === index ? "inventory-slot--picked" : ""}`}
+            aria-label={item ? `${itemName(item)}, ${creative ? "infinite" : inventory[item] ?? 0}` : `Empty ${isHotbar ? `hotbar ${hotbarNumber}` : "inventory"} slot`}
+            onDragStart={(event) => {
+              if (!item) return;
+              event.dataTransfer.setData("application/x-voxel-slot", String(index));
+              event.dataTransfer.effectAllowed = "move";
+              setPicked(index);
+            }}
+            onDragEnd={() => setPicked(null)}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              const from = Number(event.dataTransfer.getData("application/x-voxel-slot"));
+              if (Number.isInteger(from)) move(from, index);
+            }}
+            onClick={(event) => {
+              if (event.shiftKey && item) {
+                onShift(index);
+                setPicked(null);
+              } else if (picked !== null) move(picked, index);
+              else if (item) setPicked(index);
+            }}
+          >
+            {hotbarNumber && <span className="inventory-slot__number">{hotbarNumber}</span>}
+            {item && <ItemIcon item={item} count={creative ? "∞" : inventory[item] ?? 0} />}
+            {item && (
+              <span className="inventory-tooltip" role="tooltip">
+                <strong>{itemName(item)}</strong>
+                <span>{itemDescription(item)}</span>
+                <small>{isHotbar ? `Hotbar ${hotbarNumber}` : `Inventory row ${Math.floor(index / 9) + 1}`} · Shift-click to transfer</small>
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -224,7 +299,9 @@ export default function GameApp() {
   const [importValue, setImportValue] = useState("");
   const [importError, setImportError] = useState("");
   const [exportValue, setExportValue] = useState("");
-  const [inventoryTab, setInventoryTab] = useState<"items" | "craft">("items");
+  const [recipeFilter, setRecipeFilter] = useState<"craftable" | "all">("craftable");
+  const [recipeSearch, setRecipeSearch] = useState("");
+  const [catalogSearch, setCatalogSearch] = useState("");
   const [machine, setMachine] = useState<MachinePanelData | null>(null);
   const [trade, setTrade] = useState<TradePanelData | null>(null);
   const [networkMode, setNetworkMode] = useState<"host" | "join">("host");
@@ -270,6 +347,17 @@ export default function GameApp() {
     engineRef.current?.resume();
   }, []);
 
+  const toggleInventory = useCallback(() => {
+    setOverlay((current) => {
+      if (current === "inventory") {
+        engineRef.current?.resume();
+        return "none";
+      }
+      engineRef.current?.pause();
+      return "inventory";
+    });
+  }, []);
+
   useEffect(() => {
     if (!session || !canvasRef.current) return;
     let engine: GameEngine;
@@ -284,7 +372,7 @@ export default function GameApp() {
         network,
         callbacks: {
           onHud: setHud,
-          onInventory: () => openOverlay("inventory"),
+          onInventory: toggleInventory,
           onPause: () => openOverlay("pause"),
           onGuide: () => openOverlay("guide"),
           onMachine: (data) => {
@@ -361,12 +449,7 @@ export default function GameApp() {
     setSettings((current) => ({ ...current, [key]: value }));
   };
 
-  const inventoryItems = useMemo(
-    () => Object.entries(hud.inventory)
-      .filter((entry) => entry[1] > 0)
-      .sort((a, b) => itemName(a[0] as ItemId).localeCompare(itemName(b[0] as ItemId))),
-    [hud.inventory],
-  );
+  const inventoryTypes = Object.values(hud.inventory).filter((count) => count > 0).length;
 
   const heldItem = hud.hotbar[hud.selectedSlot] ?? null;
 
@@ -396,18 +479,18 @@ export default function GameApp() {
             <span className="brand__mark"><i /><i /><i /></span>
             <span><strong>VOXEL</strong><em>FRONTIER</em></span>
           </div>
-          <span className="build-tag">Living Worlds · Version 4</span>
+          <span className="build-tag">Flow &amp; Foundations · Version 5</span>
         </header>
 
         <section className="landing__content">
           <div className="hero-copy">
-            <p className="eyebrow">Shape the wild. Teach it to move.</p>
-            <h1>A living block world with an engineer&apos;s soul.</h1>
+            <p className="eyebrow">Shape the wild. Let the world answer.</p>
+            <h1>A living block world, refined down to every flow.</h1>
             <p>
-              Begin empty-handed, mine rich cave seams, meet animated Wayfarers, build a village workshop, or cross a crafted Rift Gate into the Emberdeep—alone or online.
+              Follow rivers into sparse ore veins, organize a true 36-slot pack, trade with village specialists, raise a glass-windowed home, or cross a crafted Rift Gate—alone or online.
             </p>
             <div className="feature-chips">
-              <span>Soulful creatures</span><span>111 distinct blocks</span><span>Villages &amp; trading</span><span>The Emberdeep</span>
+              <span>Finite flowing water</span><span>36-slot inventory</span><span>Livestock &amp; composed score</span><span>Village economy</span>
             </div>
           </div>
 
@@ -582,27 +665,62 @@ export default function GameApp() {
       )}
 
       {overlay === "inventory" && (
-        <Modal title="Field inventory" eyebrow={`${inventoryItems.length} resource types`} onClose={closeOverlay} wide>
-          <div className="tab-row">
-            <button className={inventoryTab === "items" ? "active" : ""} onClick={() => setInventoryTab("items")}>Pack</button>
-            <button className={inventoryTab === "craft" ? "active" : ""} onClick={() => setInventoryTab("craft")}>Crafting</button>
-          </div>
-          {inventoryTab === "items" ? (
-            <>
-              <p className="modal-copy">Tap an item to assign it to your currently selected hotbar slot.</p>
-              {inventoryItems.length === 0 && <div className="empty-inventory"><strong>Your pack is empty.</strong><span>Mine an Emberwood log by hand to begin.</span></div>}
-              <div className="inventory-grid">
-                {inventoryItems.map(([item, count]) => (
-                  <button key={item} onClick={() => engineRef.current?.assignHotbar(hud.selectedSlot, item as ItemId)}>
-                    <ItemIcon item={item as ItemId} count={hud.gameMode === "creative" ? "∞" : count} />
-                    <span><strong>{itemName(item as ItemId)}</strong><small>Assign to slot {hud.selectedSlot + 1}</small></span>
-                  </button>
-                ))}
+        <Modal title="Inventory & crafting" eyebrow={`${inventoryTypes} resource types · 4 × 9 slots`} onClose={closeOverlay} wide>
+          <div className="inventory-workspace">
+            <section className="inventory-panel">
+              <header className="workspace-heading">
+                <div><p className="eyebrow">Your pack</p><h3>Inventory</h3></div>
+                <span>Drag to arrange · shift-click to transfer</span>
+              </header>
+              {inventoryTypes === 0 && hud.gameMode === "survival" && <div className="empty-inventory"><strong>Your pack is empty.</strong><span>Mine an Emberwood log by hand to begin.</span></div>}
+              <InventorySlotGrid
+                slots={hud.inventorySlots}
+                inventory={hud.inventory}
+                creative={hud.gameMode === "creative"}
+                selectedHotbar={hud.selectedSlot}
+                onMove={(from, to) => engineRef.current?.moveInventorySlot(from, to)}
+                onShift={(slot) => engineRef.current?.shiftInventorySlot(slot)}
+              />
+              <p className="inventory-help">The separated bottom row is your hotbar. On touch screens, tap one occupied slot and then its destination.</p>
+              {hud.gameMode === "creative" && (
+                <details className="creative-catalog">
+                  <summary>Creative catalog · all blocks and items</summary>
+                  <input type="search" value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder="Search creative catalog…" />
+                  <div className="catalog-grid">
+                    {ALL_ITEMS.filter((item) => {
+                      const query = catalogSearch.trim().toLowerCase();
+                      return !query || itemName(item).toLowerCase().includes(query) || itemDescription(item).toLowerCase().includes(query);
+                    }).map((item) => (
+                      <button key={item} onClick={() => engineRef.current?.assignInventorySlot(HOTBAR_START + hud.selectedSlot, item)} title={`${itemName(item)} — ${itemDescription(item)}`}>
+                        <ItemIcon item={item} compact /><span>{itemName(item)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </section>
+            <section className="crafting-panel">
+              <header className="workspace-heading">
+                <div><p className="eyebrow">Recipe book</p><h3>Crafting</h3></div>
+                <span>Crafting &amp; smelting recipes</span>
+              </header>
+              <div className="recipe-toolbar">
+                <input type="search" value={recipeSearch} onChange={(event) => setRecipeSearch(event.target.value)} placeholder="Search recipes or ingredients…" />
+                <div role="group" aria-label="Recipe filter">
+                  <button className={recipeFilter === "craftable" ? "active" : ""} onClick={() => setRecipeFilter("craftable")}>Craftable now</button>
+                  <button className={recipeFilter === "all" ? "active" : ""} onClick={() => setRecipeFilter("all")}>All recipes</button>
+                </div>
               </div>
-            </>
-          ) : (
-            <RecipeList recipes={RECIPES} inventory={hud.inventory} onCraft={(id) => engineRef.current?.craft(id)} />
-          )}
+              <RecipeList
+                recipes={RECIPES}
+                inventory={hud.inventory}
+                creative={hud.gameMode === "creative"}
+                filter={recipeFilter}
+                search={recipeSearch}
+                onCraft={(id) => engineRef.current?.craft(id)}
+              />
+            </section>
+          </div>
         </Modal>
       )}
 
@@ -721,11 +839,38 @@ export default function GameApp() {
   );
 }
 
-function RecipeList({ recipes, inventory, onCraft }: { recipes: Recipe[]; inventory: Record<string, number>; onCraft: (id: string) => void }) {
+function RecipeList({
+  recipes,
+  inventory,
+  creative,
+  filter,
+  search,
+  onCraft,
+}: {
+  recipes: Recipe[];
+  inventory: Record<string, number>;
+  creative: boolean;
+  filter: "craftable" | "all";
+  search: string;
+  onCraft: (id: string) => void;
+}) {
+  const query = search.trim().toLowerCase();
+  const visible = recipes.filter((recipe) => {
+    if (recipe.station === "fabricator") return false;
+    const directRecipe = recipe.station === "hand" || recipe.station === "workbench";
+    const canCraft = directRecipe && (creative || Object.entries(recipe.inputs).every(([item, count]) => (inventory[item] ?? 0) >= count));
+    if (filter === "craftable" && !canCraft) return false;
+    if (!query) return true;
+    return recipe.name.toLowerCase().includes(query)
+      || recipe.description.toLowerCase().includes(query)
+      || Object.keys(recipe.inputs).some((item) => itemName(item as ItemId).toLowerCase().includes(query));
+  });
   return (
     <div className="recipe-list">
-      {recipes.filter((recipe) => recipe.station === "hand" || recipe.station === "workbench").map((recipe) => {
-        const canCraft = Object.entries(recipe.inputs).every(([item, count]) => (inventory[item] ?? 0) >= count);
+      {visible.length === 0 && <div className="empty-inventory"><strong>No matching recipes.</strong><span>Switch to All recipes or try another search.</span></div>}
+      {visible.map((recipe) => {
+        const directRecipe = recipe.station === "hand" || recipe.station === "workbench";
+        const canCraft = directRecipe && (creative || Object.entries(recipe.inputs).every(([item, count]) => (inventory[item] ?? 0) >= count));
         return (
           <article key={recipe.id}>
             <ItemIcon item={recipe.output.item} count={recipe.output.count} />
@@ -740,7 +885,7 @@ function RecipeList({ recipes, inventory, onCraft }: { recipes: Recipe[]; invent
                 ))}
               </div>
             </div>
-            <button className="secondary-button" disabled={!canCraft} onClick={() => onCraft(recipe.id)}>Craft</button>
+            <button className="secondary-button" disabled={!canCraft} onClick={() => onCraft(recipe.id)}>{recipe.station === "furnace" ? "Use Hearth Furnace" : creative ? "Take" : "Craft"}</button>
           </article>
         );
       })}
@@ -788,40 +933,40 @@ function OptionsModal({
 
 function GuideModal({ onClose }: { onClose: () => void }) {
   return (
-    <Modal title="Frontier field guide" eyebrow="Living Worlds · Version 4" onClose={onClose} wide>
+    <Modal title="Frontier field guide" eyebrow="Flow & Foundations · Version 5" onClose={onClose} wide>
       <div className="guide-grid">
         <article className="guide-card guide-card--accent">
-          <span>01</span><h3>Surface swimming</h3>
-          <p>Water adds drag and buoyancy. Look where you want to swim, hold jump to rise, and keep moving at the surface to bob onto a one-block shore. DIVE or crouch descends.</p>
+          <span>01</span><h3>Water flows</h3>
+          <p>Break beside a lake or aquifer and water enters the opening, flowing outward through seven progressively shallower levels. Swimming still adds drag, buoyancy, diving, and shore assist.</p>
         </article>
         <article className="guide-card">
-          <span>02</span><h3>Ore &amp; smelting</h3>
-          <p>Coal, iron, gold, Fluxstone, copper, and diamond form depth-sensitive cave seams. Craft a Hearth Furnace, deposit coal with raw ore, and let it smelt ingots automatically.</p>
+          <span>02</span><h3>Inventory &amp; recipes</h3>
+          <p>Press E to open or close one combined inventory and recipe screen. Drag or tap slots to rearrange them, shift-click between your pack and hotbar, then search craftable or all recipes.</p>
         </article>
         <article className="guide-card">
-          <span>03</span><h3>Rest through night</h3>
-          <p>Weave Soft Fiber into wool, combine it with planks to craft a Frontier Bed, place it, and use it after nightfall. Sleeping advances the shared world to dawn.</p>
+          <span>03</span><h3>Veins &amp; mountains</h3>
+          <p>Stone now dominates above the Deep Slate layer. Ores form sparse connected veins at useful depths, while broad lowlands give way to balanced hills and occasional tall mountain ranges.</p>
         </article>
         <article className="guide-card">
-          <span>04</span><h3>Villages &amp; trade</h3>
-          <p>Wayfarer villages appear across suitable terrain with cottages, beds, markets, paths, and residents. Aim at a Wayfarer or market post and use INTERACT to barter resources.</p>
+          <span>04</span><h3>Village economy</h3>
+          <p>Rarer villages host Farmers, Blacksmiths, Builders, and Riftwrights. Sell requested goods for Frontier Marks, buy profession-specific stock, and return after dawn for a restock.</p>
         </article>
         <article className="guide-card">
-          <span>05</span><h3>Cross the rift</h3>
-          <p>Trade for a Rift Core, craft a Rift Gate with Riftstone and metal, then interact with it. The Emberdeep contains molten currents, Riftwood forests, glowstone, and richer rare ores.</p>
+          <span>05</span><h3>Build a real home</h3>
+          <p>Smelt sand and coal into Clearglass, cut it into connecting panes, and combine doors, shutters, planters, shelves, slabs, stairs, roof tile, fencing, and carved masonry.</p>
         </article>
         <article className="guide-card">
-          <span>06</span><h3>Living creatures</h3>
-          <p>Six original species now idle, investigate, wander, flee, vocalize, swim, and animate every step and jump. Hostile creatures still wake at night; Wayfarers stay near home.</p>
+          <span>06</span><h3>Recognizable wildlife</h3>
+          <p>Sheep baa, cows moo, pigs oink, and chickens cluck through layered synthesized voices. They walk, flee, jump, swim, and drop fitting resources alongside the Frontier&apos;s hostile species.</p>
         </article>
       </div>
       <div className="controls-table">
         <h3>Desktop controls</h3>
-        <div><span><kbd>W A S D</kbd> Move / swim</span><span><kbd>Shift</kbd> Sprint / stroke</span><span><kbd>Ctrl / C</kbd> Crouch / dive</span><span><kbd>Space</kbd> Jump / ascend</span><span><kbd>Mouse</kbd> Look</span><span><kbd>LMB</kbd> Mine / attack</span><span><kbd>RMB</kbd> Place / use held item</span><span><kbd>F</kbd> Interact/configure</span><span><kbd>R</kbd> Rotate machine</span><span><kbd>E</kbd> Inventory</span></div>
+        <div><span><kbd>W A S D</kbd> Move / swim</span><span><kbd>Shift</kbd> Sprint / stroke</span><span><kbd>Ctrl / C</kbd> Crouch / dive</span><span><kbd>Space</kbd> Jump / ascend</span><span><kbd>Mouse</kbd> Look</span><span><kbd>LMB</kbd> Swing / mine / attack</span><span><kbd>RMB</kbd> Place / use held item</span><span><kbd>F</kbd> Interact/configure</span><span><kbd>R</kbd> Rotate machine</span><span><kbd>E</kbd> Open / close inventory</span></div>
       </div>
       <div className="scope-note">
         <strong>What this release contains</strong>
-        <p>Six overworld biomes plus the Emberdeep, extensive caves and ore seams, procedural villages, 111 original textured blocks, Survival and Creative modes, four tool tiers, physical drops, shore-assisted swimming, six animated and synthesized-voice species, combat, beds, furnaces, trading, brighter nights, directional logic and machinery, direct online rooms, mobile controls, autosave, and backward-compatible VF1 world keys.</p>
+        <p>Six overworld biomes plus the Emberdeep, finite water flow, extensive caves and sparse ore veins, rarer profession villages, 115 original textured blocks, Survival and Creative modes, a draggable 36-slot inventory, four tool tiers, physical drops, shore-assisted swimming, ten animated creature types, a harmonically composed procedural score, combat, beds, furnaces, a currency economy, directional logic and machinery, direct online rooms, mobile controls, autosave, and backward-compatible VF1 world keys.</p>
       </div>
     </Modal>
   );
@@ -841,15 +986,16 @@ function TradeModal({
   onTrade: (offerId: string) => void;
 }) {
   return (
-    <Modal title={trade.name} eyebrow="Wayfarer barter" onClose={onClose} wide>
+    <Modal title={trade.name} eyebrow={`${trade.profession} · ${creative ? "Creative funds" : `${trade.marks} Frontier Marks`}`} onClose={onClose} wide>
       <div className="network-callout">
-        <strong>Every trade is immediate.</strong>
-        <span>Bring mined, farmed, or smelted goods. Wayfarers specialize in hard-to-find materials and riftcraft.</span>
+        <strong>Sell useful goods, then spend Frontier Marks.</strong>
+        <span>Each profession has its own limited stock. Offers restock at the start of a new day.</span>
       </div>
       <div className="trade-list">
         {trade.offers.map((offer) => {
           const carried = inventory[offer.cost.item] ?? 0;
-          const canTrade = creative || carried >= offer.cost.count;
+          const canAfford = creative || carried >= offer.cost.count;
+          const canTrade = offer.stock > 0 && canAfford;
           return (
             <article key={offer.id}>
               <div className="trade-list__item">
@@ -861,9 +1007,9 @@ function TradeModal({
                 <ItemIcon item={offer.reward.item} count={offer.reward.count} />
                 <span><small>YOU RECEIVE</small><strong>{offer.reward.count} × {itemName(offer.reward.item)}</strong></span>
               </div>
-              <div className="trade-list__copy"><strong>{offer.name}</strong><p>{offer.note}</p></div>
+              <div className="trade-list__copy"><strong>{offer.name}</strong><p>{offer.note}</p><small>{offer.stock}/{offer.maxStock} trades left</small></div>
               <button className="secondary-button" disabled={!canTrade} onClick={() => onTrade(offer.id)}>
-                {canTrade ? "Trade" : `Need ${offer.cost.count - carried}`}
+                {offer.stock <= 0 ? "Sold out" : canTrade ? "Trade" : `Need ${offer.cost.count - carried}`}
               </button>
             </article>
           );

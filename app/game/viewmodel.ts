@@ -18,7 +18,7 @@ function paintBoxUv(geometry: THREE.BufferGeometry, item: ItemId): void {
 }
 
 function basicMaterial(color: number): THREE.MeshBasicMaterial {
-  return new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false, toneMapped: false });
+  return new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false, toneMapped: false, transparent: true });
 }
 
 function box(
@@ -122,7 +122,7 @@ export class FirstPersonViewModel {
               ? new THREE.BoxGeometry(0.32, 0.16, 0.32)
               : shape === "bed"
                 ? new THREE.BoxGeometry(0.34, 0.14, 0.28)
-                : shape === "portal" || shape === "door"
+            : shape === "portal" || shape === "door" || shape === "pane"
                   ? new THREE.BoxGeometry(0.26, 0.4, 0.06)
                   : shape === "fence"
                     ? new THREE.BoxGeometry(0.12, 0.4, 0.12)
@@ -138,7 +138,7 @@ export class FirstPersonViewModel {
         depthTest: false,
         depthWrite: false,
         toneMapped: false,
-        transparent: !BLOCKS[blockId].opaque,
+        transparent: true,
         opacity: BLOCKS[blockId].opaque ? 1 : 0.82,
         side: THREE.DoubleSide,
       });
@@ -163,14 +163,14 @@ export class FirstPersonViewModel {
     const arc = this.swingTime > 0 ? Math.sin(progress * Math.PI) : 0;
     const bob = Math.min(1, speed / 4.5);
     this.root.position.set(
-      0.38 + Math.sin(this.walkTime) * 0.012 * bob - arc * 0.08,
-      -0.38 + Math.abs(Math.cos(this.walkTime)) * 0.014 * bob - arc * (this.swingKind === "attack" ? 0.13 : 0.08),
-      -0.72 + arc * 0.12,
+      0.38 + Math.sin(this.walkTime) * 0.012 * bob - arc * (this.swingKind === "attack" ? 0.2 : 0.15),
+      -0.38 + Math.abs(Math.cos(this.walkTime)) * 0.014 * bob - arc * (this.swingKind === "attack" ? 0.25 : 0.18),
+      -0.72 + arc * 0.2,
     );
     this.root.rotation.set(
-      arc * (this.swingKind === "mine" ? -0.42 : -0.24),
-      arc * (this.swingKind === "attack" ? -0.7 : -0.28),
-      arc * (this.swingKind === "place" ? 0.24 : -0.38),
+      arc * (this.swingKind === "mine" ? -0.92 : -0.52),
+      arc * (this.swingKind === "attack" ? -1.08 : -0.58),
+      arc * (this.swingKind === "place" ? 0.42 : -0.72),
     );
   }
 

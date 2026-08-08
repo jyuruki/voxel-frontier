@@ -387,6 +387,16 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
   [BlockId.Gravel]: block(BlockId.Gravel, "River Gravel", "#77736e", "Loose rounded stone common near water and caves.", { hardness: 0.6, tool: "spade" }),
   [BlockId.PolishedStone]: block(BlockId.PolishedStone, "Polished Roughstone", "#929796", "Smooth stone dressed for precise construction.", { hardness: 2 }),
   [BlockId.GoldTrim]: block(BlockId.GoldTrim, "Gold-Inlaid Stone", "#82765b", "Polished masonry traced with refined gold.", { hardness: 2.6 }),
+  [BlockId.GlassPane]: block(BlockId.GlassPane, "Clearglass Pane", "#a8dde1", "A slim glass window that joins neatly to nearby walls.", {
+    opaque: false, hardness: 0.25, shape: "pane",
+  }),
+  [BlockId.TimberShutter]: block(BlockId.TimberShutter, "Timber Shutter", "#825336", "A narrow wooden shutter for cottage windows and workshop vents.", {
+    solid: false, opaque: false, hardness: 0.75, tool: "axe", shape: "door",
+  }),
+  [BlockId.FlowerPot]: block(BlockId.FlowerPot, "Terracotta Planter", "#a85e45", "A small fired-clay planter for warm, lived-in interiors.", {
+    solid: false, opaque: false, hardness: 0.35, shape: "column", collisionHeight: 0.42,
+  }),
+  [BlockId.CarvedStone]: block(BlockId.CarvedStone, "Carved Roughstone", "#858989", "Decorative masonry cut with a simple frontier knot.", { hardness: 2.1 }),
 };
 
 export const BLOCK_IDS = Object.values(BlockId).filter(
@@ -433,10 +443,54 @@ export const ITEM_NAMES: Record<string, string> = {
   "part:moonshard": "Moonshard",
   "part:carapace": "Thornback Carapace",
   "part:cinder-core": "Cinder Core",
+  "part:feather": "Feather",
+  "currency:frontier-mark": "Frontier Mark",
   "ammo:aether-bolt": "Aether Bolt",
   "food:starfruit": "Starfruit",
-  "food:glowcut": "Glowgrazer Cut",
+  "food:glowcut": "Raw Beef",
+  "food:pork": "Raw Pork",
+  "food:chicken": "Raw Chicken",
   "consumable:mender-tonic": "Mender Tonic",
+};
+
+const ITEM_DESCRIPTIONS: Partial<Record<ItemId, string>> = {
+  "tool:wood-pick": "An entry-level pick that harvests stone, coal, and other soft rock.",
+  "tool:wood-hatchet": "Cuts logs and wooden blocks faster than an empty hand.",
+  "tool:wood-spade": "Moves soil, sand, clay, and snow efficiently.",
+  "tool:wood-club": "A simple close-range weapon for the first night.",
+  "tool:rough-pick": "A stone-tier pick that can harvest copper, iron, and Fluxstone.",
+  "tool:copper-pick": "A copper-tier pick capable of harvesting crystal ores.",
+  "tool:crystal-pick": "A fast, resonant mining tool for late-game excavation.",
+  "tool:iron-pick": "A durable pick required for gold, diamond, and Riftstone.",
+  "tool:diamond-pick": "The strongest conventional pick, with exceptional mining power.",
+  "tool:hatchet": "A reinforced axe for logs, planks, leaves, and wooden construction.",
+  "tool:spade": "A reinforced digging tool for soft terrain blocks.",
+  "tool:blade": "A quick close-range weapon with moderate damage.",
+  "tool:stone-spear": "An early weapon with more reach than fists or clubs.",
+  "tool:copper-saber": "A balanced melee weapon with strong damage and knockback.",
+  "tool:aether-repeater": "A long-range launcher that consumes Aether Bolts.",
+  "part:copper-ingot": "Refined conductive metal used throughout machines and logic components.",
+  "part:coal": "Fuel for Hearth Furnaces and thermal machinery.",
+  "part:iron-ingot": "Refined structural metal used for tools, bars, and advanced construction.",
+  "part:gold-ingot": "A rare conductor used in decorative blocks and dimensional technology.",
+  "part:flux-dust": "Signal-bearing mineral dust used in advanced logic work.",
+  "part:diamond": "A rare deep crystal used for top-tier tools and Rift Gates.",
+  "part:soft-fiber": "Sheep fleece used to craft beds, wool, and trade goods.",
+  "part:rift-core": "A stabilized dimensional component required to craft a Rift Gate.",
+  "part:flux-coil": "Converts and stores energy inside powered machines.",
+  "part:logic-wafer": "A crafted circuit component for sensors and logic gates.",
+  "part:gear": "Transfers mechanical force in drills, belts, and fabricators.",
+  "part:moonshard": "A cut deep crystal used for ranged weapons and luminous devices.",
+  "part:carapace": "Armored creature shell used in medicine and rugged components.",
+  "part:cinder-core": "A volatile Emberdeep organ useful in heat-oriented crafting.",
+  "part:feather": "A light chicken feather valued by farmers and fletchers.",
+  "currency:frontier-mark": "Village currency. Earn Marks by selling useful goods and spend them with specialists.",
+  "ammo:aether-bolt": "Ammunition consumed by the Aether Repeater.",
+  "food:starfruit": "Restores a small amount of nutrition and health when used.",
+  "food:glowcut": "Raw beef from cattle. Restores nutrition when eaten.",
+  "food:pork": "Raw pork from pigs. Restores nutrition when eaten.",
+  "food:chicken": "Raw chicken from chickens. Restores a little nutrition when eaten.",
+  "consumable:mender-tonic": "A single-use tonic that restores a large amount of health.",
 };
 
 export const ALL_ITEMS: ItemId[] = [
@@ -447,6 +501,12 @@ export const ALL_ITEMS: ItemId[] = [
 export function itemName(item: ItemId): string {
   const blockId = blockForItem(item);
   return blockId === null ? ITEM_NAMES[item] ?? item : BLOCKS[blockId].name;
+}
+
+export function itemDescription(item: ItemId): string {
+  const blockId = blockForItem(item);
+  if (blockId !== null) return BLOCKS[blockId].description;
+  return ITEM_DESCRIPTIONS[item] ?? "A useful frontier resource.";
 }
 
 export const RECIPES: Recipe[] = [
@@ -501,6 +561,7 @@ export const RECIPES: Recipe[] = [
   { id: "hearth-furnace", name: "Hearth Furnace", station: "workbench", inputs: { [itemForBlock(BlockId.Stone)]: 8 }, output: { item: itemForBlock(BlockId.HearthFurnace), count: 1 }, description: "Burns coal to smelt iron, gold, copper, clay, and other raw materials." },
   { id: "iron-ingot", name: "Smelt Iron", station: "furnace", inputs: { [itemForBlock(BlockId.IronOre)]: 1, "part:coal": 1 }, output: { item: "part:iron-ingot", count: 1 }, description: "Refine raw iron ore in a Hearth Furnace." },
   { id: "gold-ingot", name: "Smelt Gold", station: "furnace", inputs: { [itemForBlock(BlockId.GoldOre)]: 1, "part:coal": 1 }, output: { item: "part:gold-ingot", count: 1 }, description: "Refine deep gold ore in a Hearth Furnace." },
+  { id: "clear-glass", name: "Smelt Clearglass", station: "furnace", inputs: { [itemForBlock(BlockId.Sand)]: 1, "part:coal": 1 }, output: { item: itemForBlock(BlockId.Glass), count: 1 }, description: "Smelt sand in a Hearth Furnace to make clear window glass." },
   { id: "fired-brick", name: "Fire Clay", station: "furnace", inputs: { [itemForBlock(BlockId.Clay)]: 1, "part:coal": 1 }, output: { item: itemForBlock(BlockId.FiredBrick), count: 2 }, description: "Fire river clay into durable brick." },
   { id: "iron-pick", name: "Iron Pick", station: "workbench", inputs: { "part:iron-ingot": 3, [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, output: { item: "tool:iron-pick", count: 1 }, description: "A durable pick that can harvest gold, diamond, and Riftstone." },
   { id: "diamond-pick", name: "Diamond Pick", station: "workbench", inputs: { "part:diamond": 3, [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, output: { item: "tool:diamond-pick", count: 1 }, description: "The strongest conventional mining tool." },
@@ -519,6 +580,10 @@ export const RECIPES: Recipe[] = [
   { id: "polished-stone", name: "Polished Roughstone", station: "workbench", inputs: { [itemForBlock(BlockId.Stone)]: 4 }, output: { item: itemForBlock(BlockId.PolishedStone), count: 4 }, description: "Dress rough stone into clean architectural blocks." },
   { id: "gold-trim", name: "Gold-Inlaid Stone", station: "workbench", inputs: { [itemForBlock(BlockId.PolishedStone)]: 4, "part:gold-ingot": 1 }, output: { item: itemForBlock(BlockId.GoldTrim), count: 4 }, description: "Decorative stone traced with refined gold." },
   { id: "riftwood-planks", name: "Cut Riftwood Planks", station: "hand", inputs: { [itemForBlock(BlockId.RiftwoodLog)]: 1 }, output: { item: itemForBlock(BlockId.RiftwoodPlanks), count: 4 }, description: "Cut alien timber into purple-grained boards." },
+  { id: "glass-panes", name: "Clearglass Panes", station: "workbench", inputs: { [itemForBlock(BlockId.Glass)]: 6 }, output: { item: itemForBlock(BlockId.GlassPane), count: 16 }, description: "Cut smelted glass into slim, wall-friendly windows." },
+  { id: "timber-shutters", name: "Timber Shutters", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 4 }, output: { item: itemForBlock(BlockId.TimberShutter), count: 2 }, description: "Craft decorative shutters for windows and vents." },
+  { id: "flower-pot", name: "Terracotta Planter", station: "workbench", inputs: { [itemForBlock(BlockId.FiredBrick)]: 3 }, output: { item: itemForBlock(BlockId.FlowerPot), count: 1 }, description: "A compact planter for furnished homes." },
+  { id: "carved-stone", name: "Carved Roughstone", station: "workbench", inputs: { [itemForBlock(BlockId.StoneBrick)]: 4 }, output: { item: itemForBlock(BlockId.CarvedStone), count: 4 }, description: "Carve fitted stone into decorative masonry." },
 ];
 
 export const TOOL_POWER: Record<string, number> = {
@@ -656,6 +721,10 @@ function textureDetail(blockId: BlockId, x: number, y: number): number {
     case BlockId.Gravel: return (x * 11 + y * 5) % 17 < 4 ? -0.12 : (x + y) % 9 === 0 ? 0.1 : 0;
     case BlockId.PolishedStone: return x === 1 || x === 14 || y === 1 || y === 14 ? -0.08 : (x + y) % 19 === 0 ? 0.07 : 0;
     case BlockId.GoldTrim: return x === y || x + y === 15 || x === 7 || y === 7 ? 0.26 : -0.07;
+    case BlockId.GlassPane: return x === y || x + y === 15 || x === 1 || x === 14 ? 0.24 : -0.09;
+    case BlockId.TimberShutter: return x % 4 === 1 || y === 2 || y === 13 ? -0.14 : 0.08;
+    case BlockId.FlowerPot: return y === 4 || y === 11 || x === 3 || x === 12 ? -0.15 : 0.05;
+    case BlockId.CarvedStone: return Math.abs(x - 7.5) + Math.abs(y - 7.5) < 5 || x === y || x + y === 15 ? -0.14 : 0.05;
     default: return 0;
   }
 }
@@ -742,7 +811,7 @@ export function paintBlockItemIcon(canvas: HTMLCanvasElement, blockId: BlockId):
     context.strokeRect(24 - width / 2, 4, width, 41);
     return;
   }
-  if (shape === "door" || shape === "ladder") {
+  if (shape === "door" || shape === "ladder" || shape === "pane") {
     context.drawImage(tile, 9, 3, 30, 42);
     return;
   }
