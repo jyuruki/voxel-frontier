@@ -4,26 +4,26 @@ Voxel Frontier is an original, mobile-friendly procedural voxel survival, explor
 
 **Play:** [jyuruki.github.io/voxel-frontier](https://jyuruki.github.io/voxel-frontier/)
 
-> Flow & Foundations (Version 5) adds finite seven-level water flow, a draggable 4×9 inventory and combined searchable recipe book, a theory-led ambient score, recognizable livestock calls, sparse clustered ore veins, hill and mountain regions, profession trading with limited stock and Frontier Mark currency, rarer villages, stronger first-person swings, render-layer fixes, and four new architectural blocks. See the [Version 5 release notes](docs/VERSION5_RELEASE.md) and [feature matrix](docs/FEATURE_MATRIX.md).
+> Highlands & Handshakes (Version 6) replaces the multiplayer answer-key exchange with one readable room code, adds reconnection grace, expands the world to Y −64…319, introduces dramatic Skybreak mountain ranges, lets placed dams cut downstream flow, adds Creative flight and exact one-click mining, makes crouching ledge-safe, adds falling critical hits, accepts every inventory item in a value-based villager sell tray, and gives circuits clearer direction and unique item art. See the [Version 6 release notes](docs/VERSION6_RELEASE.md) and [feature matrix](docs/FEATURE_MATRIX.md).
 
 ## Highlights
 
-- Deterministic, endless-by-chunk terrain with six overworld climates, balanced lowlands/hills/mountain regions, extensive caves, aquifers, sparse depth-sensitive ore veins, ruins, rarer villages, and finite water flow
-- 115 original block types with individually generated textures and seventeen mesh families, including connected glass panes, doors, shutters, planters, beds, portals, fences, plants, wire, plates, slabs, stairs, pistons, and logistics pieces
-- Survival starts with an empty pack; Creative supplies the complete infinite catalog, near-instant mining, and immunity from survival damage
+- Deterministic, endless-by-chunk terrain across Y −64…319 with six overworld climates, broad lowlands, hill country, sharp Skybreak ridges, near-ceiling summits, extensive caves, aquifers, sparse depth-sensitive ore veins, ruins, rarer villages, and finite water flow
+- 115 original block types with individually generated textures and eighteen mesh families, including connected glass panes, doors, shutters, planters, beds, portals, fences, plants, wire, plates, directional observers/funnels, slabs, stairs, pistons, and logistics pieces
+- Survival starts with an empty pack; Creative supplies the complete infinite catalog, free collision-aware flight, exact one-click instant mining, middle-click block picking, and immunity from survival damage
 - A persistent 36-slot, four-row inventory with a dedicated hotbar row, unique tool placement, desktop drag-and-drop, touch-friendly tap moving, shift-click transfer, detailed item tooltips, and backward-compatible save migration
 - Inventory and crafting share one responsive screen with recipe search plus Craftable now and All recipes filters; the Creative catalog remains searchable
-- Smooth capsule-like controller with acceleration, coyote time, buffering, partial-height collision, step-up handling, and immersion-aware swimming with look steering, drag, surface bobbing, shore assist, ascend, dive, and sprint strokes
+- Smooth capsule-like controller with acceleration, coyote time, buffering, partial-height collision, step-up handling, crouch edge protection, and immersion-aware swimming with look steering, drag, surface bobbing, shore assist, ascend, dive, and sprint strokes
 - Optional mobile auto-jump for full one-block rises
-- Directional 0–15 logic with thin connected wire, toggles, buttons, plates, daylight/proximity sensors, gates, repeaters, comparators, inverter torches, observers, targets, memory lamps, and tone blocks
+- Directional 0–15 logic with thin connected wire, toggles, buttons, plates, daylight/proximity sensors, gates, repeaters with four visible delay positions, comparators, inverter torches, arrowed observers, targets, memory lamps, and tone blocks
 - Energy networks plus physical-item logistics: dynamos, cells, drills, conveyors, furnaces, fabricators, transferring collector funnels, crates, six-block rams, and adhesive retraction
 - Animated first-person hand and held item with stronger unconditional swing motion, mining/attack/place/use animation, corrected transparent-world layering, and seven progressive block-crack textures
 - Sheep, cows, pigs, and chickens with recognizable layered synthesized calls and fitting loot, plus the Frontier's original creatures; all use procedural skins, detailed rigs, activity states, walking/idle/jump animation, smooth interpolation, collision-safe swimming, combat, and drops
 - A readable eight-minute day/night orbit with stars, sun, moon, twilight, brighter night ambience, a clock/day counter, and craftable beds that advance the shared world to dawn
 - A coal-fired Hearth Furnace, discoverable sand-to-glass smelting, four mining tiers, raw ore refinement, metal/gem storage blocks, and returnable Rift Gates into the volcanic Emberdeep
-- Rarer villages with Farmers, Blacksmiths, Builders, Riftwrights, a Market Clerk, daily limited stock, item selling, and spendable Frontier Mark currency
+- Rarer villages with Farmers, Blacksmiths, Builders, Riftwrights, a Market Clerk, daily limited purchase stock, a drag-and-drop sell tray accepting every carried item, value carryover for cheap materials, and spendable Frontier Mark currency; selling yields currency only
 - Local autosave every 18 seconds plus compressed, checksummed, copyable world keys
-- Host-authoritative WebRTC rooms that work from static GitHub Pages through an invite/answer-key handshake
+- Host-authoritative WebRTC rooms with encrypted automatic discovery from one human-readable code, multi-peer room reuse, an 18-second transient-disconnect grace period, and a manual invite/answer fallback
 - Responsive touch controls, left-handed layout, graphics presets, render distance, FOV, sensitivity, volume controls, animal-like procedural voices, and a seeded 72 BPM ambient score built from voiced diatonic progressions, bass, arpeggios, and melodic motifs
 
 ## Play and controls
@@ -37,7 +37,9 @@ The game needs a browser with WebGL and WebRTC. Current Chrome, Edge, Firefox, a
 | `Space` | Jump; ascend in water |
 | `Shift` | Sprint |
 | `Ctrl` or `C` | Crouch; dive in water |
+| `V` or double-tap `Space` | Toggle Creative flight (`Space` rises, `Ctrl` descends) |
 | Left mouse | Swing; mine or attack when aimed at a target |
+| Middle mouse | Pick the aimed block in Creative |
 | Right mouse | Place or use held food/medicine |
 | `F` | Interact or configure |
 | `R` | Rotate targeted machine |
@@ -46,17 +48,17 @@ The game needs a browser with WebGL and WebRTC. Current Chrome, Edge, Firefox, a
 | `1`–`9` / wheel | Select hotbar slot |
 | `Esc` | Pause |
 
-### Start a direct online room
+### Start an online room
 
-1. The host opens **Pause → Online room → Host a world**, then generates an invite.
-2. The guest pastes that invite under **Join a host** and sends the generated answer back.
-3. The host pastes the answer and accepts it. The host's world snapshot synchronizes automatically.
+1. The host opens **Pause → Online room → Host this world** and creates a room code.
+2. The host sends that short code to any friends who should join.
+3. Each guest opens **Join a host**, enters the code once, and the host's world snapshot synchronizes automatically.
 
-The connection is peer-to-peer; no account or custom game server is required. The host owns terrain, machines, time, creature simulation, combat validation, damage, loot, sleeping, and validated rift travel. A restrictive corporate network may block direct WebRTC routes because this release uses public STUN but no paid TURN relay.
+The connection is peer-to-peer; no account or custom game server is required. Encrypted public relay discovery replaces the manual signaling exchange, while game state travels over WebRTC. The host owns terrain, machines, time, creature simulation, combat validation, damage, loot, sleeping, and validated rift travel. The previous two-way key workflow remains under **Manual direct-key fallback**. A restrictive corporate network can still block direct WebRTC routes because this release uses public STUN but no paid TURN relay.
 
 ## Portable world keys
 
-Open **Pause → Save & world key → Generate current key**. A `VF1` key includes the seed, game mode, day and time, player state, changed blocks, flowing-water levels, the organized 36-slot inventory, machine/trade stock, loose items, and creatures. It is compressed and protected by an integrity checksum. Version 4 keys migrate into the new slot layout when loaded.
+Open **Pause → Save & world key → Generate current key**. A `VF1` key includes the seed, generation, game mode, day and time, player state, changed blocks, flowing-water levels, the organized 36-slot inventory, value carryover, machine/trade stock, loose items, and creatures. It is compressed and protected by an integrity checksum. Version 5 and earlier keys migrate into the new slot layout and are lifted into Version 6's taller terrain datum when loaded.
 
 Local saves use browser storage. Export a key before clearing site data or changing devices.
 
@@ -76,15 +78,15 @@ npm test
 # GitHub Pages output is written to out/
 ```
 
-The 29-test suite additionally covers finite water distance and persistence, 36-slot uniqueness/drag/shift primitives, mountain balance, sparse clustered veins, deep-water shore exits, continuous mob jump arcs, stable aquatic motion, livestock, home-building recipes, furnace fuel consumption, spaced profession villages, Emberdeep terrain, cave density, signals, pistons, physical logistics, saves, and tool progression. Every push to `main` reruns linting, tests, a production export, and GitHub Pages deployment.
+The 37-test suite covers water distance, persistence and dam cutoff; liquid placement targeting; Y −64…320 bounds; deterministic mountain balance; legacy save migration; 36-slot uniqueness; collision; auto-jump; crouch ledges; Creative flight; critical-hit rules; sale values for every item; one-code normalization; sparse veins; caves; shore exits; continuous mob jumps; aquatic motion; livestock; recipes; furnaces; spaced profession villages; Emberdeep terrain; signals; pistons; and physical logistics. Every push to `main` reruns linting, tests, a production export, and GitHub Pages deployment.
 
 ## Architecture
 
 - Next.js/React supplies the responsive shell and menus.
-- Three.js renders face-culled terrain, seventeen shape families, world-matching inventory icons, and procedural articulated creature rigs from runtime-generated textures.
+- Three.js renders face-culled terrain, eighteen shape families, unique world-matching circuit icons, and procedural articulated creature rigs from runtime-generated textures.
 - The game simulation is framework-independent TypeScript under `app/game/`.
 - Terrain stores only player mutations; untouched chunks regenerate from the seed.
-- Multiplayer uses browser-native WebRTC data channels with the host as authority.
+- Multiplayer uses Trystero-assisted encrypted room discovery plus browser-native WebRTC data channels with the host as authority; manual signaling remains available.
 
 ## Original-work notice
 

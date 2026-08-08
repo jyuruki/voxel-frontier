@@ -8,6 +8,7 @@ export function voxelRaycast(
   origin: THREE.Vector3,
   direction: THREE.Vector3,
   maxDistance = 6,
+  includeLiquids = false,
 ): RayHit | null {
   const dir = direction.clone().normalize();
   let x = Math.floor(origin.x);
@@ -28,7 +29,8 @@ export function voxelRaycast(
 
   while (distance <= maxDistance) {
     const id = world.getBlock(x, y, z);
-    if (id !== BlockId.Air && !BLOCKS[id].liquid) {
+    const originLiquid = includeLiquids && distance === 0 && BLOCKS[id].liquid;
+    if (id !== BlockId.Air && !originLiquid && (includeLiquids || !BLOCKS[id].liquid)) {
       return {
         block: { x, y, z },
         adjacent: previous,
@@ -57,4 +59,3 @@ export function voxelRaycast(
   }
   return null;
 }
-

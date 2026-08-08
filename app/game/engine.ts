@@ -23,7 +23,8 @@ import {
   reconcileInventoryLayout,
   shiftInventorySlot as shiftSlotInLayout,
 } from "./inventory";
-import { WeaponStats, weaponStats } from "./combat";
+import { CRITICAL_DAMAGE_MULTIPLIER, WeaponStats, isCriticalHit, weaponStats } from "./combat";
+import { itemSalePoints } from "./economy";
 import { buildChunkGeometries } from "./mesher";
 import { NetworkMessage, NetworkSession } from "./network";
 import { MOB_DEFINITIONS, mobIntersectsSolid, moveMobWithCollision, resolveMobPenetration } from "./mobs";
@@ -50,7 +51,9 @@ import {
   Vec3Data,
   VillagerProfession,
   WorldSave,
-  WORLD_HEIGHT,
+  WORLD_GENERATION_VERSION,
+  WORLD_MAX_Y,
+  WORLD_MIN_Y,
 } from "./types";
 import { chunkKey, EMBERDEEP_OFFSET, floorDiv, isEmberdeepCoordinate, VoxelWorld } from "./world";
 
@@ -77,6 +80,7 @@ export interface TradePanelData {
   profession: string;
   offers: TradeOffer[];
   marks: number;
+  credit: number;
 }
 
 export interface GameEngineCallbacks {
@@ -251,33 +255,29 @@ const PROFESSION_NAMES: Record<TradeProfession, string> = {
 
 const TRADE_CATALOG: Record<TradeProfession, TradeTemplate[]> = {
   farmer: [
-    { id: "farmer-buys-fruit", name: "Produce Delivery", cost: { item: "food:starfruit", count: 4 }, reward: { item: "currency:frontier-mark", count: 3 }, note: "Sell ripe Starfruit to the village pantry.", maxStock: 6 },
-    { id: "farmer-buys-feathers", name: "Feather Bundle", cost: { item: "part:feather", count: 4 }, reward: { item: "currency:frontier-mark", count: 2 }, note: "Sell clean feathers for bedding and fletching.", maxStock: 5 },
     { id: "farmer-sells-fiber", name: "Fleece Bale", cost: { item: "currency:frontier-mark", count: 5 }, reward: { item: "part:soft-fiber", count: 4 }, note: "Buy prepared fiber for a bed or woven block.", maxStock: 4 },
     { id: "farmer-sells-food", name: "Travel Rations", cost: { item: "currency:frontier-mark", count: 3 }, reward: { item: "food:starfruit", count: 5 }, note: "A small ration for long cave trips.", maxStock: 4 },
+    { id: "farmer-sells-feathers", name: "Fletcher Bundle", cost: { item: "currency:frontier-mark", count: 4 }, reward: { item: "part:feather", count: 6 }, note: "Clean feathers for arrows and decorations.", maxStock: 4 },
   ],
   blacksmith: [
-    { id: "smith-buys-coal", name: "Forge Fuel", cost: { item: "part:coal", count: 8 }, reward: { item: "currency:frontier-mark", count: 4 }, note: "Sell coal to keep the village forge hot.", maxStock: 6 },
-    { id: "smith-buys-copper", name: "Copper Order", cost: { item: "block:10", count: 4 }, reward: { item: "currency:frontier-mark", count: 5 }, note: "Sell raw copper ore for local machine work.", maxStock: 5 },
     { id: "smith-sells-iron", name: "Iron Pair", cost: { item: "currency:frontier-mark", count: 7 }, reward: { item: "part:iron-ingot", count: 2 }, note: "Buy two furnace-ready iron ingots.", maxStock: 4 },
     { id: "smith-sells-pick", name: "Iron Pick", cost: { item: "currency:frontier-mark", count: 18 }, reward: { item: "tool:iron-pick", count: 1 }, note: "A finished deep-mining tool, limited to one per restock.", maxStock: 1 },
+    { id: "smith-sells-coal", name: "Forge Fuel", cost: { item: "currency:frontier-mark", count: 3 }, reward: { item: "part:coal", count: 6 }, note: "A compact reserve of furnace fuel.", maxStock: 4 },
   ],
   builder: [
-    { id: "builder-buys-stone", name: "Masonry Contract", cost: { item: "block:3", count: 16 }, reward: { item: "currency:frontier-mark", count: 4 }, note: "Sell common Roughstone for village repairs.", maxStock: 6 },
     { id: "builder-sells-panes", name: "Window Crate", cost: { item: "currency:frontier-mark", count: 5 }, reward: { item: "block:112", count: 8 }, note: "Slim Clearglass Panes for a finished home.", maxStock: 5 },
     { id: "builder-sells-door", name: "Door & Shutter Set", cost: { item: "currency:frontier-mark", count: 6 }, reward: { item: "block:97", count: 1 }, note: "A fitted timber door for a cottage or workshop.", maxStock: 4 },
     { id: "builder-sells-roof", name: "Roofing Lot", cost: { item: "currency:frontier-mark", count: 7 }, reward: { item: "block:103", count: 6 }, note: "Weatherproof fired-clay roof tiles.", maxStock: 4 },
   ],
   riftwright: [
-    { id: "rift-buys-shards", name: "Crystal Commission", cost: { item: "part:moonshard", count: 2 }, reward: { item: "currency:frontier-mark", count: 7 }, note: "Sell cut Moonshards for dimensional research.", maxStock: 4 },
     { id: "rift-sells-flux", name: "Fluxstone Packet", cost: { item: "currency:frontier-mark", count: 6 }, reward: { item: "part:flux-dust", count: 4 }, note: "Signal dust for advanced logic circuits.", maxStock: 4 },
     { id: "rift-sells-diamond", name: "Cut Diamond", cost: { item: "currency:frontier-mark", count: 20 }, reward: { item: "part:diamond", count: 1 }, note: "A scarce cut crystal from a distant mine.", maxStock: 2 },
     { id: "rift-sells-core", name: "Rift Core", cost: { item: "currency:frontier-mark", count: 40 }, reward: { item: "part:rift-core", count: 1 }, note: "The stabilizer required for a Rift Gate.", maxStock: 1 },
   ],
   market: [
-    { id: "market-buys-fiber", name: "Textile Delivery", cost: { item: "part:soft-fiber", count: 5 }, reward: { item: "currency:frontier-mark", count: 4 }, note: "Sell surplus fleece at the village counter.", maxStock: 5 },
-    { id: "market-buys-iron", name: "Tooling Order", cost: { item: "part:iron-ingot", count: 2 }, reward: { item: "currency:frontier-mark", count: 5 }, note: "Sell refined iron to the shared workshop.", maxStock: 4 },
     { id: "market-sells-coal", name: "Emergency Fuel", cost: { item: "currency:frontier-mark", count: 3 }, reward: { item: "part:coal", count: 6 }, note: "A small fuel reserve for stranded travelers.", maxStock: 3 },
+    { id: "market-sells-tonic", name: "Mender Tonic", cost: { item: "currency:frontier-mark", count: 8 }, reward: { item: "consumable:mender-tonic", count: 1 }, note: "A restorative tonic for dangerous expeditions.", maxStock: 3 },
+    { id: "market-sells-bolts", name: "Aether Bolts", cost: { item: "currency:frontier-mark", count: 5 }, reward: { item: "ammo:aether-bolt", count: 8 }, note: "A bundle of ammunition for an Aether Repeater.", maxStock: 4 },
   ],
 };
 
@@ -423,6 +423,7 @@ export class GameEngine {
   private health = 100;
   private hunger = 100;
   private stamina = 100;
+  private tradeCredit = 0;
   private timeOfDay = 0.29;
   private paused = false;
   private destroyed = false;
@@ -444,6 +445,10 @@ export class GameEngine {
   private riftCooldown = 0;
   private hazardCooldown = 0;
   private interactLatch = false;
+  private creativeMineLatch = false;
+  private creativeFlying = false;
+  private lastCreativeJumpTap = 0;
+  private criticalFlash = 0;
   private miningKey = "";
   private miningProgress = 0;
   private mineSoundTimer = 0;
@@ -456,6 +461,7 @@ export class GameEngine {
   private wildlifeRandom: () => number;
   private targetedMob: MobState | null = null;
   private currentHit: ReturnType<typeof voxelRaycast> = null;
+  private placementHit: ReturnType<typeof voxelRaycast> = null;
   private readonly selection: THREE.LineSegments;
   private readonly breakOverlay: THREE.Mesh;
   private readonly breakMaterials: THREE.MeshBasicMaterial[];
@@ -471,7 +477,6 @@ export class GameEngine {
   private readonly translucentMaterial: THREE.MeshLambertMaterial;
   private readonly liquidMaterial: THREE.MeshLambertMaterial;
   private readonly signalOnMaterial = new THREE.MeshBasicMaterial({ color: 0xff6b46 });
-  private readonly signalOffMaterial = new THREE.MeshBasicMaterial({ color: 0x27343b });
   private readonly powerMaterial = new THREE.MeshBasicMaterial({ color: 0x54d7e5 });
 
   private readonly onResize = () => this.resize();
@@ -485,6 +490,10 @@ export class GameEngine {
       this.viewModel.swing("attack");
     }
     if (event.button === 2) this.input.place = true;
+    if (event.button === 1 && this.mode === "creative" && this.currentHit) {
+      event.preventDefault();
+      this.assignInventorySlot(HOTBAR_START + this.selectedSlot, itemForBlock(this.currentHit.id));
+    }
     if (document.pointerLockElement !== this.canvas) void this.canvas.requestPointerLock();
     void this.audio.unlock();
   };
@@ -500,12 +509,19 @@ export class GameEngine {
   private readonly onKeyDown = (event: KeyboardEvent) => {
     const target = event.target as HTMLElement | null;
     if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
-    if (event.repeat && ["KeyE", "KeyF", "KeyG", "Escape"].includes(event.code)) return;
+    if (event.repeat && ["KeyE", "KeyF", "KeyG", "KeyV", "Escape"].includes(event.code)) return;
     if (event.code === "KeyW") this.input.forward = 1;
     if (event.code === "KeyS") this.input.forward = -1;
     if (event.code === "KeyA") this.input.strafe = -1;
     if (event.code === "KeyD") this.input.strafe = 1;
-    if (event.code === "Space") this.input.jump = true;
+    if (event.code === "Space") {
+      if (this.mode === "creative" && !event.repeat) {
+        const now = performance.now();
+        if (now - this.lastCreativeJumpTap < 320) this.toggleCreativeFlight();
+        this.lastCreativeJumpTap = now;
+      }
+      this.input.jump = true;
+    }
     if (event.code === "ShiftLeft") this.input.sprint = true;
     if (event.code === "ControlLeft" || event.code === "KeyC") this.input.crouch = true;
     if (event.code === "KeyF") this.tapInteract();
@@ -515,6 +531,7 @@ export class GameEngine {
     }
     if (event.code === "KeyG") this.callbacks.onGuide();
     if (event.code === "KeyR") this.rotateTargetedMachine();
+    if (event.code === "KeyV") this.toggleCreativeFlight();
     if (event.code === "Escape") this.callbacks.onPause();
     if (/^Digit[1-9]$/.test(event.code)) this.setSelectedSlot(Number(event.code.slice(5)) - 1);
   };
@@ -539,7 +556,7 @@ export class GameEngine {
     this.network = options.network;
     const loaded = options.save ?? null;
     this.mode = loaded?.mode ?? options.mode;
-    this.world = new VoxelWorld(loaded?.seed ?? options.seed);
+    this.world = new VoxelWorld(loaded?.seed ?? options.seed, loaded?.generation ?? WORLD_GENERATION_VERSION);
     this.wildlifeRandom = seededRandom(hashString(`wildlife:${this.world.seedText}`));
     if (loaded) {
       this.world.loadMutations(loaded.mutations);
@@ -556,6 +573,7 @@ export class GameEngine {
       this.health = loaded.player.health;
       this.hunger = loaded.player.hunger;
       this.stamina = loaded.player.stamina;
+      this.tradeCredit = loaded.player.tradeCredit ?? 0;
       this.timeOfDay = loaded.timeOfDay;
       this.dayCount = loaded.dayCount ?? 1;
       this.physics = new PlayerPhysics(loaded.player.position);
@@ -703,6 +721,7 @@ export class GameEngine {
     this.input.lookX = 0;
     this.input.lookY = 0;
     this.attackCooldown = Math.max(0, this.attackCooldown - dt);
+    this.criticalFlash = Math.max(0, this.criticalFlash - dt);
     this.inventoryFullToastTimer = Math.max(0, this.inventoryFullToastTimer - dt);
     this.riftCooldown = Math.max(0, this.riftCooldown - dt);
     this.hazardCooldown = Math.max(0, this.hazardCooldown - dt);
@@ -712,7 +731,7 @@ export class GameEngine {
     this.physics.update(dt, physicsInput, this.world, (fallDistance) => {
       const damage = Math.max(0, (fallDistance - 3.2) * 6.5);
       if (damage > 0) this.damage(damage, "Hard landing");
-    }, this.settings.autoJump);
+    }, this.settings.autoJump, this.mode === "creative" && this.creativeFlying);
     if (
       this.mode === "survival" &&
       this.world.getBlock(this.physics.position.x, this.physics.position.y + 0.12, this.physics.position.z) === BlockId.Emberflow &&
@@ -824,6 +843,7 @@ export class GameEngine {
     const selected = this.hotbar[this.selectedSlot];
     const reach = weaponStats(selected).reach;
     this.currentHit = voxelRaycast(this.world, this.camera.position, direction, Math.max(6.2, reach));
+    this.placementHit = voxelRaycast(this.world, this.camera.position, direction, 6.2, true);
     this.targetedMob = this.findTargetedMob(direction, reach);
     if (this.currentHit && !this.targetedMob) {
       const { x, y, z } = this.currentHit.block;
@@ -863,12 +883,16 @@ export class GameEngine {
   }
 
   private updateActions(dt: number): void {
-    if (this.input.mine && this.targetedMob) {
+    const minePressed = this.input.mine && !this.creativeMineLatch;
+    if (this.mode === "creative") this.creativeMineLatch = this.input.mine;
+    else this.creativeMineLatch = false;
+    const shouldMine = this.mode === "creative" ? minePressed : this.input.mine;
+    if (shouldMine && this.targetedMob) {
       this.breakOverlay.visible = false;
       this.miningKey = "";
       this.miningProgress = 0;
       if (this.attackCooldown <= 0) this.attackTargetedMob();
-    } else if (this.input.mine && this.currentHit) this.mineTarget(dt);
+    } else if (shouldMine && this.currentHit) this.mineTarget(dt);
     else {
       this.miningKey = "";
       this.miningProgress = 0;
@@ -883,6 +907,7 @@ export class GameEngine {
       this.interactTarget();
     }
     if (!this.input.interact) this.interactLatch = false;
+    if (!this.input.mine) this.creativeMineLatch = false;
   }
 
   private toolPower(id: BlockId): number {
@@ -940,7 +965,9 @@ export class GameEngine {
       this.miningKey = key;
       this.miningProgress = 0;
     }
-    this.miningProgress += (dt * this.toolPower(id)) / Math.max(0.15, BLOCKS[id].hardness);
+    this.miningProgress = this.mode === "creative"
+      ? 1
+      : this.miningProgress + (dt * this.toolPower(id)) / Math.max(0.15, BLOCKS[id].hardness);
     const bounds = blockVisualBounds(id);
     this.breakOverlay.position.set(x + 0.5, y + bounds.y / 2, z + 0.5);
     this.breakOverlay.scale.set(bounds.x, bounds.y, bounds.z);
@@ -988,8 +1015,12 @@ export class GameEngine {
       return;
     }
     if (!this.currentHit || (this.mode === "survival" && !itemAvailable(this.inventory, item))) return;
-    const { x, y, z } = this.currentHit.adjacent;
-    if (this.world.getBlock(x, y, z) !== BlockId.Air || this.physics.occupiesBlock(x, y, z)) return;
+    const target = this.placementHit?.id === BlockId.Water
+      ? this.placementHit.block
+      : this.currentHit.adjacent;
+    const { x, y, z } = target;
+    const replaced = this.world.getBlock(x, y, z);
+    if ((replaced !== BlockId.Air && replaced !== BlockId.Water) || this.physics.occupiesBlock(x, y, z)) return;
     this.applyBlockChange(x, y, z, id);
     const machine = this.world.machines.get(worldKey(x, y, z));
     if (machine) {
@@ -1096,7 +1127,13 @@ export class GameEngine {
       this.network.send({ type: "request-mob-hit", mobId: mob.id, item: selected });
       return;
     }
-    this.strikeMob(mob, stats, this.physics.position);
+    const critical = isCriticalHit({
+      grounded: this.physics.grounded,
+      velocityY: this.physics.velocity.y,
+      swimming: this.physics.swimming,
+      flying: this.creativeFlying,
+    }, stats);
+    this.strikeMob(mob, stats, this.physics.position, undefined, critical);
   }
 
   private strikeMob(
@@ -1104,17 +1141,23 @@ export class GameEngine {
     stats: WeaponStats,
     origin: { x: number; y: number; z: number },
     attackerPeerId?: string,
+    critical = false,
   ): void {
-    mob.health -= stats.damage;
+    mob.health -= stats.damage * (critical ? CRITICAL_DAMAGE_MULTIPLIER : 1);
     mob.hurtTimer = 0.24;
     const dx = mob.position.x - origin.x;
     const dz = mob.position.z - origin.z;
     const distance = Math.max(0.001, Math.hypot(dx, dz));
-    mob.velocity.x += (dx / distance) * stats.knockback;
-    mob.velocity.z += (dz / distance) * stats.knockback;
-    mob.velocity.y = Math.max(mob.velocity.y, stats.knockback * 0.34);
+    const knockback = stats.knockback * (critical ? 1.22 : 1);
+    mob.velocity.x += (dx / distance) * knockback;
+    mob.velocity.z += (dz / distance) * knockback;
+    mob.velocity.y = Math.max(mob.velocity.y, knockback * (critical ? 0.48 : 0.34));
     mob.yaw = Math.atan2(dx, dz);
     this.audio.playCreature(mob.kind, "hurt", distance);
+    if (critical) {
+      if (attackerPeerId) this.network.send({ type: "critical-hit", mobId: mob.id }, attackerPeerId);
+      else this.showCriticalHit();
+    }
     if (mob.health > 0) return;
 
     const definition = MOB_DEFINITIONS[mob.kind];
@@ -1194,6 +1237,7 @@ export class GameEngine {
       profession: PROFESSION_NAMES[profession],
       offers,
       marks: this.inventory["currency:frontier-mark"] ?? 0,
+      credit: this.tradeCredit,
     };
   }
 
@@ -1233,6 +1277,7 @@ export class GameEngine {
     }
     if (id === BlockId.PulseRepeater && state) {
       state.delayTicks = ((state.delayTicks ?? 2) % 4) + 1;
+      this.world.setBlock(x, y, z, id);
       this.broadcastMachine(key, state);
       this.callbacks.onToast(`Pulse repeater: ${state.delayTicks} beat delay`);
       return;
@@ -1310,7 +1355,7 @@ export class GameEngine {
 
   private buildRiftArrival(x: number, z: number): Vec3Data {
     const surface = this.world.getHeight(x, z);
-    const floorY = Math.max(2, Math.min(WORLD_HEIGHT - 5, surface));
+    const floorY = Math.max(WORLD_MIN_Y + 2, Math.min(WORLD_MAX_Y - 5, surface));
     for (let dx = -2; dx <= 2; dx += 1) {
       for (let dz = -2; dz <= 2; dz += 1) {
         this.applyBlockChange(x + dx, floorY, z + dz, BlockId.Riftstone);
@@ -1445,21 +1490,25 @@ export class GameEngine {
     for (const [key, state] of this.world.machines) {
       const [x, y, z] = parseWorldKey(key);
       if (Math.hypot(x - this.physics.position.x, z - this.physics.position.z) > radius) continue;
+      const id = this.world.getBlock(x, y, z);
+      const powered = state.energy > 0 && [BlockId.BoreDrill, BlockId.Conveyor, BlockId.ArcFurnace, BlockId.Fabricator, BlockId.Hopper, BlockId.Ram, BlockId.FluxCell].includes(id);
+      const signaled = state.signal > 0;
+      if (!powered && !signaled) continue;
       nearby.add(key);
       let mesh = this.indicatorMeshes.get(key);
       if (!mesh) {
-        mesh = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.08, 0.22), this.signalOffMaterial);
+        const lowProfile = ["wire", "plate", "torch"].includes(BLOCKS[id].shape ?? "cube");
+        mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(lowProfile ? 0.16 : 0.18, lowProfile ? 0.025 : 0.045, lowProfile ? 0.16 : 0.18),
+          signaled ? this.signalOnMaterial : this.powerMaterial,
+        );
         this.indicatorMeshes.set(key, mesh);
         this.indicatorRoot.add(mesh);
       }
-      const id = this.world.getBlock(x, y, z);
-      mesh.position.set(x + 0.5, y + 1.025, z + 0.5);
-      mesh.material = state.energy > 0 && [BlockId.BoreDrill, BlockId.Conveyor, BlockId.ArcFurnace, BlockId.Fabricator, BlockId.Hopper, BlockId.Ram].includes(id)
-        ? this.powerMaterial
-        : state.signal > 0
-          ? this.signalOnMaterial
-          : this.signalOffMaterial;
-      mesh.scale.setScalar(state.signal > 0 || state.energy > 0 ? 1.12 : 0.82);
+      const lowProfile = ["wire", "plate", "torch"].includes(BLOCKS[id].shape ?? "cube");
+      mesh.position.set(x + 0.5, y + (lowProfile ? 0.105 : 0.91), z + 0.5);
+      mesh.material = signaled ? this.signalOnMaterial : this.powerMaterial;
+      mesh.scale.setScalar(1 + Math.sin(performance.now() * 0.008) * 0.08);
     }
     for (const [key, mesh] of this.indicatorMeshes) {
       if (!nearby.has(key)) {
@@ -2152,6 +2201,10 @@ export class GameEngine {
       yaw: this.physics.yaw,
       pitch: this.physics.pitch,
       color: `hsl(${hue} 62% 58%)`,
+      velocityY: this.physics.velocity.y,
+      grounded: this.physics.grounded,
+      swimming: this.physics.swimming,
+      flying: this.creativeFlying,
     };
   }
 
@@ -2198,7 +2251,12 @@ export class GameEngine {
         distance <= stats.reach + 0.9 &&
         look.dot(aim) > 0.55 &&
         (!obstruction || obstruction.distance + 0.3 >= distance)
-      ) this.strikeMob(mob, stats, player.position, peerId);
+      ) this.strikeMob(mob, stats, player.position, peerId, isCriticalHit({
+        grounded: player.grounded ?? true,
+        velocityY: player.velocityY ?? 0,
+        swimming: player.swimming,
+        flying: player.flying,
+      }, stats));
     } else if (message.type === "mob-state" && this.network.role === "guest") {
       this.world.mobs.splice(0, this.world.mobs.length, ...message.mobs.map((mob) => ({
         ...mob,
@@ -2214,6 +2272,8 @@ export class GameEngine {
       this.dayCount = message.dayCount;
     } else if (message.type === "damage" && this.network.role === "guest") {
       this.damage(message.amount, message.source);
+    } else if (message.type === "critical-hit") {
+      this.showCriticalHit();
     } else if (message.type === "give-item" && this.network.role === "guest") {
       if (this.collectItem(message.item, message.count)) {
         this.audio.play("click");
@@ -2272,7 +2332,7 @@ export class GameEngine {
   }
 
   private applyRemoteSnapshot(save: WorldSave): void {
-    this.world = new VoxelWorld(save.seed);
+    this.world = new VoxelWorld(save.seed, save.generation ?? WORLD_GENERATION_VERSION);
     this.wildlifeRandom = seededRandom(hashString(`wildlife:${this.world.seedText}`));
     this.world.loadMutations(save.mutations);
     this.world.loadWaterLevels(save.waterLevels);
@@ -2292,6 +2352,8 @@ export class GameEngine {
     this.health = 100;
     this.hunger = 100;
     this.stamina = 100;
+    this.tradeCredit = 0;
+    this.creativeFlying = false;
     this.viewModel.setItem(this.hotbar[0]);
     this.physics.position.set(save.player.position.x + 1.4, save.player.position.y, save.player.position.z + 1.4);
     for (const meshSet of this.chunks.values()) {
@@ -2328,6 +2390,8 @@ export class GameEngine {
       networkStatus: networkStatus ?? (this.network.role === "offline" ? "Offline" : `${this.network.role === "host" ? "Hosting" : "Guest"} · ${this.network.connectedPeers} peer${this.network.connectedPeers === 1 ? "" : "s"}`),
       objective: this.objective,
       gameMode: this.mode,
+      flying: this.mode === "creative" && this.creativeFlying,
+      critical: this.criticalFlash > 0,
       timeLabel: formatFrontierTime(this.timeOfDay),
       dayCount: this.dayCount,
       targetedMob: this.targetedMob && mobDefinition
@@ -2441,28 +2505,63 @@ export class GameEngine {
     }
     if (id === BlockId.PulseRepeater && ["1", "2", "3", "4"].includes(value)) {
       state.delayTicks = Number(value);
+      this.world.setBlock(x, y, z, id);
     }
     if (id === BlockId.Fabricator && ["flux-coil", "logic-wafer", "gear"].includes(value)) state.recipe = value;
     this.broadcastMachine(key, state);
+  }
+
+  private merchantInRange(mobId: string, showError = true): boolean {
+    if (mobId.startsWith("post:")) {
+      const [x, , z] = parseWorldKey(mobId.slice(5));
+      const nearby = Math.hypot(x + 0.5 - this.physics.position.x, z + 0.5 - this.physics.position.z) <= 7;
+      if (!nearby && showError) this.callbacks.onToast("The village market is no longer close enough.");
+      return nearby;
+    }
+    const merchant = this.world.mobs.find((mob) => mob.id === mobId && mob.kind === "wayfarer");
+    const nearby = Boolean(merchant && Math.hypot(
+      merchant.position.x - this.physics.position.x,
+      merchant.position.z - this.physics.position.z,
+    ) <= 6);
+    if (!nearby && showError) this.callbacks.onToast("That villager is no longer close enough to trade.");
+    return nearby;
+  }
+
+  sellToMerchant(mobId: string, item: ItemId, requestedCount?: number): boolean {
+    if (!this.merchantInRange(mobId)) return false;
+    const available = this.inventory[item] ?? 0;
+    const count = Math.max(0, Math.min(available, Math.floor(requestedCount ?? available)));
+    if (count <= 0) {
+      this.callbacks.onToast(`You are not carrying ${itemName(item)}.`);
+      return false;
+    }
+    const salePoints = itemSalePoints(item) * count;
+    const pooledPoints = this.tradeCredit + salePoints;
+    const marks = Math.floor(pooledPoints / 20);
+    const credit = pooledPoints % 20;
+    if (this.mode === "survival") {
+      changeItem(this.inventory, item, -count);
+      this.inventorySlots = reconcileInventoryLayout(this.inventorySlots, this.inventory);
+      this.hotbar = hotbarFromLayout(this.inventorySlots);
+      this.tradeCredit = credit;
+      if (marks > 0) this.collectItem("currency:frontier-mark", marks);
+      this.clearDepletedHotbar();
+    }
+    this.audio.play("trade");
+    this.callbacks.onToast(this.mode === "creative"
+      ? `${itemName(item)} is infinitely available in Creative mode.`
+      : `Sold ${count} × ${itemName(item)} · ${marks} Frontier Mark${marks === 1 ? "" : "s"}${credit ? ` · ${credit}/20 value saved` : ""}.`);
+    this.emitHud();
+    const refreshed = this.buildTradePanel(mobId);
+    if (refreshed) this.callbacks.onTrade(refreshed);
+    return true;
   }
 
   trade(mobId: string, offerId: string): boolean {
     const panel = this.buildTradePanel(mobId);
     const offer = panel?.offers.find((candidate) => candidate.id === offerId);
     if (!panel || !offer) return false;
-    if (mobId.startsWith("post:")) {
-      const [x, , z] = parseWorldKey(mobId.slice(5));
-      if (Math.hypot(x + 0.5 - this.physics.position.x, z + 0.5 - this.physics.position.z) > 7) {
-        this.callbacks.onToast("The village market is no longer close enough.");
-        return false;
-      }
-    } else {
-      const merchant = this.world.mobs.find((mob) => mob.id === mobId && mob.kind === "wayfarer");
-      if (!merchant || Math.hypot(merchant.position.x - this.physics.position.x, merchant.position.z - this.physics.position.z) > 6) {
-        this.callbacks.onToast("That villager is no longer close enough to trade.");
-        return false;
-      }
-    }
+    if (!this.merchantInRange(mobId)) return false;
     if (offer.stock <= 0) {
       this.callbacks.onToast("That offer is sold out until the next village restock.");
       return false;
@@ -2555,6 +2654,22 @@ export class GameEngine {
     if (active) void this.audio.unlock();
   }
 
+  toggleCreativeFlight(): void {
+    if (this.mode !== "creative") {
+      this.callbacks.onToast("Flight is available in Creative mode.");
+      return;
+    }
+    this.creativeFlying = !this.creativeFlying;
+    this.physics.velocity.y = 0;
+    this.callbacks.onToast(this.creativeFlying ? "Creative flight enabled · Space rises, Ctrl descends." : "Creative flight disabled.");
+    this.emitHud();
+  }
+
+  private showCriticalHit(): void {
+    this.criticalFlash = 0.52;
+    this.audio.play("critical");
+  }
+
   tapInteract(): void {
     this.input.interact = true;
     window.setTimeout(() => {
@@ -2591,6 +2706,7 @@ export class GameEngine {
   makeSave(): WorldSave {
     return {
       version: SAVE_VERSION,
+      generation: WORLD_GENERATION_VERSION,
       createdAt: Date.now(),
       seed: this.world.seedText,
       mode: this.mode,
@@ -2609,6 +2725,7 @@ export class GameEngine {
         hotbar: [...this.hotbar],
         inventorySlots: [...this.inventorySlots],
         selectedSlot: this.selectedSlot,
+        tradeCredit: this.tradeCredit,
       },
       timeOfDay: this.timeOfDay,
       dayCount: this.dayCount,
@@ -2671,7 +2788,6 @@ export class GameEngine {
     this.translucentMaterial.dispose();
     this.liquidMaterial.dispose();
     this.signalOnMaterial.dispose();
-    this.signalOffMaterial.dispose();
     this.powerMaterial.dispose();
     this.scene.traverse((object) => {
       if (object instanceof THREE.Mesh || object instanceof THREE.LineSegments) object.geometry.dispose();

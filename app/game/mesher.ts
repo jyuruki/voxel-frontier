@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { BLOCKS, tileUv } from "./blocks";
 import { worldKey } from "./prng";
-import { BlockId, CHUNK_SIZE, WORLD_HEIGHT } from "./types";
+import { BlockId, CHUNK_SIZE, WORLD_MAX_Y, WORLD_MIN_Y } from "./types";
 import { VoxelWorld } from "./world";
 
 interface GeometryBuffers {
@@ -148,7 +148,7 @@ function addFullCube(
       : 0.88
     : 1;
   for (const face of FACES) {
-    const neighbor = world.getBlock(
+    const neighbor = world.peekBlock(
       x + face.normal[0],
       y + face.normal[1],
       z + face.normal[2],
@@ -181,7 +181,7 @@ function addCross(buffers: GeometryBuffers, id: BlockId, lx: number, y: number, 
 }
 
 function connectsToWire(world: VoxelWorld, x: number, y: number, z: number): boolean {
-  const id = world.getBlock(x, y, z);
+  const id = world.peekBlock(x, y, z);
   return id === BlockId.FluxWire || Boolean(BLOCKS[id].automation);
 }
 
@@ -221,6 +221,7 @@ function addPlate(
   y: number,
   lz: number,
   orientation: number,
+  delayTicks = 2,
 ): void {
   const broad = id === BlockId.PressurePlate || id === BlockId.CaveMoss;
   addCuboid(
@@ -234,7 +235,13 @@ function addPlate(
   );
   if (id === BlockId.PulseRepeater || id === BlockId.DelayGate) {
     addOrientedCuboid(buffers, id, lx, y, lz, [0.43, 0.12, 0.23], [0.57, 0.38, 0.37], orientation);
-    addOrientedCuboid(buffers, id, lx, y, lz, [0.43, 0.12, 0.63], [0.57, 0.32, 0.77], orientation);
+    const delay = Math.max(1, Math.min(4, delayTicks));
+    const sliderZ = 0.48 + (delay - 1) * 0.1;
+    addOrientedCuboid(buffers, id, lx, y, lz, [0.43, 0.12, sliderZ], [0.57, 0.32, sliderZ + 0.14], orientation);
+    for (let notch = 0; notch < delay; notch += 1) {
+      const x0 = 0.29 + notch * 0.14;
+      addOrientedCuboid(buffers, id, lx, y, lz, [x0, 0.12, 0.84], [x0 + 0.065, 0.18, 0.88], orientation);
+    }
   } else if (id === BlockId.FluxComparator) {
     for (const [px, pz] of [[0.3, 0.34], [0.7, 0.34], [0.5, 0.7]]) {
       addOrientedCuboid(buffers, id, lx, y, lz, [px - 0.055, 0.12, pz - 0.055], [px + 0.055, 0.34, pz + 0.055], orientation);
@@ -264,13 +271,22 @@ function addRod(buffers: GeometryBuffers, id: BlockId, lx: number, y: number, lz
   }
 }
 
-function addHopper(buffers: GeometryBuffers, id: BlockId, lx: number, y: number, lz: number): void {
+function addHopper(buffers: GeometryBuffers, id: BlockId, lx: number, y: number, lz: number, orientation: number): void {
   addCuboid(buffers, id, lx, y, lz, [0.08, 0.72, 0.08], [0.92, 0.92, 0.22]);
   addCuboid(buffers, id, lx, y, lz, [0.08, 0.72, 0.78], [0.92, 0.92, 0.92]);
   addCuboid(buffers, id, lx, y, lz, [0.08, 0.72, 0.22], [0.22, 0.92, 0.78]);
   addCuboid(buffers, id, lx, y, lz, [0.78, 0.72, 0.22], [0.92, 0.92, 0.78]);
   addCuboid(buffers, id, lx, y, lz, [0.25, 0.35, 0.25], [0.75, 0.72, 0.75]);
-  addCuboid(buffers, id, lx, y, lz, [0.41, 0, 0.41], [0.59, 0.35, 0.59]);
+  addCuboid(buffers, id, lx, y, lz, [0.41, 0.18, 0.41], [0.59, 0.35, 0.59]);
+  addOrientedCuboid(buffers, id, lx, y, lz, [0.41, 0.16, 0.02], [0.59, 0.34, 0.48], orientation);
+}
+
+function addObserver(buffers: GeometryBuffers, id: BlockId, lx: number, y: number, lz: number, orientation: number): void {
+  addOrientedCuboid(buffers, id, lx, y, lz, [0.06, 0.08, 0.08], [0.94, 0.92, 0.92], orientation);
+  addOrientedCuboid(buffers, id, lx, y, lz, [0.25, 0.25, 0.015], [0.75, 0.75, 0.13], orientation);
+  addOrientedCuboid(buffers, id, lx, y, lz, [0.42, 0.38, 0.9], [0.58, 0.62, 0.995], orientation);
+  addOrientedCuboid(buffers, id, lx, y, lz, [0.46, 0.92, 0.18], [0.54, 0.975, 0.75], orientation);
+  addOrientedCuboid(buffers, id, lx, y, lz, [0.34, 0.92, 0.16], [0.66, 0.975, 0.27], orientation);
 }
 
 function addPiston(
@@ -407,7 +423,7 @@ export function buildChunkGeometries(
   const baseX = cx * CHUNK_SIZE;
   const baseZ = cz * CHUNK_SIZE;
 
-  for (let y = 0; y < WORLD_HEIGHT; y += 1) {
+  for (let y = WORLD_MIN_Y; y < WORLD_MAX_Y; y += 1) {
     for (let lz = 0; lz < CHUNK_SIZE; lz += 1) {
       for (let lx = 0; lx < CHUNK_SIZE; lx += 1) {
         const x = baseX + lx;
@@ -417,15 +433,17 @@ export function buildChunkGeometries(
         const buffers = targetBuffers(id, solid, translucent, liquid);
         const definition = BLOCKS[id];
         const shape = definition.shape ?? "cube";
-        const orientation = world.machines.get(worldKey(x, y, z))?.orientation ?? 0;
+        const machine = world.machines.get(worldKey(x, y, z));
+        const orientation = machine?.orientation ?? 0;
 
         if (shape === "cube") addFullCube(world, buffers, id, x, y, z, lx, lz);
         else if (shape === "cross") addCross(buffers, id, lx, y, lz);
         else if (shape === "wire") addWire(world, buffers, id, x, y, z, lx, lz);
-        else if (shape === "plate") addPlate(buffers, id, lx, y, lz, orientation);
+        else if (shape === "plate") addPlate(buffers, id, lx, y, lz, orientation, machine?.delayTicks);
         else if (shape === "torch") addTorch(buffers, id, lx, y, lz);
         else if (shape === "rod") addRod(buffers, id, lx, y, lz);
-        else if (shape === "hopper") addHopper(buffers, id, lx, y, lz);
+        else if (shape === "hopper") addHopper(buffers, id, lx, y, lz, orientation);
+        else if (shape === "observer") addObserver(buffers, id, lx, y, lz, orientation);
         else if (shape === "slab") addCuboid(buffers, id, lx, y, lz, [0, 0, 0], [1, definition.collisionHeight ?? 0.5, 1]);
         else if (shape === "stair") addStair(buffers, id, lx, y, lz, orientation);
         else if (shape === "piston") addPiston(buffers, id, lx, y, lz, orientation);

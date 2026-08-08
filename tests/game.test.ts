@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import * as THREE from "three";
 import { AutomationSystem } from "../app/game/automation";
-import { BLOCKS, RECIPES, itemForBlock } from "../app/game/blocks";
-import { weaponStats } from "../app/game/combat";
+import { ALL_ITEMS, BLOCKS, RECIPES, itemForBlock } from "../app/game/blocks";
+import { CRITICAL_DAMAGE_MULTIPLIER, isCriticalHit, weaponStats } from "../app/game/combat";
+import { itemSalePoints } from "../app/game/economy";
 import {
   HOTBAR_START,
   INVENTORY_SLOT_COUNT,
@@ -12,10 +14,29 @@ import {
   shiftInventorySlot,
 } from "../app/game/inventory";
 import { MOB_DEFINITIONS, mobIntersectsSolid, mobWaterImmersion, moveMobWithCollision, resolveMobPenetration } from "../app/game/mobs";
+import { generateRoomCode, normalizeRoomCode } from "../app/game/network";
 import { PlayerPhysics } from "../app/game/physics";
+import { voxelRaycast } from "../app/game/raycast";
 import { decodeWorldKey, encodeWorldKey } from "../app/game/save";
-import { BlockId, CHUNK_SIZE, InputFrame, MobState, SAVE_VERSION, WorldSave } from "../app/game/types";
+import { BlockId, CHUNK_SIZE, InputFrame, MobState, SAVE_VERSION, WORLD_GENERATION_VERSION, WORLD_MAX_Y, WORLD_MIN_Y, WorldSave } from "../app/game/types";
 import { EMBERDEEP_OFFSET, isVillageChunk, VoxelWorld } from "../app/game/world";
+
+function prepareArena(
+  world: VoxelWorld,
+  minX: number,
+  maxX: number,
+  minZ: number,
+  maxZ: number,
+  floorY = 40,
+  headroom = 6,
+): void {
+  for (let x = minX; x <= maxX; x += 1) {
+    for (let z = minZ; z <= maxZ; z += 1) {
+      world.setBlock(x, floorY, z, BlockId.Stone);
+      for (let y = floorY + 1; y <= floorY + headroom; y += 1) world.setBlock(x, y, z, BlockId.Air);
+    }
+  }
+}
 
 test("procedural terrain is deterministic for a seed", () => {
   const first = new VoxelWorld("copper skies");
@@ -41,11 +62,12 @@ test("terrain mixes broad lowlands, rolling hills, and rare tall mountains", () 
   for (let x = -512; x <= 512; x += 8) {
     for (let z = -512; z <= 512; z += 8) heights.push(world.getHeight(x, z));
   }
-  const tall = heights.filter((height) => height >= 34).length / heights.length;
-  const hilly = heights.filter((height) => height >= 27).length / heights.length;
-  assert.ok(Math.max(...heights) - Math.min(...heights) >= 24, "terrain should have meaningful vertical range");
-  assert.ok(hilly > 0.08 && hilly < 0.32, `rolling terrain balance drifted to ${(hilly * 100).toFixed(1)}%`);
-  assert.ok(tall > 0.008 && tall < 0.09, `mountain balance drifted to ${(tall * 100).toFixed(1)}%`);
+  const tall = heights.filter((height) => height >= 200).length / heights.length;
+  const hilly = heights.filter((height) => height >= 120).length / heights.length;
+  assert.ok(Math.max(...heights) - Math.min(...heights) >= 240, "terrain should span lowlands through dramatic summits");
+  assert.ok(hilly > 0.2 && hilly < 0.5, `rolling terrain balance drifted to ${(hilly * 100).toFixed(1)}%`);
+  assert.ok(tall > 0.03 && tall < 0.15, `mountain balance drifted to ${(tall * 100).toFixed(1)}%`);
+  assert.ok(Math.max(...heights) < WORLD_MAX_Y && Math.min(...heights) > WORLD_MIN_Y);
 });
 
 test("block mutations work across negative chunk boundaries", () => {
@@ -60,10 +82,21 @@ test("block mutations work across negative chunk boundaries", () => {
   assert.equal(restored.getBlock(-16, 42, 0), BlockId.Toggle);
 });
 
+test("the buildable world spans y -64 through the 320 ceiling", () => {
+  const world = new VoxelWorld("vertical bounds bench");
+  world.setBlock(0, WORLD_MIN_Y + 1, 0, BlockId.FluxLamp);
+  world.setBlock(0, WORLD_MAX_Y - 1, 0, BlockId.Glass);
+  assert.equal(world.getBlock(0, WORLD_MIN_Y + 1, 0), BlockId.FluxLamp);
+  assert.equal(world.getBlock(0, WORLD_MAX_Y - 1, 0), BlockId.Glass);
+  assert.equal(world.getBlock(0, WORLD_MAX_Y, 0), BlockId.Air);
+});
+
 test("water enters a mined opening, thins by level, and stops after seven blocks", () => {
   const world = new VoxelWorld("finite water bench");
+  prepareArena(world, -2, 11, -2, 2);
   for (let x = -2; x <= 11; x += 1) {
-    for (let z = -2; z <= 2; z += 1) world.setBlock(x, 40, z, BlockId.Stone);
+    world.setBlock(x, 41, -1, BlockId.Stone);
+    world.setBlock(x, 41, 1, BlockId.Stone);
   }
   world.setBlock(0, 41, 0, BlockId.Water);
   world.setBlock(1, 41, 0, BlockId.Air);
@@ -77,6 +110,32 @@ test("water enters a mined opening, thins by level, and stops after seven blocks
   restored.loadWaterLevels(world.serializeWaterLevels());
   assert.equal(restored.getBlock(7, 41, 0), BlockId.Water);
   assert.equal(restored.getWaterLevel(7, 41, 0), 7);
+});
+
+test("a placed dam preserves itself and removes unreachable downstream flow", () => {
+  const world = new VoxelWorld("finite water cutoff");
+  prepareArena(world, -1, 10, -1, 1);
+  for (let x = -1; x <= 10; x += 1) {
+    world.setBlock(x, 41, -1, BlockId.Stone);
+    world.setBlock(x, 41, 1, BlockId.Stone);
+  }
+  world.setBlock(0, 41, 0, BlockId.Water);
+  world.setBlock(1, 41, 0, BlockId.Air);
+  world.setBlock(3, 41, 0, BlockId.Glass);
+  assert.equal(world.getBlock(3, 41, 0), BlockId.Glass);
+  assert.equal(world.getBlock(2, 41, 0), BlockId.Water);
+  for (let x = 4; x <= 7; x += 1) assert.equal(world.getBlock(x, 41, 0), BlockId.Air);
+});
+
+test("placement raycasts target water cells while mining raycasts through them", () => {
+  const world = new VoxelWorld("water placement ray bench");
+  prepareArena(world, -1, 6, -1, 1);
+  world.setBlock(1, 42, 0, BlockId.Water);
+  world.setBlock(3, 42, 0, BlockId.Stone);
+  const origin = new THREE.Vector3(0.5, 42.5, 0.5);
+  const direction = new THREE.Vector3(1, 0, 0);
+  assert.equal(voxelRaycast(world, origin, direction, 6)?.id, BlockId.Stone);
+  assert.equal(voxelRaycast(world, origin, direction, 6, true)?.id, BlockId.Water);
 });
 
 test("the 36-slot inventory keeps items unique and supports drag and shift transfer", () => {
@@ -101,9 +160,7 @@ test("the 36-slot inventory keeps items unique and supports drag and shift trans
 
 test("player collision stops cleanly at walls without high-speed tunneling", () => {
   const world = new VoxelWorld("collision bench");
-  for (let x = -2; x <= 4; x += 1) {
-    for (let z = -2; z <= 2; z += 1) world.setBlock(x, 40, z, BlockId.Stone);
-  }
+  prepareArena(world, -2, 4, -2, 2);
   world.setBlock(2, 41, 0, BlockId.Stone);
   world.setBlock(2, 42, 0, BlockId.Stone);
 
@@ -131,6 +188,7 @@ test("player collision stops cleanly at walls without high-speed tunneling", () 
 test("portable world keys round-trip and detect corruption", () => {
   const save: WorldSave = {
     version: SAVE_VERSION,
+    generation: WORLD_GENERATION_VERSION,
     createdAt: 123456,
     seed: "portable frontier",
     mode: "survival",
@@ -156,9 +214,13 @@ test("portable world keys round-trip and detect corruption", () => {
   assert.ok(key.startsWith("VF1."));
   assert.deepEqual(decodeWorldKey(key), save);
   const legacySave = { ...save };
+  delete legacySave.generation;
   delete legacySave.mode;
   delete legacySave.dayCount;
-  assert.deepEqual(decodeWorldKey(encodeWorldKey(legacySave)), legacySave, "v1 keys without Stage 2 fields remain compatible");
+  const migrated = decodeWorldKey(encodeWorldKey(legacySave));
+  assert.equal(migrated.generation, WORLD_GENERATION_VERSION);
+  assert.equal(migrated.player.position.y, legacySave.player.position.y + 46);
+  assert.equal(migrated.mutations[0][1], legacySave.mutations[0][1] + 46);
   const parts = key.split(".");
   const damaged = `${parts[0]}.${parts[1]}x.${parts[2]}`;
   assert.throws(() => decodeWorldKey(damaged), /damaged|integrity/i);
@@ -166,9 +228,7 @@ test("portable world keys round-trip and detect corruption", () => {
 
 test("mobile auto-jump clears a full one-block rise", () => {
   const world = new VoxelWorld("auto jump bench");
-  for (let x = -2; x <= 5; x += 1) {
-    for (let z = -2; z <= 2; z += 1) world.setBlock(x, 40, z, BlockId.Stone);
-  }
+  prepareArena(world, -2, 5, -2, 2);
   world.setBlock(2, 41, 0, BlockId.Stone);
   const player = new PlayerPhysics({ x: 0.5, y: 41, z: 0.5 });
   player.yaw = -Math.PI / 2;
@@ -182,9 +242,7 @@ test("mobile auto-jump clears a full one-block rise", () => {
 
 test("mob collision prevents clipping into placed walls and repairs embedded saves", () => {
   const world = new VoxelWorld("mob collision bench");
-  for (let x = -2; x <= 5; x += 1) {
-    for (let z = -2; z <= 2; z += 1) world.setBlock(x, 40, z, BlockId.Stone);
-  }
+  prepareArena(world, -2, 5, -2, 2);
   world.setBlock(2, 41, 0, BlockId.EmberwoodLog);
   world.setBlock(2, 42, 0, BlockId.EmberwoodLog);
   const mob: MobState = {
@@ -218,6 +276,72 @@ test("combat equipment has distinct reach, damage, ammo, and timing", () => {
   assert.ok(repeater.cooldown > saber.cooldown);
 });
 
+test("critical hits require a descending airborne melee strike", () => {
+  const melee = weaponStats("tool:copper-saber");
+  const ranged = weaponStats("tool:aether-repeater");
+  assert.equal(isCriticalHit({ grounded: false, velocityY: -2.4 }, melee), true);
+  assert.equal(isCriticalHit({ grounded: false, velocityY: 1.2 }, melee), false);
+  assert.equal(isCriticalHit({ grounded: true, velocityY: -2.4 }, melee), false);
+  assert.equal(isCriticalHit({ grounded: false, velocityY: -2.4, swimming: true }, melee), false);
+  assert.equal(isCriticalHit({ grounded: false, velocityY: -2.4, flying: true }, melee), false);
+  assert.equal(isCriticalHit({ grounded: false, velocityY: -2.4 }, ranged), false);
+  assert.equal(CRITICAL_DAMAGE_MULTIPLIER, 1.5);
+});
+
+test("creative flight ascends smoothly while retaining collision physics", () => {
+  const world = new VoxelWorld("creative flight bench");
+  prepareArena(world, -2, 2, -2, 2);
+  const player = new PlayerPhysics({ x: 0.5, y: 41.01, z: 0.5 });
+  const input: InputFrame = {
+    forward: 0, strafe: 0, lookX: 0, lookY: 0, jump: true, sprint: false,
+    crouch: false, mine: false, place: false, interact: false,
+  };
+  for (let frame = 0; frame < 18; frame += 1) player.update(1 / 30, input, world, undefined, false, true);
+  assert.ok(player.position.y > 45, `creative flight failed to ascend; y=${player.position.y}`);
+  assert.equal(player.grounded, false);
+  const peak = player.position.y;
+  const hover = { ...input, jump: false };
+  for (let frame = 0; frame < 20; frame += 1) player.update(1 / 30, hover, world, undefined, false, true);
+  assert.ok(Math.abs(player.position.y - peak) < 0.5, "flight should settle into a stable hover");
+});
+
+test("crouching holds a grounded player at a block edge", () => {
+  const world = new VoxelWorld("crouch ledge bench");
+  for (let x = -2; x <= 4; x += 1) {
+    for (let z = -1; z <= 1; z += 1) {
+      for (let y = 38; y <= 45; y += 1) world.setBlock(x, y, z, BlockId.Air);
+      if (x <= 0) world.setBlock(x, 40, z, BlockId.Stone);
+    }
+  }
+  const baseInput: InputFrame = {
+    forward: 0, strafe: 0, lookX: 0, lookY: 0, jump: false, sprint: false,
+    crouch: false, mine: false, place: false, interact: false,
+  };
+  const crouched = new PlayerPhysics({ x: 0.5, y: 41.01, z: 0.5 });
+  crouched.yaw = -Math.PI / 2;
+  for (let frame = 0; frame < 3; frame += 1) crouched.update(1 / 30, baseInput, world);
+  for (let frame = 0; frame < 45; frame += 1) crouched.update(1 / 30, { ...baseInput, forward: 1, crouch: true }, world);
+  assert.ok(crouched.position.x <= 1.32, `crouching crossed the ledge at x=${crouched.position.x}`);
+  assert.ok(crouched.position.y > 40.9, "crouching player fell from the ledge");
+
+  const walker = new PlayerPhysics({ x: 0.5, y: 41.01, z: 0.5 });
+  walker.yaw = -Math.PI / 2;
+  for (let frame = 0; frame < 45; frame += 1) walker.update(1 / 30, { ...baseInput, forward: 1 }, world);
+  assert.ok(walker.position.x > 1.45 && walker.position.y < 40.8, "an uncrouched player should be able to leave and fall from the ledge");
+});
+
+test("every inventory item has a deterministic villager sale value", () => {
+  for (const item of ALL_ITEMS) assert.ok(itemSalePoints(item) > 0, `${item} should be sellable`);
+  assert.equal(itemSalePoints("currency:frontier-mark"), 20);
+  assert.ok(itemSalePoints("part:diamond") > itemSalePoints(itemForBlock(BlockId.Soil)) * 20);
+  assert.ok(itemSalePoints(itemForBlock(BlockId.PulseRepeater)) > itemSalePoints(itemForBlock(BlockId.Stone)));
+});
+
+test("automatic multiplayer uses normalized human-readable room codes", () => {
+  assert.equal(normalizeRoomCode(" ember otter 4827 "), "EMBER-OTTER-4827");
+  assert.match(generateRoomCode(), /^[A-Z]+-[A-Z]+-\d{4}$/);
+});
+
 test("Wayfarer ruins generate deterministically with an interactable Relic Cache", () => {
   const first = new VoxelWorld("ruin survey");
   let cache: { x: number; y: number; z: number } | null = null;
@@ -227,7 +351,7 @@ test("Wayfarer ruins generate deterministically with an interactable Relic Cache
       const index = blocks.indexOf(BlockId.RelicCache);
       if (index < 0) continue;
       const layer = CHUNK_SIZE * CHUNK_SIZE;
-      const y = Math.floor(index / layer);
+      const y = WORLD_MIN_Y + Math.floor(index / layer);
       const local = index % layer;
       cache = {
         x: cx * CHUNK_SIZE + (local % CHUNK_SIZE),
@@ -291,9 +415,7 @@ test("swimming is slower than land movement and supports deliberate ascent", () 
   const waterWorld = new VoxelWorld("swim bench");
   const landWorld = new VoxelWorld("land bench");
   for (const world of [waterWorld, landWorld]) {
-    for (let x = -3; x <= 22; x += 1) {
-      for (let z = -3; z <= 3; z += 1) world.setBlock(x, 40, z, BlockId.Stone);
-    }
+    prepareArena(world, -3, 22, -3, 3);
   }
   for (let x = -3; x <= 22; x += 1) {
     for (let z = -3; z <= 3; z += 1) {
@@ -322,9 +444,9 @@ test("swimming is slower than land movement and supports deliberate ascent", () 
 
 test("creatures remain buoyant and collision-safe while crossing water", () => {
   const world = new VoxelWorld("aquatic mob bench");
+  prepareArena(world, -4, 10, -3, 3);
   for (let x = -4; x <= 10; x += 1) {
     for (let z = -3; z <= 3; z += 1) {
-      world.setBlock(x, 40, z, BlockId.Stone);
       for (let y = 41; y <= 43; y += 1) world.setBlock(x, y, z, BlockId.Water);
     }
   }
@@ -351,6 +473,7 @@ test("plants, circuits, lights, logistics, and builders use distinct partial sha
   assert.equal(BLOCKS[BlockId.PulseRepeater].shape, "plate");
   assert.equal(BLOCKS[BlockId.InverterTorch].shape, "torch");
   assert.equal(BLOCKS[BlockId.Hopper].shape, "hopper");
+  assert.equal(BLOCKS[BlockId.Observer].shape, "observer");
   assert.equal(BLOCKS[BlockId.Ram].shape, "piston");
   assert.equal(BLOCKS[BlockId.StoneSlab].collisionHeight, 0.5);
   assert.equal(BLOCKS[BlockId.StarBloom].solid, false);
@@ -376,8 +499,8 @@ test("expanded cave fields create substantial deterministic underground voids", 
   const samples: BlockId[] = [];
   for (let x = -16; x < 16; x += 1) {
     for (let z = -16; z < 16; z += 1) {
-      const ceiling = Math.max(4, first.getHeight(x, z) - 3);
-      for (let y = 3; y < ceiling; y += 1) {
+      const ceiling = Math.max(WORLD_MIN_Y + 5, first.getHeight(x, z) - 3);
+      for (let y = WORLD_MIN_Y + 3; y < ceiling; y += 1) {
         const id = first.getBlock(x, y, z);
         if (id === BlockId.Air || id === BlockId.Water) undergroundVoids += 1;
         if ((x + z + y) % 17 === 0) samples.push(id);
@@ -388,8 +511,8 @@ test("expanded cave fields create substantial deterministic underground voids", 
   let cursor = 0;
   for (let x = -16; x < 16; x += 1) {
     for (let z = -16; z < 16; z += 1) {
-      const ceiling = Math.max(4, second.getHeight(x, z) - 3);
-      for (let y = 3; y < ceiling; y += 1) {
+      const ceiling = Math.max(WORLD_MIN_Y + 5, second.getHeight(x, z) - 3);
+      for (let y = WORLD_MIN_Y + 3; y < ceiling; y += 1) {
         if ((x + z + y) % 17 === 0) assert.equal(second.getBlock(x, y, z), samples[cursor++]);
       }
     }
@@ -414,6 +537,12 @@ test("directional repeaters delay, restore, and emit only toward their facing si
 
 test("rams push block lines and collector funnels transfer physical drops", () => {
   const world = new VoxelWorld("logistics bench");
+  for (let x = -1; x <= 6; x += 1) {
+    for (let z = -4; z <= 1; z += 1) {
+      world.setBlock(x, 42, z, BlockId.Air);
+      world.setBlock(x, 43, z, BlockId.Air);
+    }
+  }
   world.setBlock(0, 42, 0, BlockId.Ram);
   world.setBlock(1, 42, 0, BlockId.Toggle);
   world.setBlock(0, 42, -1, BlockId.Stone);
@@ -447,9 +576,9 @@ test("the Emberwood tool tier establishes early survival progression", () => {
 
 test("surface buoyancy and shore assist let a swimmer leave deep water without jumping", () => {
   const world = new VoxelWorld("shore exit bench");
+  prepareArena(world, -4, 7, -3, 3, 39, 5);
   for (let x = -4; x <= 7; x += 1) {
     for (let z = -3; z <= 3; z += 1) {
-      world.setBlock(x, 39, z, BlockId.Stone);
       if (x < 2) {
         world.setBlock(x, 40, z, BlockId.Water);
         world.setBlock(x, 41, z, BlockId.Water);
@@ -477,9 +606,7 @@ test("surface buoyancy and shore assist let a swimmer leave deep water without j
 
 test("creatures traverse one-block rises with a continuous jump arc", () => {
   const world = new VoxelWorld("creature jump bench");
-  for (let x = -2; x <= 8; x += 1) {
-    for (let z = -2; z <= 2; z += 1) world.setBlock(x, 40, z, BlockId.Stone);
-  }
+  prepareArena(world, -2, 8, -2, 2);
   world.setBlock(2, 41, 0, BlockId.Stone);
   const mob: MobState = {
     id: "jumping-grazer",
@@ -514,7 +641,7 @@ test("caves contain rare clustered veins while stone and deep slate dominate", (
   for (let x = -16; x <= 16; x += 1) {
     for (let z = -16; z <= 16; z += 1) {
       const ceiling = world.getHeight(x, z) - 3;
-      for (let y = 1; y < ceiling; y += 1) {
+      for (let y = WORLD_MIN_Y + 2; y < ceiling; y += 1) {
         const id = world.getBlock(x, y, z);
         if (id !== BlockId.Air && id !== BlockId.Water) solidCount += 1;
         if (id === BlockId.Stone || id === BlockId.Slate) rockCount += 1;
@@ -550,8 +677,8 @@ test("a Hearth Furnace consumes coal and smelts raw ore into ingots", () => {
 test("villages generate deterministically with homes, markets, and resident Wayfarers", () => {
   const first = new VoxelWorld("v4 survey");
   let village: { cx: number; cz: number } | null = null;
-  for (let cx = -10; cx <= 10 && !village; cx += 1) {
-    for (let cz = -10; cz <= 10 && !village; cz += 1) {
+  for (let cx = -24; cx <= 24 && !village; cx += 1) {
+    for (let cz = -24; cz <= 24 && !village; cz += 1) {
       if (!isVillageChunk(cx, cz, first.seed)) continue;
       if (first.getChunk(cx, cz).blocks.includes(BlockId.TradePost)) village = { cx, cz };
     }

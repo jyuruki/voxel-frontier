@@ -262,7 +262,7 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
     solid: false, hardness: 0.15, shape: "torch", automation: "logic", emissive: 0.62,
   }),
   [BlockId.Observer]: block(BlockId.Observer, "Change Observer", "#68777d", "Pulses when the block in front of its sensing face changes.", {
-    hardness: 1.7, automation: "logic",
+    hardness: 1.7, shape: "observer", automation: "logic",
   }),
   [BlockId.AdhesiveRam]: block(BlockId.AdhesiveRam, "Adhesive Ram", "#65715f", "Pushes a block line and pulls the nearest block back on retraction.", {
     hardness: 2.2, shape: "piston", automation: "machine",
@@ -775,6 +775,136 @@ function paintTile(
   context.putImageData(image, column * TILE_SIZE, row * TILE_SIZE);
 }
 
+function paintAutomationItemIcon(
+  context: CanvasRenderingContext2D,
+  tile: HTMLCanvasElement,
+  blockId: BlockId,
+): boolean {
+  const definition = BLOCKS[blockId];
+  if (!definition.automation) return false;
+  const shape = definition.shape ?? "cube";
+  context.save();
+  context.lineCap = "square";
+  context.lineJoin = "miter";
+
+  if (shape === "wire") {
+    context.strokeStyle = "#351d22";
+    context.lineWidth = 9;
+    context.beginPath();
+    context.moveTo(5, 24); context.lineTo(43, 24);
+    context.moveTo(24, 5); context.lineTo(24, 43);
+    context.stroke();
+    context.strokeStyle = definition.color;
+    context.lineWidth = 5;
+    context.stroke();
+    context.fillStyle = "#ff9a7c";
+    context.fillRect(20, 20, 8, 8);
+    context.restore();
+    return true;
+  }
+
+  if (shape === "torch") {
+    context.fillStyle = "#38252a";
+    context.fillRect(20, 14, 10, 31);
+    context.fillStyle = definition.color;
+    context.fillRect(22, 15, 6, 29);
+    context.fillStyle = "#ffcf76";
+    context.beginPath(); context.arc(25, 12, 9, 0, Math.PI * 2); context.fill();
+    context.fillStyle = "#ff6a55";
+    context.beginPath(); context.arc(25, 12, 5, 0, Math.PI * 2); context.fill();
+    context.restore();
+    return true;
+  }
+
+  const low = shape === "plate";
+  context.fillStyle = "#182226";
+  context.beginPath();
+  context.moveTo(4, low ? 18 : 12);
+  context.lineTo(24, low ? 7 : 2);
+  context.lineTo(44, low ? 18 : 12);
+  context.lineTo(44, low ? 33 : 39);
+  context.lineTo(24, 46);
+  context.lineTo(4, low ? 33 : 39);
+  context.closePath();
+  context.fill();
+  context.save();
+  context.beginPath();
+  context.moveTo(7, low ? 19 : 13);
+  context.lineTo(24, low ? 10 : 5);
+  context.lineTo(41, low ? 19 : 13);
+  context.lineTo(24, low ? 31 : 24);
+  context.closePath();
+  context.clip();
+  context.drawImage(tile, 4, 4, 40, 36);
+  context.restore();
+  if (!low) {
+    context.fillStyle = "rgba(4,10,13,.43)";
+    context.beginPath(); context.moveTo(7,13); context.lineTo(24,24); context.lineTo(24,43); context.lineTo(7,37); context.closePath(); context.fill();
+    context.fillStyle = "rgba(1,5,8,.6)";
+    context.beginPath(); context.moveTo(41,13); context.lineTo(24,24); context.lineTo(24,43); context.lineTo(41,37); context.closePath(); context.fill();
+  }
+
+  const line = (color = "#d8fff5", width = 3) => {
+    context.strokeStyle = color;
+    context.lineWidth = width;
+  };
+  const node = (x: number, y: number, color = "#ff825f", radius = 3) => {
+    context.fillStyle = "#172125";
+    context.beginPath(); context.arc(x, y, radius + 1.5, 0, Math.PI * 2); context.fill();
+    context.fillStyle = color;
+    context.beginPath(); context.arc(x, y, radius, 0, Math.PI * 2); context.fill();
+  };
+  context.font = "900 16px ui-monospace, monospace";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+
+  switch (blockId) {
+    case BlockId.Toggle:
+      line("#f4c56f", 4); context.beginPath(); context.moveTo(18,29); context.lineTo(31,15); context.stroke(); node(16,31); node(33,14, "#74eee1"); break;
+    case BlockId.FluxLamp:
+    case BlockId.LatchLamp:
+      context.fillStyle = blockId === BlockId.LatchLamp ? "#ffe374" : "#fff0a1"; context.fillRect(15,12,18,18); line("#59471f",2); context.strokeRect(15,12,18,18); context.fillStyle = "#604b25"; context.fillText(blockId === BlockId.LatchLamp ? "L" : "✦",24,22); break;
+    case BlockId.ThermalGenerator:
+    case BlockId.ArcFurnace:
+    case BlockId.HearthFurnace:
+      context.fillStyle = "#ff8a4c"; context.beginPath(); context.moveTo(24,10); context.quadraticCurveTo(36,22,25,34); context.quadraticCurveTo(12,27,24,10); context.fill(); context.fillStyle="#ffe17e"; context.beginPath(); context.moveTo(24,19); context.quadraticCurveTo(29,25,23,31); context.quadraticCurveTo(18,26,24,19); context.fill(); break;
+    case BlockId.FluxCell:
+      context.fillStyle="#25383c"; context.fillRect(13,10,22,25); context.fillStyle="#78eee3"; context.fillRect(17,14,14,17); context.fillStyle="#f6cc63"; context.fillRect(20,7,8,4); context.fillStyle="#173438"; context.fillRect(22,16,4,7); context.fillRect(19,19,10,3); break;
+    case BlockId.BoreDrill:
+      context.fillStyle="#d9e0dc"; context.beginPath(); context.moveTo(24,39); context.lineTo(14,17); context.lineTo(34,17); context.closePath(); context.fill(); line("#56666b",2); context.beginPath(); context.moveTo(17,22); context.lineTo(31,22); context.moveTo(20,28); context.lineTo(28,28); context.stroke(); break;
+    case BlockId.Conveyor:
+      line("#80e9dd",3); context.beginPath(); context.moveTo(10,26); context.lineTo(31,15); context.moveTo(28,12); context.lineTo(34,14); context.lineTo(32,21); context.moveTo(16,33); context.lineTo(37,22); context.stroke(); break;
+    case BlockId.Fabricator:
+      node(24,22,"#f4bf67",7); context.fillStyle="#233238"; context.beginPath(); context.arc(24,22,3,0,Math.PI*2); context.fill(); for(let a=0;a<8;a+=1){const angle=a*Math.PI/4; context.save(); context.translate(24+Math.cos(angle)*9,22+Math.sin(angle)*9); context.rotate(angle); context.fillStyle="#f4bf67"; context.fillRect(-2,-4,4,8); context.restore();} break;
+    case BlockId.Ram:
+    case BlockId.AdhesiveRam:
+      line(blockId === BlockId.AdhesiveRam ? "#9ee37a" : "#d7d9d4",5); context.beginPath(); context.moveTo(10,23); context.lineTo(33,23); context.stroke(); context.fillStyle=blockId === BlockId.AdhesiveRam ? "#75b65a" : "#b9a37d"; context.fillRect(31,14,7,18); break;
+    case BlockId.Hopper:
+      context.fillStyle="#b6c0bf"; context.beginPath(); context.moveTo(10,12); context.lineTo(38,12); context.lineTo(29,27); context.lineTo(29,37); context.lineTo(20,37); context.lineTo(20,27); context.closePath(); context.fill(); line("#26363a",2); context.stroke(); context.fillStyle="#75e0d5"; context.beginPath(); context.moveTo(29,32); context.lineTo(39,32); context.lineTo(35,28); context.moveTo(39,32); context.lineTo(35,36); context.stroke(); break;
+    case BlockId.Observer:
+      context.fillStyle="#d8e6e4"; context.beginPath(); context.ellipse(24,21,12,8,0,0,Math.PI*2); context.fill(); node(24,21,"#26363d",5); node(24,21,"#79f3e5",2); line("#ff795e",3); context.beginPath(); context.moveTo(12,34); context.lineTo(35,34); context.lineTo(30,29); context.moveTo(35,34); context.lineTo(30,39); context.stroke(); break;
+    case BlockId.PulseRepeater:
+    case BlockId.DelayGate:
+      line("#ff8b68",3); context.beginPath(); context.moveTo(10,23); context.lineTo(38,23); context.lineTo(33,18); context.moveTo(38,23); context.lineTo(33,28); context.stroke(); node(18,18,"#ffe18a"); node(29,28,"#ffe18a"); break;
+    case BlockId.FluxComparator:
+      node(15,18,"#ffe18a"); node(33,18,"#ffe18a"); node(24,29,"#ff755d"); line("#8ff4e8",2); context.beginPath(); context.moveTo(15,18); context.lineTo(24,29); context.lineTo(33,18); context.stroke(); break;
+    case BlockId.ProximitySensor:
+      node(17,28,"#8ff4e8",2); line("#b8fff7",2); context.beginPath(); context.arc(17,28,8,-1.3,.15); context.arc(17,28,14,-1.3,.15); context.stroke(); break;
+    case BlockId.AndGate: context.fillStyle="#ddfff8"; context.fillText("&",24,22); break;
+    case BlockId.OrGate: context.fillStyle="#ddfff8"; context.fillText("≥",24,22); break;
+    case BlockId.NotGate: context.fillStyle="#ddfff8"; context.fillText("!",24,22); node(34,22,"#ff8066",2); break;
+    case BlockId.PulseButton: node(24,22,"#f1c37d",7); break;
+    case BlockId.PressurePlate: line("#f2d39b",2); context.strokeRect(12,13,24,17); context.fillStyle="#f2d39b"; context.fillText("↓",24,21); break;
+    case BlockId.DaylightSensor: context.fillStyle="#ffd86c"; context.beginPath(); context.arc(24,21,7,0,Math.PI*2); context.fill(); line("#ffd86c",2); for(let a=0;a<8;a+=1){const angle=a*Math.PI/4; context.beginPath(); context.moveTo(24+Math.cos(angle)*10,21+Math.sin(angle)*10); context.lineTo(24+Math.cos(angle)*14,21+Math.sin(angle)*14); context.stroke();} break;
+    case BlockId.TargetBlock: line("#fff0d6",3); context.beginPath(); context.arc(24,22,12,0,Math.PI*2); context.arc(24,22,6,0,Math.PI*2); context.stroke(); node(24,22,"#ff6d56",2); break;
+    case BlockId.NoteEmitter: context.fillStyle="#fff0aa"; context.font="900 22px serif"; context.fillText("♪",24,22); break;
+    default:
+      context.fillStyle="#d8fff5"; context.fillText("◆",24,22); break;
+  }
+  context.restore();
+  return true;
+}
+
 export function paintBlockItemIcon(canvas: HTMLCanvasElement, blockId: BlockId): void {
   const tile = document.createElement("canvas");
   tile.width = TILE_SIZE;
@@ -788,6 +918,8 @@ export function paintBlockItemIcon(canvas: HTMLCanvasElement, blockId: BlockId):
   canvas.height = 48;
   context.clearRect(0, 0, 48, 48);
   context.imageSmoothingEnabled = false;
+
+  if (paintAutomationItemIcon(context, tile, blockId)) return;
 
   const shape = BLOCKS[blockId].shape ?? "cube";
   if (shape === "cross") {

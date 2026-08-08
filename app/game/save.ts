@@ -1,9 +1,48 @@
 import { strFromU8, strToU8, zlibSync, unzlibSync } from "fflate";
 import { hashString } from "./prng";
-import { SAVE_VERSION, WorldSave } from "./types";
+import { SAVE_VERSION, WORLD_GENERATION_VERSION, WORLD_MAX_Y, WORLD_MIN_Y, WorldSave } from "./types";
+import { parseWorldKey, worldKey } from "./prng";
 
 export const LOCAL_SAVE_KEY = "voxel-frontier.save.v1";
 const MAX_KEY_LENGTH = 8_000_000;
+const LEGACY_Y_OFFSET = 46;
+
+function shiftPositionY<T extends { y: number }>(position: T): T {
+  return {
+    ...position,
+    y: Math.max(WORLD_MIN_Y + 1, Math.min(WORLD_MAX_Y - 2, position.y + LEGACY_Y_OFFSET)),
+  };
+}
+
+function shiftWorldKeyY(key: string): string {
+  const [x, y, z] = parseWorldKey(key);
+  return worldKey(x, Math.max(WORLD_MIN_Y + 1, Math.min(WORLD_MAX_Y - 1, y + LEGACY_Y_OFFSET)), z);
+}
+
+/** Lifts Version 5's 0…47 world state into the taller Version 6 terrain datum. */
+export function migrateWorldSave(save: WorldSave): WorldSave {
+  if ((save.generation ?? 1) >= WORLD_GENERATION_VERSION) return save;
+  return {
+    ...save,
+    generation: WORLD_GENERATION_VERSION,
+    player: {
+      ...save.player,
+      position: shiftPositionY(save.player.position),
+      tradeCredit: save.player.tradeCredit ?? 0,
+    },
+    mutations: save.mutations
+      .map(([x, y, z, id]) => [x, y + LEGACY_Y_OFFSET, z, id] as [number, number, number, typeof id])
+      .filter(([, y]) => y > WORLD_MIN_Y && y < WORLD_MAX_Y),
+    machines: save.machines.map(([key, state]) => [shiftWorldKeyY(key), state]),
+    drops: save.drops.map((drop) => ({ ...drop, position: shiftPositionY(drop.position) })),
+    mobs: save.mobs.map((mob) => ({
+      ...mob,
+      position: shiftPositionY(mob.position),
+      home: mob.home ? shiftPositionY(mob.home) : undefined,
+    })),
+    waterLevels: save.waterLevels?.map(([key, level]) => [shiftWorldKeyY(key), level]),
+  };
+}
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -74,7 +113,7 @@ export function decodeWorldKey(key: string): WorldSave {
     throw new Error("The world key contains invalid data.");
   }
   validateSave(parsed);
-  return parsed;
+  return migrateWorldSave(parsed);
 }
 
 export function saveLocally(save: WorldSave): string {

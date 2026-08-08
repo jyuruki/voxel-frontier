@@ -1,7 +1,10 @@
 export const CHUNK_SIZE = 16;
-export const WORLD_HEIGHT = 48;
-export const SEA_LEVEL = 18;
+export const WORLD_MIN_Y = -64;
+export const WORLD_MAX_Y = 320;
+export const WORLD_HEIGHT = WORLD_MAX_Y - WORLD_MIN_Y;
+export const SEA_LEVEL = 64;
 export const SAVE_VERSION = 1;
+export const WORLD_GENERATION_VERSION = 2;
 
 export type GameMode = "survival" | "creative";
 
@@ -228,6 +231,7 @@ export type MutationTuple = [number, number, number, BlockId];
 
 export interface WorldSave {
   version: number;
+  generation?: number;
   createdAt: number;
   seed: string;
   mode?: GameMode;
@@ -242,6 +246,7 @@ export interface WorldSave {
     hotbar: Array<ItemId | null>;
     inventorySlots?: InventoryLayout;
     selectedSlot: number;
+    tradeCredit?: number;
   };
   timeOfDay: number;
   dayCount?: number;
@@ -260,6 +265,7 @@ export type BlockShape =
   | "torch"
   | "rod"
   | "hopper"
+  | "observer"
   | "slab"
   | "stair"
   | "piston"
@@ -351,6 +357,8 @@ export interface HudState {
   networkStatus: string;
   objective: string;
   gameMode: GameMode;
+  flying: boolean;
+  critical: boolean;
   timeLabel: string;
   dayCount: number;
   targetedMob: { name: string; health: number; maxHealth: number } | null;
@@ -372,6 +380,10 @@ export interface PlayerSnapshot {
   yaw: number;
   pitch: number;
   color: string;
+  velocityY?: number;
+  grounded?: boolean;
+  swimming?: boolean;
+  flying?: boolean;
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {

@@ -1,4 +1,5 @@
 import { strFromU8, strToU8, zlibSync, unzlibSync } from "fflate";
+import { joinRoom, type MessageAction, type Room } from "trystero";
 import { BlockId, DroppedItemState, ItemId, MachineState, MobState, PlayerSnapshot, Vec3Data, WorldSave } from "./types";
 
 export type NetworkMessage =
@@ -10,6 +11,7 @@ export type NetworkMessage =
   | { type: "player"; player: PlayerSnapshot }
   | { type: "mob-state"; mobs: MobState[]; drops: DroppedItemState[]; timeOfDay: number; dayCount: number }
   | { type: "request-mob-hit"; mobId: string; item: ItemId | null }
+  | { type: "critical-hit"; mobId: string }
   | { type: "damage"; amount: number; source: string }
   | { type: "give-item"; item: ItemId; count: number }
   | { type: "request-sleep" }
@@ -22,6 +24,7 @@ type PeerRecord = {
   pc: RTCPeerConnection;
   channel?: RTCDataChannel;
   chunks: Map<string, { total: number; parts: string[] }>;
+  disconnectTimer?: number;
 };
 
 type InviteEnvelope = {
@@ -38,6 +41,40 @@ const ICE_SERVERS: RTCIceServer[] = [
 
 const NET_PREFIX = "VFNET1.";
 const CHUNK_LENGTH = 12_000;
+const DISCONNECT_GRACE_MS = 18_000;
+const ROOM_APP_ID = "io.github.jyuruki.voxel-frontier.v6";
+
+type RoomPacket =
+  | { kind: "hello"; role: "host" | "guest"; sessionId: string }
+  | { kind: "game"; message: NetworkMessage };
+
+const ROOM_ADJECTIVES = [
+  "AMBER", "BRAVE", "BRIGHT", "CALM", "COPPER", "EMBER", "FROST", "GOLDEN",
+  "HIDDEN", "LUNAR", "MISTY", "NIMBLE", "QUIET", "RED", "RIVER", "SOLAR",
+  "STAR", "STILL", "STORM", "SWIFT", "VERDANT", "WILD", "WINDY", "WOVEN",
+] as const;
+
+const ROOM_NOUNS = [
+  "BADGER", "BEACON", "BISON", "CEDAR", "COMET", "CRANE", "FALCON", "FOX",
+  "GECKO", "HERON", "ISLAND", "LANTERN", "LYNX", "MANTA", "OTTER", "OWL",
+  "PANDA", "PEAK", "PINE", "REEF", "RIVER", "SPARROW", "TIGER", "WHALE",
+] as const;
+
+export function normalizeRoomCode(value: string): string {
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
+export function generateRoomCode(): string {
+  const entropy = crypto.getRandomValues(new Uint32Array(3));
+  const adjective = ROOM_ADJECTIVES[entropy[0] % ROOM_ADJECTIVES.length];
+  const noun = ROOM_NOUNS[entropy[1] % ROOM_NOUNS.length];
+  return `${adjective}-${noun}-${String(entropy[2] % 10_000).padStart(4, "0")}`;
+}
 
 function encodeBytes(bytes: Uint8Array): string {
   let binary = "";
@@ -69,7 +106,7 @@ function decodeEnvelope(value: string): InviteEnvelope {
   }
 }
 
-function waitForIce(pc: RTCPeerConnection, timeout = 8000): Promise<void> {
+function waitForIce(pc: RTCPeerConnection, timeout = 15_000): Promise<void> {
   if (pc.iceGatheringState === "complete") return Promise.resolve();
   return new Promise((resolve) => {
     const timer = window.setTimeout(finish, timeout);
@@ -94,19 +131,64 @@ export class NetworkSession {
   readonly playerId = randomId("traveler");
   readonly sessionId = randomId("room");
   private readonly peers = new Map<string, PeerRecord>();
+  private room: Room | null = null;
+  private roomAction: MessageAction<string> | null = null;
+  private readonly roomPeers = new Set<string>();
+  private readonly acceptedRoomPeers = new Set<string>();
+  private readonly roomLeaveTimers = new Map<string, number>();
   private guestHostId: string | null = null;
+  private activeRoomCode: string | null = null;
   onMessage?: (message: NetworkMessage, peerId: string) => void;
   onStatus?: (status: string) => void;
+
+  get roomCode(): string | null {
+    return this.activeRoomCode;
+  }
+
+  private forgetManualPeer(peerId: string, status?: string): void {
+    const peer = this.peers.get(peerId);
+    if (!peer) return;
+    if (peer.disconnectTimer !== undefined) window.clearTimeout(peer.disconnectTimer);
+    this.peers.delete(peerId);
+    this.onMessage?.({ type: "peer-left", playerId: peerId }, peerId);
+    if (status) this.onStatus?.(status);
+  }
 
   private configurePeer(peerId: string, pc: RTCPeerConnection): PeerRecord {
     const peer: PeerRecord = { pc, chunks: new Map() };
     this.peers.set(peerId, peer);
     pc.addEventListener("connectionstatechange", () => {
-      if (pc.connectionState === "connected") this.onStatus?.(`Connected · ${this.connectedPeers} peer${this.connectedPeers === 1 ? "" : "s"}`);
-      if (["failed", "closed", "disconnected"].includes(pc.connectionState)) {
-        this.peers.delete(peerId);
-        this.onMessage?.({ type: "peer-left", playerId: peerId }, peerId);
-        this.onStatus?.(this.role === "host" ? `Hosting · ${this.connectedPeers} peers` : "Connection lost");
+      if (pc.connectionState === "connected") {
+        if (peer.disconnectTimer !== undefined) window.clearTimeout(peer.disconnectTimer);
+        peer.disconnectTimer = undefined;
+        this.onStatus?.(`Connected · ${this.connectedPeers} peer${this.connectedPeers === 1 ? "" : "s"}`);
+      } else if (pc.connectionState === "disconnected") {
+        if (peer.disconnectTimer !== undefined) return;
+        this.onStatus?.("Route interrupted · recovering…");
+        peer.disconnectTimer = window.setTimeout(() => {
+          peer.pc.close();
+          this.forgetManualPeer(
+            peerId,
+            this.role === "host" ? `Hosting · ${this.connectedPeers} peers` : "Connection lost",
+          );
+        }, DISCONNECT_GRACE_MS);
+      } else if (pc.connectionState === "failed") {
+        pc.restartIce();
+        this.onStatus?.("Direct route failed · retrying ICE…");
+        if (peer.disconnectTimer === undefined) {
+          peer.disconnectTimer = window.setTimeout(() => {
+            peer.pc.close();
+            this.forgetManualPeer(
+              peerId,
+              this.role === "host" ? `Hosting · ${this.connectedPeers} peers` : "Connection lost",
+            );
+          }, DISCONNECT_GRACE_MS);
+        }
+      } else if (pc.connectionState === "closed") {
+        this.forgetManualPeer(
+          peerId,
+          this.role === "host" ? `Hosting · ${this.connectedPeers} peers` : "Connection closed",
+        );
       }
     });
     return peer;
@@ -122,15 +204,117 @@ export class NetworkSession {
       if (this.role === "guest") this.send({ type: "request-snapshot" });
     });
     channel.addEventListener("message", (event) => this.receive(peerId, String(event.data)));
-    channel.addEventListener("close", () => this.onStatus?.("Connection closed"));
+    channel.addEventListener("close", () => {
+      if (peer.pc.connectionState === "closed" || peer.pc.connectionState === "failed") {
+        this.forgetManualPeer(
+          peerId,
+          this.role === "host" ? `Hosting · ${this.connectedPeers} peers` : "Connection closed",
+        );
+      }
+    });
   }
 
   get connectedPeers(): number {
-    return Array.from(this.peers.values()).filter((peer) => peer.channel?.readyState === "open").length;
+    return this.acceptedRoomPeers.size
+      + Array.from(this.peers.values()).filter((peer) => peer.channel?.readyState === "open").length;
+  }
+
+  private roomStatus(): string {
+    if (this.connectedPeers > 0) return `Connected · ${this.connectedPeers} peer${this.connectedPeers === 1 ? "" : "s"}`;
+    if (this.role === "host") return `Room ${this.activeRoomCode ?? ""} · waiting for players`;
+    return `Joining ${this.activeRoomCode ?? "room"}…`;
+  }
+
+  private sendRoomPacket(packet: RoomPacket, target: string | string[]): void {
+    if (!this.roomAction || (Array.isArray(target) && target.length === 0)) return;
+    void this.roomAction.send(JSON.stringify(packet), { target }).catch(() => {
+      this.onStatus?.("Room route interrupted · reconnecting…");
+    });
+  }
+
+  private receiveRoomPacket(raw: string, peerId: string): void {
+    try {
+      const packet = JSON.parse(raw) as RoomPacket;
+      if (packet.kind === "hello") {
+        if (this.role === "host" && packet.role === "guest") {
+          this.acceptedRoomPeers.add(peerId);
+          this.sendRoomPacket({ kind: "hello", role: "host", sessionId: this.sessionId }, peerId);
+          this.onStatus?.(this.roomStatus());
+        } else if (this.role === "guest" && packet.role === "host" && (!this.guestHostId || this.guestHostId === peerId)) {
+          const firstConnection = !this.acceptedRoomPeers.has(peerId);
+          this.guestHostId = peerId;
+          this.acceptedRoomPeers.add(peerId);
+          this.onStatus?.(this.roomStatus());
+          if (firstConnection) this.sendRoomPacket({ kind: "game", message: { type: "request-snapshot" } }, peerId);
+        }
+        return;
+      }
+      if (packet.kind !== "game" || !this.acceptedRoomPeers.has(peerId)) return;
+      this.onMessage?.(packet.message, peerId);
+    } catch {
+      this.onStatus?.("Ignored a damaged room packet");
+    }
+  }
+
+  private enterAutomaticRoom(codeValue: string, role: "host" | "guest"): string {
+    if (typeof RTCPeerConnection === "undefined") throw new Error("WebRTC is unavailable in this browser.");
+    const code = normalizeRoomCode(codeValue);
+    if (code.length < 6) throw new Error("Enter the complete room code.");
+    this.close(false);
+    this.role = role;
+    this.activeRoomCode = code;
+    const room = joinRoom({
+      appId: ROOM_APP_ID,
+      password: `voxel-frontier:${code}`,
+      trickleIce: true,
+      relayConfig: { redundancy: 3 },
+      rtcConfig: { iceServers: ICE_SERVERS },
+    }, `vf6-${code.toLowerCase()}`, {
+      onJoinError: ({ error }) => this.onStatus?.(`Room discovery failed · ${error}`),
+    });
+    this.room = room;
+    this.roomAction = room.makeAction<string>("frontier-v6");
+    this.roomAction.onMessage = (data, { peerId }) => {
+      if (this.room === room) this.receiveRoomPacket(data, peerId);
+    };
+    room.onPeerJoin = (peerId) => {
+      if (this.room !== room) return;
+      const leaveTimer = this.roomLeaveTimers.get(peerId);
+      if (leaveTimer !== undefined) window.clearTimeout(leaveTimer);
+      this.roomLeaveTimers.delete(peerId);
+      this.roomPeers.add(peerId);
+      this.sendRoomPacket({ kind: "hello", role, sessionId: this.sessionId }, peerId);
+      this.onStatus?.(this.roomStatus());
+    };
+    room.onPeerLeave = (peerId) => {
+      if (this.room !== room) return;
+      this.roomPeers.delete(peerId);
+      if (this.roomLeaveTimers.has(peerId)) return;
+      this.onStatus?.("Peer route interrupted · allowing time to reconnect…");
+      const timer = window.setTimeout(() => {
+        this.roomLeaveTimers.delete(peerId);
+        const wasAccepted = this.acceptedRoomPeers.delete(peerId);
+        if (this.guestHostId === peerId) this.guestHostId = null;
+        if (wasAccepted) this.onMessage?.({ type: "peer-left", playerId: peerId }, peerId);
+        this.onStatus?.(this.roomStatus());
+      }, DISCONNECT_GRACE_MS);
+      this.roomLeaveTimers.set(peerId, timer);
+    };
+    this.onStatus?.(this.roomStatus());
+    return code;
+  }
+
+  hostRoom(code = generateRoomCode()): string {
+    return this.enterAutomaticRoom(code, "host");
+  }
+
+  joinRoomCode(code: string): string {
+    return this.enterAutomaticRoom(code, "guest");
   }
 
   async createHostInvite(): Promise<string> {
     if (typeof RTCPeerConnection === "undefined") throw new Error("WebRTC is unavailable in this browser.");
+    if (this.room || this.role === "guest") this.close(false);
     this.role = "host";
     const peerId = randomId("guest");
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
@@ -177,6 +361,7 @@ export class NetworkSession {
   async acceptAnswer(answerKey: string): Promise<void> {
     const answer = decodeEnvelope(answerKey);
     if (answer.kind !== "answer") throw new Error("Paste the guest's answer key here.");
+    if (answer.sessionId !== this.sessionId) throw new Error("That answer belongs to a different room session.");
     const peer = this.peers.get(answer.peerId);
     if (!peer) throw new Error("This answer belongs to an expired invite. Create a new invite.");
     await peer.pc.setRemoteDescription(answer.sdp);
@@ -203,6 +388,12 @@ export class NetworkSession {
   }
 
   send(message: NetworkMessage, targetPeerId?: string): void {
+    if (this.roomAction) {
+      const targets = targetPeerId
+        ? this.acceptedRoomPeers.has(targetPeerId) ? [targetPeerId] : []
+        : Array.from(this.acceptedRoomPeers);
+      this.sendRoomPacket({ kind: "game", message }, targets);
+    }
     const serialized = JSON.stringify(message);
     if (targetPeerId) {
       const peer = this.peers.get(targetPeerId);
@@ -247,14 +438,24 @@ export class NetworkSession {
     }
   }
 
-  close(): void {
+  close(emitStatus = true): void {
+    const room = this.room;
+    this.room = null;
+    this.roomAction = null;
+    this.roomPeers.clear();
+    this.acceptedRoomPeers.clear();
+    for (const timer of this.roomLeaveTimers.values()) window.clearTimeout(timer);
+    this.roomLeaveTimers.clear();
+    this.activeRoomCode = null;
+    if (room) void room.leave();
     for (const peer of this.peers.values()) {
+      if (peer.disconnectTimer !== undefined) window.clearTimeout(peer.disconnectTimer);
       peer.channel?.close();
       peer.pc.close();
     }
     this.peers.clear();
     this.role = "offline";
     this.guestHostId = null;
-    this.onStatus?.("Offline");
+    if (emitStatus) this.onStatus?.("Offline");
   }
 }

@@ -1,5 +1,5 @@
 import { BLOCKS, itemForBlock } from "./blocks";
-import { BlockId, DroppedItemState, ItemId, MachineState, Vec3Data } from "./types";
+import { BlockId, DroppedItemState, ItemId, MachineState, Vec3Data, WORLD_MIN_Y } from "./types";
 import { parseWorldKey, worldKey } from "./prng";
 import { VoxelWorld } from "./world";
 
@@ -316,7 +316,7 @@ function runDrill(
   state.progress = 0;
   const [x, y, z] = parseWorldKey(key);
   let targetY = y - 1;
-  while (targetY > 0 && world.getBlock(x, targetY, z) === BlockId.Air) targetY -= 1;
+  while (targetY > WORLD_MIN_Y && world.getBlock(x, targetY, z) === BlockId.Air) targetY -= 1;
   const id = world.getBlock(x, targetY, z);
   if (id === BlockId.Bedrock || id === BlockId.Air || !BLOCKS[id].collectible) return;
   world.setBlock(x, targetY, z, BlockId.Air);

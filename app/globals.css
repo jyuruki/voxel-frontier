@@ -1195,6 +1195,21 @@ kbd {
 .network-steps h3 { font-size: .85rem; }
 .network-steps p { margin-top: 3px; color: #91aaa5; font-size: .67rem; line-height: 1.45; }
 .step-number { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; color: var(--ink); background: var(--orange); font-size: .7rem; font-weight: 900; }
+.quick-room { display: grid; gap: 13px; padding: 17px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.025); }
+.quick-room__copy { display: grid; grid-template-columns: 35px 1fr; align-items: center; gap: 11px; }
+.quick-room__copy h3, .quick-room__copy p { margin: 0; }
+.quick-room__copy h3 { font-size: .84rem; }
+.quick-room__copy p { margin-top: 3px; color: #91aaa5; font-size: .67rem; line-height: 1.45; }
+.room-code-card { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 5px 12px; padding: 15px; border: 1px solid rgba(230,184,88,.3); border-radius: 8px; background: rgba(230,184,88,.07); }
+.room-code-card small { grid-column: 1; color: var(--gold); font-size: .53rem; font-weight: 950; letter-spacing: .13em; }
+.room-code-card strong { grid-column: 1; color: #fff0b9; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: clamp(1rem, 3vw, 1.5rem); letter-spacing: .08em; }
+.room-code-card button { grid-column: 2; grid-row: 1 / span 2; }
+.room-code-entry { display: grid; grid-template-columns: 1fr auto; gap: 9px; }
+.room-code-entry input { min-height: 48px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9rem; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
+.network-manual { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 7px; background: rgba(255,255,255,.02); }
+.network-manual > summary { color: #a8bcb7; cursor: pointer; font-size: .66rem; font-weight: 850; }
+.network-manual > p { color: #819b96; font-size: .62rem; line-height: 1.45; }
+.network-manual .network-steps { margin-top: 10px; }
 .network-status-line { display: flex; align-items: center; gap: 8px; margin: 17px 0 0; padding-top: 13px; border-top: 1px solid var(--line); color: #9db3ae; font-size: .68rem; font-weight: 800; }
 
 .guide-grid {
@@ -1239,6 +1254,25 @@ kbd {
 .transfer-grid section > button span { font-size: .67rem; }
 .transfer-grid section > button em { color: var(--teal-bright); font-size: .65rem; font-style: normal; font-weight: 900; }
 
+.merchant-sell-workspace { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(190px, .42fr); gap: 14px; margin: 14px 0 18px; }
+.merchant-sell-workspace > div:first-child { padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: rgba(4,17,20,.32); }
+.merchant-sell-workspace header, .merchant-buy-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
+.merchant-sell-workspace header strong, .merchant-buy-heading strong { color: var(--paper); font-size: .72rem; }
+.merchant-sell-workspace header span, .merchant-buy-heading span { color: var(--muted); font-size: .58rem; }
+.merchant-inventory { display: grid; grid-template-columns: repeat(9, minmax(28px, 1fr)); gap: 4px; }
+.merchant-inventory > button { position: relative; aspect-ratio: 1; min-width: 0; padding: 1px; overflow: hidden; border: 1px solid rgba(255,255,255,.12); border-radius: 4px; background: rgba(255,255,255,.035); }
+.merchant-inventory > button:nth-child(n+28) { border-color: rgba(219,177,80,.28); background: rgba(219,177,80,.055); }
+.merchant-inventory > button.selected { border-color: var(--teal-bright); box-shadow: inset 0 0 0 1px var(--teal-bright), 0 0 10px rgba(86,203,193,.22); }
+.merchant-inventory .item-icon { width: 100%; height: 100%; }
+.merchant-inventory .item-icon__count { right: 1px; bottom: 0; font-size: .45rem; }
+.merchant-sell-tray { display: grid; place-items: center; align-content: center; gap: 6px; min-height: 178px; padding: 14px; border: 2px dashed rgba(255,255,255,.17); border-radius: 9px; color: var(--muted); background: rgba(255,255,255,.025); text-align: center; transition: border-color .16s ease, background .16s ease; }
+.merchant-sell-tray.ready { border-color: rgba(86,203,193,.58); color: var(--paper); background: rgba(86,203,193,.055); }
+.merchant-sell-tray__mark { color: var(--gold); font-size: 1.6rem; line-height: 1; }
+.merchant-sell-tray strong { font-size: .7rem; }
+.merchant-sell-tray small { min-height: 2.4em; color: #9db1ad; font-size: .56rem; line-height: 1.35; }
+.merchant-sell-tray button { margin-top: 3px; }
+.merchant-buy-heading { padding-top: 3px; border-top: 1px solid var(--line); }
+.merchant-buy-heading strong, .merchant-buy-heading span { margin-top: 12px; }
 .trade-list { display: grid; gap: 9px; }
 .trade-list article { display: grid; grid-template-columns: minmax(150px, .8fr) 28px minmax(150px, .8fr) minmax(170px, 1.2fr) auto; align-items: center; gap: 10px; padding: 11px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.025); }
 .trade-list__item { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -1273,6 +1307,31 @@ kbd {
 }
 
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, -7px); } }
+
+.critical-hit {
+  position: fixed;
+  z-index: 24;
+  top: 42%;
+  left: 50%;
+  padding: 7px 13px;
+  transform: translate(-50%, -50%) rotate(-4deg);
+  border: 2px solid rgba(255, 247, 190, .88);
+  border-radius: 5px;
+  color: #fff7be;
+  background: rgba(136, 42, 35, .82);
+  box-shadow: 0 0 22px rgba(255, 105, 68, .72);
+  font-size: clamp(.9rem, 2.8vw, 1.35rem);
+  font-weight: 1000;
+  letter-spacing: .13em;
+  pointer-events: none;
+  animation: critical-pop .52s ease-out both;
+}
+
+@keyframes critical-pop {
+  0% { opacity: 0; transform: translate(-50%, -35%) rotate(-7deg) scale(.5); }
+  24% { opacity: 1; transform: translate(-50%, -50%) rotate(-4deg) scale(1.18); }
+  100% { opacity: 0; transform: translate(-50%, -65%) rotate(2deg) scale(.92); }
+}
 
 .touch-look {
   position: absolute;
@@ -1311,6 +1370,8 @@ kbd {
 }
 
 .touch-actions--left { right: auto; left: max(20px, env(safe-area-inset-left)); }
+.touch-flight-toggle { position: absolute; z-index: 12; right: max(22px, env(safe-area-inset-right)); bottom: max(292px, calc(env(safe-area-inset-bottom) + 280px)); width: 58px; height: 35px; padding: 0; border: 1px solid rgba(135,239,232,.55); border-radius: 18px; color: #cffff9; background: rgba(20,70,75,.78); font-size: .57rem; font-weight: 950; letter-spacing: .08em; touch-action: manipulation; }
+.touch-flight-toggle.active { border-color: rgba(255,220,111,.8); color: #fff0ae; background: rgba(101,76,24,.84); }
 .touch-button { display: grid; place-items: center; padding: 0; border: 2px solid rgba(255,255,255,.38); border-radius: 50%; background: rgba(12,40,43,.7); font-size: .55rem; font-weight: 900; letter-spacing: .04em; box-shadow: 0 5px 17px rgba(0,0,0,.22); touch-action: none; }
 .touch-button:active { transform: scale(.93); background: rgba(86,203,193,.55); }
 .touch-button--mine { grid-column: 3; grid-row: 1 / span 2; align-self: center; width: 74px; height: 74px; border-color: rgba(237,128,80,.65); background: rgba(173,79,49,.72); }
@@ -1329,6 +1390,10 @@ kbd {
   .network-pill { display: none; }
   .inventory-workspace { grid-template-columns: 1fr; }
   .crafting-panel .recipe-list { max-height: none; }
+  .merchant-sell-workspace { grid-template-columns: 1fr; }
+  .merchant-sell-tray { min-height: 130px; }
+  .trade-list article { grid-template-columns: 1fr 24px 1fr; }
+  .trade-list__copy { grid-column: 1 / span 2; }
 }
 
 @media (max-width: 680px) {
@@ -1381,6 +1446,13 @@ kbd {
   .hotbar .item-icon { transform: scale(.78); }
   .crosshair { transform: translate(-50%, -50%) scale(.8); }
   .combat-target { top: calc(50% + 27px); width: 168px; padding: 7px 9px; }
+  .merchant-inventory { gap: 2px; }
+  .trade-list article { grid-template-columns: 1fr 20px 1fr; }
+  .trade-list__copy { grid-column: 1 / -1; }
+  .trade-list article > button { grid-column: 1 / -1; }
+  .room-code-entry { grid-template-columns: 1fr; }
+  .room-code-card { grid-template-columns: 1fr; }
+  .room-code-card button { grid-column: 1; grid-row: auto; }
 }
 
 @media (max-width: 420px) {

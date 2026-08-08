@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { BlockId, InputFrame } from "./types";
+import { WORLD_MIN_Y } from "./types";
 import { VoxelWorld } from "./world";
 
 const PLAYER_RADIUS = 0.31;
@@ -85,10 +86,23 @@ export class PlayerPhysics {
     return true;
   }
 
+  private hasFootSupport(world: VoxelWorld): boolean {
+    const probe = this.position.clone();
+    probe.y -= 0.075;
+    return this.collidesAt(world, probe);
+  }
+
   private horizontalStep(world: VoxelWorld, dx: number, dz: number, shoreAssist = false): boolean {
     const start = this.position.clone();
     const hitX = this.moveAxis(world, "x", dx);
     const hitZ = this.moveAxis(world, "z", dz);
+    if (this.crouched && this.grounded && !shoreAssist && !this.hasFootSupport(world)) {
+      this.position.x = start.x;
+      this.position.z = start.z;
+      this.velocity.x = 0;
+      this.velocity.z = 0;
+      return true;
+    }
     if (!(hitX || hitZ)) return false;
     if (!this.grounded && !shoreAssist) return true;
 
@@ -109,6 +123,12 @@ export class PlayerPhysics {
       return true;
     }
     this.moveAxis(world, "y", -stepHeight - 0.04);
+    if (this.crouched && this.grounded && !shoreAssist && !this.hasFootSupport(world)) {
+      this.position.copy(start);
+      this.velocity.x = 0;
+      this.velocity.z = 0;
+      return true;
+    }
     return false;
   }
 
@@ -127,6 +147,7 @@ export class PlayerPhysics {
     world: VoxelWorld,
     onLand?: (fallDistance: number) => void,
     autoJump = false,
+    flying = false,
   ): void {
     const safeDt = Math.min(dt, 0.05);
     this.waterImmersion = this.sampleWater(world);
@@ -155,7 +176,22 @@ export class PlayerPhysics {
     const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     const sprinting = input.sprint && !this.crouched && input.forward > 0.2;
 
-    if (inWater) {
+    if (flying) {
+      const wish = horizontalForward.multiplyScalar(input.forward).add(right.multiplyScalar(input.strafe));
+      if (wish.lengthSq() > 1) wish.normalize();
+      const speed = input.sprint ? 13.5 : 8.5;
+      const control = 1 - Math.exp(-12 * safeDt);
+      const verticalControl = 1 - Math.exp(-18 * safeDt);
+      this.velocity.x += (wish.x * speed - this.velocity.x) * control;
+      this.velocity.z += (wish.z * speed - this.velocity.z) * control;
+      const vertical = (input.jump ? 1 : 0) - (input.crouch ? 1 : 0);
+      this.velocity.y += (vertical * speed - this.velocity.y) * verticalControl;
+      this.grounded = false;
+      this.swimming = false;
+      this.coyoteTimer = 0;
+      this.jumpBuffer = 0;
+      this.verticalPeak = this.position.y;
+    } else if (inWater) {
       const cosPitch = Math.cos(this.pitch);
       const swimForward = this.swimming
         ? new THREE.Vector3(
@@ -248,7 +284,7 @@ export class PlayerPhysics {
       this.velocity.y = Math.max(this.velocity.y, input.jump ? 3.9 : 2.15);
     }
 
-    if (autoJump && !inWater && !onLadder && blockedHorizontally && this.grounded && horizontalWish > 0.05) {
+    if (autoJump && !flying && !inWater && !onLadder && blockedHorizontally && this.grounded && horizontalWish > 0.05) {
       const raised = this.position.clone();
       raised.y += 1.02;
       if (!this.collidesAt(world, raised)) {
@@ -262,14 +298,14 @@ export class PlayerPhysics {
     const wasDescending = this.velocity.y <= 0;
     const hitY = this.moveAxis(world, "y", this.velocity.y * safeDt);
     this.grounded = hitY && wasDescending;
-    if (!this.grounded && !inWater && !onLadder) this.verticalPeak = Math.max(this.verticalPeak, this.position.y);
-    if (!inWater && !onLadder && !wasGrounded && this.grounded) {
+    if (!flying && !this.grounded && !inWater && !onLadder) this.verticalPeak = Math.max(this.verticalPeak, this.position.y);
+    if (!flying && !inWater && !onLadder && !wasGrounded && this.grounded) {
       const fallDistance = Math.max(0, this.verticalPeak - this.position.y);
       if (fallDistance > 3.4) onLand?.(fallDistance);
       this.verticalPeak = this.position.y;
     }
 
-    if (this.position.y < -8) {
+    if (this.position.y < WORLD_MIN_Y - 16) {
       const spawn = world.findSpawn();
       this.position.set(spawn.x, spawn.y, spawn.z);
       this.velocity.set(0, 0, 0);

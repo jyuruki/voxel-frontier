@@ -1,7 +1,7 @@
 import { GameSettings, MobState } from "./types";
 import { hashString, seededRandom } from "./prng";
 
-type SoundName = "mine" | "break" | "place" | "step" | "hurt" | "craft" | "machine" | "click" | "attack" | "shoot" | "trade" | "rift";
+type SoundName = "mine" | "break" | "place" | "step" | "hurt" | "craft" | "machine" | "click" | "attack" | "critical" | "shoot" | "trade" | "rift";
 
 export class FrontierAudio {
   private context: AudioContext | null = null;
@@ -188,6 +188,11 @@ export class FrontierAudio {
     } else if (name === "attack") {
       this.noise(0.08, 0.04);
       this.tone(178, 0.11, "sawtooth", 0.045, this.effects);
+    } else if (name === "critical") {
+      this.noise(0.11, 0.055);
+      this.tone(294, 0.14, "triangle", 0.055, this.effects);
+      this.tone(440, 0.18, "triangle", 0.045, this.effects, 0.035);
+      this.tone(740, 0.21, "sine", 0.035, this.effects, 0.07);
     } else if (name === "shoot") {
       this.tone(720, 0.1, "square", 0.04, this.effects);
       this.tone(310, 0.16, "sine", 0.035, this.effects, 0.035);

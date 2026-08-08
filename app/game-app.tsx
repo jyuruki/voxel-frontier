@@ -11,6 +11,7 @@ import {
 } from "react";
 import { ALL_ITEMS, BLOCKS, RECIPES, itemDescription, itemName } from "./game/blocks";
 import { GameEngine, MachinePanelData, TradePanelData } from "./game/engine";
+import { itemSalePoints } from "./game/economy";
 import { HOTBAR_START, INVENTORY_SLOT_COUNT } from "./game/inventory";
 import { ItemArt } from "./item-art";
 import { NetworkSession } from "./game/network";
@@ -50,6 +51,8 @@ const EMPTY_HUD: HudState = {
   networkStatus: "Offline",
   objective: "Build a working signal circuit.",
   gameMode: "survival",
+  flying: false,
+  critical: false,
   timeLabel: "07:00 · Dawn",
   dayCount: 1,
   targetedMob: null,
@@ -305,6 +308,8 @@ export default function GameApp() {
   const [machine, setMachine] = useState<MachinePanelData | null>(null);
   const [trade, setTrade] = useState<TradePanelData | null>(null);
   const [networkMode, setNetworkMode] = useState<"host" | "join">("host");
+  const [roomCode, setRoomCode] = useState("");
+  const [roomCodeInput, setRoomCodeInput] = useState("");
   const [inviteKey, setInviteKey] = useState("");
   const [joinKey, setJoinKey] = useState("");
   const [answerKey, setAnswerKey] = useState("");
@@ -479,18 +484,18 @@ export default function GameApp() {
             <span className="brand__mark"><i /><i /><i /></span>
             <span><strong>VOXEL</strong><em>FRONTIER</em></span>
           </div>
-          <span className="build-tag">Flow &amp; Foundations · Version 5</span>
+          <span className="build-tag">Highlands &amp; Handshakes · Version 6</span>
         </header>
 
         <section className="landing__content">
           <div className="hero-copy">
             <p className="eyebrow">Shape the wild. Let the world answer.</p>
-            <h1>A living block world, refined down to every flow.</h1>
+            <h1>Climb higher. Build smarter. Bring a friend.</h1>
             <p>
-              Follow rivers into sparse ore veins, organize a true 36-slot pack, trade with village specialists, raise a glass-windowed home, or cross a crafted Rift Gate—alone or online.
+              Scale terrain from deep slate at Y −64 to snowbound summits near Y 320, dam flowing water, trade any resource, prototype in flight, or share one short code to explore together.
             </p>
             <div className="feature-chips">
-              <span>Finite flowing water</span><span>36-slot inventory</span><span>Livestock &amp; composed score</span><span>Village economy</span>
+              <span>One-code multiplayer</span><span>−64 to 320 terrain</span><span>Creative flight</span><span>Universal village sales</span>
             </div>
           </div>
 
@@ -518,7 +523,7 @@ export default function GameApp() {
               </button>
               <button type="button" className={gameMode === "creative" ? "selected" : ""} onClick={() => setGameMode("creative")}>
                 <span className="mode-picker__mark">∞</span>
-                <span><strong>Creative</strong><small>Infinite catalog, instant mining, and no health or hunger damage.</small></span>
+                <span><strong>Creative</strong><small>Infinite catalog, one-click mining, free flight, and no survival damage.</small></span>
               </button>
             </fieldset>
             <button className="primary-button primary-button--large" onClick={() => begin(seed)}>
@@ -568,6 +573,7 @@ export default function GameApp() {
         </div>
       )}
       <div className={`crosshair ${hud.targetedMob ? "crosshair--hostile" : ""}`} aria-hidden="true"><i /><i /></div>
+      {hud.critical && <div className="critical-hit" role="status">CRITICAL!</div>}
 
       <div className="hud-top-left">
         <div className="brand brand--hud">
@@ -577,7 +583,7 @@ export default function GameApp() {
         <div className="location-card">
           <strong>{hud.biome}</strong>
           <span>{hud.coordinates.x} · {hud.coordinates.y} · {hud.coordinates.z}</span>
-          <span>{hud.timeLabel} · Day {hud.dayCount} · {hud.gameMode}</span>
+          <span>{hud.timeLabel} · Day {hud.dayCount} · {hud.gameMode}{hud.flying ? " · flying" : ""}</span>
         </div>
       </div>
 
@@ -627,7 +633,7 @@ export default function GameApp() {
 
       {!isTouch && (
         <div className="desktop-hints">
-          <span><kbd>WASD</kbd> move / swim</span><span><kbd>SPACE</kbd> jump / ascend</span><span><kbd>CTRL</kbd> crouch / dive</span><span><kbd>LMB</kbd> mine / attack</span><span><kbd>RMB</kbd> place / use</span><span><kbd>F</kbd> interact</span><span><kbd>E</kbd> inventory</span>
+          <span><kbd>WASD</kbd> move / swim</span><span><kbd>SPACE</kbd> jump / ascend</span><span><kbd>CTRL</kbd> crouch / dive</span><span><kbd>V</kbd> creative flight</span><span><kbd>LMB</kbd> mine / attack</span><span><kbd>RMB</kbd> place / use</span><span><kbd>F</kbd> interact</span><span><kbd>E</kbd> inventory</span>
         </div>
       )}
 
@@ -639,6 +645,12 @@ export default function GameApp() {
             opacity={settings.touchOpacity}
             onMove={(x, y) => engineRef.current?.setMove(x, y)}
           />
+          {hud.gameMode === "creative" && (
+            <button className={`touch-flight-toggle ${hud.flying ? "active" : ""}`} onPointerDown={(event) => {
+              event.preventDefault();
+              engineRef.current?.toggleCreativeFlight();
+            }}>{hud.flying ? "LAND" : "FLY"}</button>
+          )}
           <div className={`touch-actions ${settings.leftHanded ? "touch-actions--left" : ""}`} style={{ opacity: settings.touchOpacity }}>
             <HoldButton label="MINE / HIT" className="touch-button--mine" onChange={(pressed) => engineRef.current?.setAction("mine", pressed)} />
             <HoldButton label="PLACE" onChange={(pressed) => engineRef.current?.setAction("place", pressed)} />
@@ -751,62 +763,82 @@ export default function GameApp() {
       )}
 
       {overlay === "network" && (
-        <Modal title="Direct online room" eyebrow="Host-authoritative WebRTC" onClose={closeOverlay} wide>
+        <Modal title="Online room" eyebrow="One-code encrypted multiplayer" onClose={closeOverlay} wide>
           <div className="network-callout">
-            <strong>No account or game server required.</strong>
-            <span>The host owns the world state. Connection keys perform the private browser-to-browser handshake needed by a GitHub Pages game.</span>
+            <strong>Share one short room code. No answer key is needed.</strong>
+            <span>Public discovery relays introduce browsers, then encrypted peer-to-peer channels carry the host-authoritative world. No account or dedicated game server is required.</span>
           </div>
           <div className="tab-row">
             <button className={networkMode === "host" ? "active" : ""} onClick={() => setNetworkMode("host")}>Host this world</button>
             <button className={networkMode === "join" ? "active" : ""} onClick={() => setNetworkMode("join")}>Join a host</button>
           </div>
           {networkMode === "host" ? (
-            <div className="network-steps">
-              <section>
-                <span className="step-number">1</span>
-                <div><h3>Create an invite</h3><p>Send the resulting key to one friend. Create another invite for each additional player.</p></div>
-                <button className="primary-button" disabled={networkBusy} onClick={async () => {
+            <div className="quick-room">
+              <div className="quick-room__copy"><span className="step-number">1</span><div><h3>Open a room</h3><p>Keep this tab open. Any friend can join with the same code.</p></div></div>
+              <button className="primary-button" onClick={() => {
+                try {
+                  const code = network.hostRoom();
+                  setRoomCode(code);
+                  setRoomCodeInput(code);
+                  showToast("Room opened. Share the code with your friend.");
+                } catch (error) { showToast(error instanceof Error ? error.message : "Could not open a room."); }
+              }}>{roomCode && network.role === "host" ? "Create a new code" : "Create room code"}</button>
+              {roomCode && network.role === "host" && (
+                <div className="room-code-card">
+                  <small>YOUR ROOM CODE</small><strong>{roomCode}</strong>
+                  <button className="secondary-button" onClick={() => void copyText(roomCode, "Room code")}>Copy code</button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="quick-room">
+              <div className="quick-room__copy"><span className="step-number">1</span><div><h3>Enter the host&apos;s code</h3><p>The host&apos;s world will synchronize automatically after the route opens.</p></div></div>
+              <div className="room-code-entry">
+                <input value={roomCodeInput} maxLength={48} autoCapitalize="characters" spellCheck={false} onChange={(event) => setRoomCodeInput(event.target.value.toUpperCase())} placeholder="EMBER-OTTER-4827" />
+                <button className="primary-button" disabled={roomCodeInput.trim().length < 6} onClick={() => {
+                  try {
+                    const code = network.joinRoomCode(roomCodeInput);
+                    setRoomCode(code);
+                    showToast(`Joining ${code}…`);
+                  } catch (error) { showToast(error instanceof Error ? error.message : "Could not join the room."); }
+                }}>Join room</button>
+              </div>
+            </div>
+          )}
+          <details className="network-manual">
+            <summary>Manual direct-key fallback</summary>
+            <p>Use this only if room discovery is unavailable. It requires one invite from the host and one answer back from the guest.</p>
+            {networkMode === "host" ? (
+              <div className="network-steps">
+                <button className="secondary-button" disabled={networkBusy} onClick={async () => {
                   setNetworkBusy(true);
                   try { setInviteKey(await network.createHostInvite()); }
                   catch (error) { showToast(error instanceof Error ? error.message : "Invite failed."); }
                   setNetworkBusy(false);
-                }}>{networkBusy ? "Finding route…" : "Generate invite"}</button>
-              </section>
-              {inviteKey && <><textarea className="key-field key-field--small" readOnly value={inviteKey} /><button className="secondary-button" onClick={() => void copyText(inviteKey, "Invite")}>Copy invite</button></>}
-              <section>
-                <span className="step-number">2</span>
-                <div><h3>Accept their answer</h3><p>Your friend sends one answer key back. Paste it here to complete the direct route.</p></div>
-              </section>
-              <textarea className="key-field key-field--small" value={guestAnswer} onChange={(event) => setGuestAnswer(event.target.value)} placeholder="Paste guest answer…" />
-              <button className="secondary-button" disabled={!guestAnswer || networkBusy} onClick={async () => {
-                setNetworkBusy(true);
-                try { await network.acceptAnswer(guestAnswer); showToast("Answer accepted. Connecting…"); }
-                catch (error) { showToast(error instanceof Error ? error.message : "Could not accept answer."); }
-                setNetworkBusy(false);
-              }}>Accept answer</button>
-            </div>
-          ) : (
-            <div className="network-steps">
-              <section>
-                <span className="step-number">1</span>
-                <div><h3>Paste the host invite</h3><p>Your browser will generate an answer for the host.</p></div>
-              </section>
-              <textarea className="key-field key-field--small" value={joinKey} onChange={(event) => setJoinKey(event.target.value)} placeholder="Paste host invite…" />
-              <button className="primary-button" disabled={!joinKey || networkBusy} onClick={async () => {
-                setNetworkBusy(true);
-                try { setAnswerKey(await network.joinInvite(joinKey)); }
-                catch (error) { showToast(error instanceof Error ? error.message : "Could not join."); }
-                setNetworkBusy(false);
-              }}>{networkBusy ? "Finding route…" : "Create answer"}</button>
-              {answerKey && (
-                <>
-                  <section><span className="step-number">2</span><div><h3>Send this answer to the host</h3><p>Once they accept it, the host&apos;s terrain and machines synchronize automatically.</p></div></section>
-                  <textarea className="key-field key-field--small" readOnly value={answerKey} />
-                  <button className="secondary-button" onClick={() => void copyText(answerKey, "Answer")}>Copy answer</button>
-                </>
-              )}
-            </div>
-          )}
+                }}>{networkBusy ? "Finding route…" : "Generate manual invite"}</button>
+                {inviteKey && <><textarea className="key-field key-field--small" readOnly value={inviteKey} /><button className="secondary-button" onClick={() => void copyText(inviteKey, "Invite")}>Copy invite</button></>}
+                <textarea className="key-field key-field--small" value={guestAnswer} onChange={(event) => setGuestAnswer(event.target.value)} placeholder="Paste the guest answer…" />
+                <button className="secondary-button" disabled={!guestAnswer || networkBusy} onClick={async () => {
+                  setNetworkBusy(true);
+                  try { await network.acceptAnswer(guestAnswer); showToast("Answer accepted. Connecting…"); }
+                  catch (error) { showToast(error instanceof Error ? error.message : "Could not accept answer."); }
+                  setNetworkBusy(false);
+                }}>Accept manual answer</button>
+              </div>
+            ) : (
+              <div className="network-steps">
+                <textarea className="key-field key-field--small" value={joinKey} onChange={(event) => setJoinKey(event.target.value)} placeholder="Paste the host's manual invite…" />
+                <button className="secondary-button" disabled={!joinKey || networkBusy} onClick={async () => {
+                  setNetworkBusy(true);
+                  try { setAnswerKey(await network.joinInvite(joinKey)); }
+                  catch (error) { showToast(error instanceof Error ? error.message : "Could not join."); }
+                  setNetworkBusy(false);
+                }}>{networkBusy ? "Finding route…" : "Create manual answer"}</button>
+                {answerKey && <><textarea className="key-field key-field--small" readOnly value={answerKey} /><button className="secondary-button" onClick={() => void copyText(answerKey, "Answer")}>Copy answer</button></>}
+              </div>
+            )}
+          </details>
+          {network.role !== "offline" && <button className="text-button danger" onClick={() => { network.close(); setRoomCode(""); }}>Leave online room</button>}
           <p className="network-status-line"><span className={network.role === "offline" ? "" : "online"} /> {hud.networkStatus}</p>
         </Modal>
       )}
@@ -828,9 +860,11 @@ export default function GameApp() {
         <TradeModal
           trade={trade}
           inventory={hud.inventory}
+          inventorySlots={hud.inventorySlots}
           creative={hud.gameMode === "creative"}
           onClose={closeOverlay}
           onTrade={(offerId) => engineRef.current?.trade(trade.mobId, offerId)}
+          onSell={(item, count) => engineRef.current?.sellToMerchant(trade.mobId, item, count)}
         />
       )}
 
@@ -933,40 +967,40 @@ function OptionsModal({
 
 function GuideModal({ onClose }: { onClose: () => void }) {
   return (
-    <Modal title="Frontier field guide" eyebrow="Flow & Foundations · Version 5" onClose={onClose} wide>
+    <Modal title="Frontier field guide" eyebrow="Highlands & Handshakes · Version 6" onClose={onClose} wide>
       <div className="guide-grid">
         <article className="guide-card guide-card--accent">
-          <span>01</span><h3>Water flows</h3>
-          <p>Break beside a lake or aquifer and water enters the opening, flowing outward through seven progressively shallower levels. Swimming still adds drag, buoyancy, diving, and shore assist.</p>
+          <span>01</span><h3>One room code</h3>
+          <p>Host an online room and share one readable code. Discovery is automatic, world data remains encrypted peer-to-peer, and the old invite/answer flow survives as a manual fallback.</p>
         </article>
         <article className="guide-card">
-          <span>02</span><h3>Inventory &amp; recipes</h3>
-          <p>Press E to open or close one combined inventory and recipe screen. Drag or tap slots to rearrange them, shift-click between your pack and hotbar, then search craftable or all recipes.</p>
+          <span>02</span><h3>Water can be engineered</h3>
+          <p>Place blocks directly into water. A dam removes every downstream flow cell that can no longer reach its source, while reachable water refills to the same seven-block limit.</p>
         </article>
         <article className="guide-card">
-          <span>03</span><h3>Veins &amp; mountains</h3>
-          <p>Stone now dominates above the Deep Slate layer. Ores form sparse connected veins at useful depths, while broad lowlands give way to balanced hills and occasional tall mountain ranges.</p>
+          <span>03</span><h3>A taller frontier</h3>
+          <p>The build space now spans Y −64 through 319. Broad hill country leads into rare Skybreak ranges with sharp ridges and summits that can approach the Y 320 ceiling.</p>
         </article>
         <article className="guide-card">
-          <span>04</span><h3>Village economy</h3>
-          <p>Rarer villages host Farmers, Blacksmiths, Builders, and Riftwrights. Sell requested goods for Frontier Marks, buy profession-specific stock, and return after dawn for a restock.</p>
+          <span>04</span><h3>Sell anything</h3>
+          <p>Drag any carried stack into a villager&apos;s sell tray. Every item has a value, fractional value carries forward, sales pay only Frontier Marks, and each profession keeps distinct purchase stock.</p>
         </article>
         <article className="guide-card">
-          <span>05</span><h3>Build a real home</h3>
-          <p>Smelt sand and coal into Clearglass, cut it into connecting panes, and combine doors, shutters, planters, shelves, slabs, stairs, roof tile, fencing, and carved masonry.</p>
+          <span>05</span><h3>Creative control</h3>
+          <p>Press V or double-tap Space to fly; Space rises and Ctrl descends. Instant mining is edge-triggered, so one click removes exactly one aimed block instead of drilling a line.</p>
         </article>
         <article className="guide-card">
-          <span>06</span><h3>Recognizable wildlife</h3>
-          <p>Sheep baa, cows moo, pigs oink, and chickens cluck through layered synthesized voices. They walk, flee, jump, swim, and drop fitting resources alongside the Frontier&apos;s hostile species.</p>
+          <span>06</span><h3>Readable engineering &amp; combat</h3>
+          <p>Every Flux component has unique item art; observers and funnels show direction; repeater delay has four visible settings. Strike while descending for a 1.5× critical hit and clear feedback.</p>
         </article>
       </div>
       <div className="controls-table">
         <h3>Desktop controls</h3>
-        <div><span><kbd>W A S D</kbd> Move / swim</span><span><kbd>Shift</kbd> Sprint / stroke</span><span><kbd>Ctrl / C</kbd> Crouch / dive</span><span><kbd>Space</kbd> Jump / ascend</span><span><kbd>Mouse</kbd> Look</span><span><kbd>LMB</kbd> Swing / mine / attack</span><span><kbd>RMB</kbd> Place / use held item</span><span><kbd>F</kbd> Interact/configure</span><span><kbd>R</kbd> Rotate machine</span><span><kbd>E</kbd> Open / close inventory</span></div>
+        <div><span><kbd>W A S D</kbd> Move / swim / fly</span><span><kbd>Shift</kbd> Sprint / stroke</span><span><kbd>Ctrl / C</kbd> Crouch / dive / descend</span><span><kbd>Space</kbd> Jump / ascend</span><span><kbd>V</kbd> Toggle Creative flight</span><span><kbd>Mouse</kbd> Look</span><span><kbd>LMB</kbd> Swing / mine / attack</span><span><kbd>MMB</kbd> Pick block in Creative</span><span><kbd>RMB</kbd> Place / use held item</span><span><kbd>F</kbd> Interact/configure</span><span><kbd>R</kbd> Rotate machine</span><span><kbd>E</kbd> Open / close inventory</span></div>
       </div>
       <div className="scope-note">
         <strong>What this release contains</strong>
-        <p>Six overworld biomes plus the Emberdeep, finite water flow, extensive caves and sparse ore veins, rarer profession villages, 115 original textured blocks, Survival and Creative modes, a draggable 36-slot inventory, four tool tiers, physical drops, shore-assisted swimming, ten animated creature types, a harmonically composed procedural score, combat, beds, furnaces, a currency economy, directional logic and machinery, direct online rooms, mobile controls, autosave, and backward-compatible VF1 world keys.</p>
+        <p>Version 6 combines one-code online rooms, reconnection grace, source-aware water dams, a −64…320 world envelope, high mountain generation, legacy-world elevation migration, Creative flight and exact one-click mining, edge-safe crouching, critical hits, universal item sales, clearer directional machinery, unique circuit icons, 115 original textured blocks, ten animated creature types, autosave, and portable VF1 keys.</p>
       </div>
     </Modal>
   );
@@ -975,22 +1009,80 @@ function GuideModal({ onClose }: { onClose: () => void }) {
 function TradeModal({
   trade,
   inventory,
+  inventorySlots,
   creative,
   onClose,
   onTrade,
+  onSell,
 }: {
   trade: TradePanelData;
   inventory: Record<string, number>;
+  inventorySlots: Array<ItemId | null>;
   creative: boolean;
   onClose: () => void;
   onTrade: (offerId: string) => void;
+  onSell: (item: ItemId, count: number) => void;
 }) {
+  const [saleItem, setSaleItem] = useState<ItemId | null>(null);
+  const saleCount = saleItem ? inventory[saleItem] ?? 0 : 0;
+  const totalSalePoints = saleItem ? itemSalePoints(saleItem) * saleCount + trade.credit : trade.credit;
+  const saleMarks = Math.floor(totalSalePoints / 20);
+  const saleRemainder = totalSalePoints % 20;
+  const sellStack = (item: ItemId) => {
+    const count = inventory[item] ?? 0;
+    if (count > 0) onSell(item, count);
+    setSaleItem(null);
+  };
   return (
     <Modal title={trade.name} eyebrow={`${trade.profession} · ${creative ? "Creative funds" : `${trade.marks} Frontier Marks`}`} onClose={onClose} wide>
       <div className="network-callout">
-        <strong>Sell useful goods, then spend Frontier Marks.</strong>
-        <span>Each profession has its own limited stock. Offers restock at the start of a new day.</span>
+        <strong>Sell any stack, then spend Frontier Marks.</strong>
+        <span>Drag a carried stack into the sell tray. Prices reflect material rarity, processing, and crafting value; purchases vary by profession and restock each day.</span>
       </div>
+      <section className="merchant-sell-workspace">
+        <div>
+          <header><strong>Your inventory</strong><span>Drag or tap a stack</span></header>
+          <div className="merchant-inventory" aria-label="Inventory available to sell">
+            {inventorySlots.map((item, slot) => (
+              <button
+                type="button"
+                key={slot}
+                draggable={Boolean(item)}
+                className={saleItem === item && item ? "selected" : ""}
+                disabled={!item}
+                title={item ? `${itemName(item)} — ${itemDescription(item)}` : "Empty slot"}
+                onClick={() => item && setSaleItem(item)}
+                onDragStart={(event) => {
+                  if (!item) return;
+                  event.dataTransfer.setData("application/x-voxel-sale", item);
+                  event.dataTransfer.effectAllowed = "move";
+                }}
+              >
+                {item && <ItemIcon item={item} count={creative ? "∞" : inventory[item] ?? 0} compact />}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div
+          className={`merchant-sell-tray ${saleItem ? "ready" : ""}`}
+          onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }}
+          onDrop={(event) => {
+            event.preventDefault();
+            const item = event.dataTransfer.getData("application/x-voxel-sale") as ItemId;
+            if (item && (inventory[item] ?? 0) > 0) sellStack(item);
+          }}
+        >
+          <span className="merchant-sell-tray__mark">⇣</span>
+          <strong>{saleItem ? `Sell ${saleCount} × ${itemName(saleItem)}` : "Villager sell tray"}</strong>
+          <small>{saleItem
+            ? `${saleMarks} mark${saleMarks === 1 ? "" : "s"}${saleRemainder ? ` + ${saleRemainder}/20 saved value` : ""}`
+            : `Any item accepted · ${trade.credit}/20 value saved`}</small>
+          <button className="primary-button" disabled={!saleItem || saleCount <= 0 || creative} onClick={() => saleItem && sellStack(saleItem)}>
+            {creative ? "Infinite in Creative" : "Sell full stack"}
+          </button>
+        </div>
+      </section>
+      <div className="merchant-buy-heading"><strong>{trade.profession} stock</strong><span>Purchases cost Frontier Marks only</span></div>
       <div className="trade-list">
         {trade.offers.map((offer) => {
           const carried = inventory[offer.cost.item] ?? 0;

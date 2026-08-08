@@ -40,3 +40,20 @@ const WEAPONS: Partial<Record<ItemId, WeaponStats>> = {
 export function weaponStats(item: ItemId | null): WeaponStats {
   return item ? WEAPONS[item] ?? UNARMED : UNARMED;
 }
+
+export interface CriticalHitState {
+  grounded: boolean;
+  velocityY: number;
+  swimming?: boolean;
+  flying?: boolean;
+}
+
+export const CRITICAL_DAMAGE_MULTIPLIER = 1.5;
+
+export function isCriticalHit(state: CriticalHitState, weapon: WeaponStats): boolean {
+  return !weapon.ammo
+    && !state.grounded
+    && !state.swimming
+    && !state.flying
+    && state.velocityY < -0.18;
+}
