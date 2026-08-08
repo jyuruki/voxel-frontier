@@ -399,6 +399,16 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
   [BlockId.CarvedStone]: block(BlockId.CarvedStone, "Carved Roughstone", "#858989", "Decorative masonry cut with a simple frontier knot.", { hardness: 2.1 }),
 };
 
+const LEAF_BLOCKS = new Set<BlockId>([
+  BlockId.EmberwoodLeaves,
+  BlockId.FrostpineLeaves,
+  BlockId.RiftwoodLeaves,
+]);
+
+export function isLeafBlock(id: BlockId): boolean {
+  return LEAF_BLOCKS.has(id);
+}
+
 export const BLOCK_IDS = Object.values(BlockId).filter(
   (value): value is BlockId => typeof value === "number",
 );
@@ -767,7 +777,7 @@ function paintTile(
       image.data[index] = Math.max(0, Math.min(255, (base.r + offset) * 255));
       image.data[index + 1] = Math.max(0, Math.min(255, (base.g + offset) * 255));
       image.data[index + 2] = Math.max(0, Math.min(255, (base.b + offset) * 255));
-      const cutoutLeaves = [BlockId.EmberwoodLeaves, BlockId.FrostpineLeaves, BlockId.RiftwoodLeaves].includes(blockId) && hash3(x, y, blockId, 17) % 9 === 0;
+      const cutoutLeaves = isLeafBlock(blockId) && hash3(x, y, blockId, 17) % 9 === 0;
       const cutoutPlant = BLOCKS[blockId].shape === "cross" && !plantPixel(blockId, x, y);
       image.data[index + 3] = cutoutLeaves || cutoutPlant ? 0 : 255;
     }

@@ -8,6 +8,7 @@ import {
   MutationTuple,
   SEA_LEVEL,
   Vec3Data,
+  VillagerProfession,
   WORLD_GENERATION_VERSION,
   WORLD_HEIGHT,
   WORLD_MAX_Y,
@@ -44,6 +45,91 @@ export function isVillageChunk(cx: number, cz: number, seed: number): boolean {
   const candidateX = regionX * regionSize + 1 + (hash3(regionX, 211, regionZ, seed ^ 0xbb67ae85) % (regionSize - 2));
   const candidateZ = regionZ * regionSize + 1 + (hash3(regionX, 223, regionZ, seed ^ 0x3c6ef372) % (regionSize - 2));
   return cx === candidateX && cz === candidateZ;
+}
+
+export type VillageLayout = "crossroads" | "courtyard" | "lanes";
+export type VillageBuildingKind = "cottage" | "longhouse" | "forge" | "library" | "workshop" | "tower" | "farm";
+
+export interface VillageBuildingPlan {
+  kind: VillageBuildingKind;
+  x: number;
+  z: number;
+  rotation: 0 | 1 | 2 | 3;
+}
+
+export interface VillagePlan {
+  centerCx: number;
+  centerCz: number;
+  centerX: number;
+  centerZ: number;
+  layout: VillageLayout;
+  buildings: VillageBuildingPlan[];
+  professions: VillagerProfession[];
+  signature: string;
+}
+
+const VILLAGE_BUILDING_KINDS: VillageBuildingKind[] = [
+  "cottage", "longhouse", "forge", "library", "workshop", "tower", "farm",
+];
+
+function buildingRotation(x: number, z: number): 0 | 1 | 2 | 3 {
+  if (Math.abs(x) > Math.abs(z)) return x > 0 ? 1 : 3;
+  return z > 0 ? 2 : 0;
+}
+
+/** Pure deterministic plan; terrain suitability is checked when a chunk is built. */
+export function createVillagePlan(centerCx: number, centerCz: number, seed: number): VillagePlan {
+  const centerX = centerCx * CHUNK_SIZE + 8;
+  const centerZ = centerCz * CHUNK_SIZE + 8;
+  const planRoll = hash3(centerCx, 401, centerCz, seed ^ 0x9e3779b9);
+  const layouts: VillageLayout[] = ["crossroads", "courtyard", "lanes"];
+  const layout = layouts[planRoll % layouts.length];
+  const slots: Array<[number, number]> = layout === "crossroads"
+    ? [[-14, -9], [13, -9], [-14, 9], [13, 9], [0, -18], [0, 18], [-20, 0], [20, 0]]
+    : layout === "courtyard"
+      ? [[-13, -13], [13, -13], [-13, 13], [13, 13], [0, -19], [19, 0], [0, 19], [-19, 0]]
+      : [[-10, -18], [10, -15], [-10, -7], [10, -4], [-10, 6], [10, 9], [-10, 18], [10, 20]];
+  slots.sort((a, b) => (
+    hash3(centerCx + a[0], 419, centerCz + a[1], seed)
+    - hash3(centerCx + b[0], 419, centerCz + b[1], seed)
+  ));
+  const buildingCount = 3 + (hash3(centerCx, 431, centerCz, seed) % 5);
+  const buildings = slots.slice(0, buildingCount).map(([x, z], index): VillageBuildingPlan => {
+    const kindIndex = hash3(centerCx + x, 443 + index, centerCz + z, seed ^ planRoll) % VILLAGE_BUILDING_KINDS.length;
+    return {
+      kind: VILLAGE_BUILDING_KINDS[kindIndex],
+      x: centerX + x,
+      z: centerZ + z,
+      rotation: buildingRotation(x, z),
+    };
+  });
+  const professionForKind: Record<VillageBuildingKind, VillagerProfession> = {
+    cottage: "builder",
+    longhouse: "farmer",
+    forge: "blacksmith",
+    library: "riftwright",
+    workshop: "builder",
+    tower: "riftwright",
+    farm: "farmer",
+  };
+  const villagerCount = 3 + Math.ceil(buildingCount * 0.65) + (hash3(centerCx, 457, centerCz, seed) % 3);
+  const professions: VillagerProfession[] = [];
+  for (let index = 0; index < villagerCount; index += 1) {
+    if (index < buildings.length) professions.push(professionForKind[buildings[index].kind]);
+    else professions.push((["farmer", "blacksmith", "builder", "riftwright"] as VillagerProfession[])[
+      hash3(centerCx, 463 + index, centerCz, seed) % 4
+    ]);
+  }
+  return {
+    centerCx,
+    centerCz,
+    centerX,
+    centerZ,
+    layout,
+    buildings,
+    professions,
+    signature: `${layout}:${buildings.map((building) => building.kind).join(",")}:${professions.length}`,
+  };
 }
 
 export const chunkKey = (cx: number, cz: number): string => `${cx},${cz}`;
@@ -163,9 +249,11 @@ export class VoxelWorld {
   readonly mobs: MobState[] = [];
   readonly waterLevels = new Map<string, number>();
   readonly dirtyChunks = new Set<string>();
+  private readonly pendingNetworkMutations = new Map<string, BlockId>();
   private readonly heightCache = new Map<string, number>();
   private readonly biomeCache = new Map<string, string>();
   private readonly oreCellCache = new Map<string, VeinAnchor>();
+  private readonly villagePlanCache = new Map<string, VillagePlan | null>();
 
   constructor(seedText: string, generation = WORLD_GENERATION_VERSION) {
     this.seedText = seedText.trim() || "frontier";
@@ -185,19 +273,35 @@ export class VoxelWorld {
       this.heightCache.set(cacheKey, height);
       return height;
     }
-    const continental = fractalNoise2(x / 190, z / 190, this.seed ^ 0x91e10da5, 5);
-    const detail = fractalNoise2(x / 38, z / 38, this.seed ^ 0xa54ff53a, 3);
-    const hillField = fractalNoise2(x / 94, z / 94, this.seed ^ 0x1f83d9ab, 4);
-    const mountainNoise = fractalNoise2(x / 205, z / 205, this.seed ^ 0x5a17c9e3, 4);
-    const mountainRegion = Math.max(0, Math.min(1, (mountainNoise - 0.48) / 0.27));
-    const ridgeNoise = 1 - Math.abs(fractalNoise2(x / 58, z / 58, this.seed ^ 0x510e527f, 4) * 2 - 1);
-    const sharpRidges = 1 - Math.abs(fractalNoise2(x / 27, z / 27, this.seed ^ 0x6a09e667, 3) * 2 - 1);
-    const rollingHills = Math.max(0, (hillField - 0.43) / 0.38) * 42;
-    const mountainShape = mountainRegion ** 1.35;
-    const mountains = mountainShape * (34 + ridgeNoise ** 2 * 148 + sharpRidges ** 4 * 42);
+    const legacyTerrain = this.generation < 3;
+    const continental = fractalNoise2(x / (legacyTerrain ? 190 : 230), z / (legacyTerrain ? 190 : 230), this.seed ^ 0x91e10da5, 5);
+    const detail = fractalNoise2(x / (legacyTerrain ? 38 : 42), z / (legacyTerrain ? 38 : 42), this.seed ^ 0xa54ff53a, 3);
+    const hillField = fractalNoise2(x / (legacyTerrain ? 94 : 105), z / (legacyTerrain ? 94 : 105), this.seed ^ 0x1f83d9ab, 4);
+    const mountainNoise = fractalNoise2(x / (legacyTerrain ? 205 : 260), z / (legacyTerrain ? 205 : 260), this.seed ^ 0x5a17c9e3, 4);
+    const mountainRegion = Math.max(0, Math.min(1, legacyTerrain
+      ? (mountainNoise - 0.48) / 0.27
+      : (mountainNoise - 0.61) / 0.24));
+    const ridgeNoise = 1 - Math.abs(fractalNoise2(x / (legacyTerrain ? 58 : 64), z / (legacyTerrain ? 58 : 64), this.seed ^ 0x510e527f, 4) * 2 - 1);
+    const sharpRidges = 1 - Math.abs(fractalNoise2(x / (legacyTerrain ? 27 : 31), z / (legacyTerrain ? 27 : 31), this.seed ^ 0x6a09e667, 3) * 2 - 1);
+    const rollingHills = legacyTerrain
+      ? Math.max(0, (hillField - 0.43) / 0.38) * 42
+      : Math.max(0, (hillField - 0.47) / 0.36) * 23;
+    const mountainShape = mountainRegion ** (legacyTerrain ? 1.35 : 2.25);
+    const mountains = legacyTerrain
+      ? mountainShape * (34 + ridgeNoise ** 2 * 148 + sharpRidges ** 4 * 42)
+      : mountainShape * (14 + ridgeNoise ** 2 * 58 + sharpRidges ** 4 * 13);
     const height = Math.max(
       WORLD_MIN_Y + 5,
-      Math.min(WORLD_MAX_Y - 8, Math.floor(43 + continental * 42 + (detail - 0.5) * 12 + rollingHills + mountains)),
+      Math.min(
+        legacyTerrain ? WORLD_MAX_Y - 8 : 196,
+        Math.floor(
+          (legacyTerrain ? 43 : 45)
+          + continental * (legacyTerrain ? 42 : 38)
+          + (detail - 0.5) * (legacyTerrain ? 12 : 9)
+          + rollingHills
+          + mountains,
+        ),
+      ),
     );
     this.heightCache.set(cacheKey, height);
     return height;
@@ -208,7 +312,7 @@ export class VoxelWorld {
     const cacheKey = `${Math.floor(x)},${Math.floor(z)}`;
     const cached = this.biomeCache.get(cacheKey);
     if (cached) return cached;
-    if (this.getHeight(x, z) >= 164) {
+    if (this.getHeight(x, z) >= (this.generation < 3 ? 164 : 118)) {
       this.biomeCache.set(cacheKey, "Skybreak Peaks");
       return "Skybreak Peaks";
     }
@@ -360,8 +464,10 @@ export class VoxelWorld {
         }
       }
     }
-    if (isVillageChunk(chunk.cx, chunk.cz, this.seed)) this.addVillageLandmark(chunk);
-    else this.addRuinLandmark(chunk);
+    const villagePlans = this.villagePlansForChunk(chunk.cx, chunk.cz);
+    if (villagePlans.length > 0) {
+      for (const plan of villagePlans) this.addVillageLandmark(chunk, plan);
+    } else this.addRuinLandmark(chunk);
   }
 
   private addEmberdeepFeatures(chunk: ChunkData): void {
@@ -391,70 +497,275 @@ export class VoxelWorld {
     }
   }
 
-  private addVillageLandmark(chunk: ChunkData): void {
-    const baseX = chunk.cx * CHUNK_SIZE;
-    const baseZ = chunk.cz * CHUNK_SIZE;
-    const heights: number[] = [];
-    for (let lx = 2; lx <= 13; lx += 1) {
-      for (let lz = 2; lz <= 13; lz += 1) heights.push(this.getHeight(baseX + lx, baseZ + lz));
+  private villagePlan(centerCx: number, centerCz: number): VillagePlan | null {
+    const key = chunkKey(centerCx, centerCz);
+    if (this.villagePlanCache.has(key)) return this.villagePlanCache.get(key) ?? null;
+    if (!isVillageChunk(centerCx, centerCz, this.seed)) {
+      this.villagePlanCache.set(key, null);
+      return null;
     }
-    const minY = Math.min(...heights);
-    const baseY = Math.max(...heights);
-    const biome = this.getBiome(baseX + 8, baseZ + 8);
-    if (baseY - minY > 12 || baseY <= SEA_LEVEL + 1 || baseY >= WORLD_MAX_Y - 8 || biome === "Cinder Reach" || biome === "Sunscar Dunes" || biome === "Skybreak Peaks") return;
+    const plan = createVillagePlan(centerCx, centerCz, this.seed);
+    const samplePoints: Array<[number, number]> = [
+      [plan.centerX, plan.centerZ],
+      ...plan.buildings.flatMap((building) => [
+        [building.x, building.z] as [number, number],
+        [building.x + 3, building.z + 3] as [number, number],
+        [building.x - 3, building.z - 3] as [number, number],
+      ]),
+    ];
+    const heights = samplePoints.map(([x, z]) => this.getHeight(x, z));
+    const biome = this.getBiome(plan.centerX, plan.centerZ);
+    const suitable = Math.max(...heights) - Math.min(...heights) <= 16
+      && Math.min(...heights) > SEA_LEVEL + 1
+      && Math.max(...heights) < (this.generation < 3 ? WORLD_MAX_Y - 10 : 116)
+      && !["Cinder Reach", "Sunscar Dunes", "Skybreak Peaks"].includes(biome);
+    const result = suitable ? plan : null;
+    this.villagePlanCache.set(key, result);
+    return result;
+  }
 
-    for (let lx = 1; lx < CHUNK_SIZE - 1; lx += 1) {
-      for (let lz = 1; lz < CHUNK_SIZE - 1; lz += 1) {
-        const terrainY = this.getHeight(baseX + lx, baseZ + lz);
-        for (let y = terrainY + 1; y <= baseY; y += 1) this.forceChunkLocal(chunk, lx, y, lz, BlockId.Cobblestone);
-        for (let y = baseY + 1; y <= baseY + 7; y += 1) this.forceChunkLocal(chunk, lx, y, lz, BlockId.Air);
-        this.forceChunkLocal(chunk, lx, baseY, lz, lx === 7 || lx === 8 || lz === 7 || lz === 8 ? BlockId.Cobblestone : BlockId.Turf);
+  private villagePlansForChunk(cx: number, cz: number): VillagePlan[] {
+    const plans: VillagePlan[] = [];
+    for (let dx = -2; dx <= 2; dx += 1) {
+      for (let dz = -2; dz <= 2; dz += 1) {
+        const plan = this.villagePlan(cx + dx, cz + dz);
+        if (plan) plans.push(plan);
       }
     }
+    return plans;
+  }
 
-    const buildCottage = (x0: number, z0: number, doorX: number, doorZ: number): void => {
-      for (let lx = x0; lx < x0 + 5; lx += 1) {
-        for (let lz = z0; lz < z0 + 5; lz += 1) {
-          this.forceChunkLocal(chunk, lx, baseY, lz, BlockId.Cobblestone);
-          const edge = lx === x0 || lx === x0 + 4 || lz === z0 || lz === z0 + 4;
-          for (let dy = 1; dy <= 3; dy += 1) {
-            if (!edge) this.forceChunkLocal(chunk, lx, baseY + dy, lz, BlockId.Air);
-            else if (lx === doorX && lz === doorZ && dy <= 2) this.forceChunkLocal(chunk, lx, baseY + dy, lz, dy === 1 ? BlockId.TimberDoor : BlockId.Air);
-            else if (dy === 2 && ((lx + lz) & 1) === 0) this.forceChunkLocal(chunk, lx, baseY + dy, lz, BlockId.GlassPane);
-            else this.forceChunkLocal(chunk, lx, baseY + dy, lz, (lx + lz) % 3 === 0 ? BlockId.TimberFrame : BlockId.VillageWall);
+  private villageBlock(chunk: ChunkData, x: number, y: number, z: number, id: BlockId): void {
+    const lx = x - chunk.cx * CHUNK_SIZE;
+    const lz = z - chunk.cz * CHUNK_SIZE;
+    if (lx < 0 || lz < 0 || lx >= CHUNK_SIZE || lz >= CHUNK_SIZE || y < WORLD_MIN_Y || y >= WORLD_MAX_Y) return;
+    this.forceChunkLocal(chunk, lx, y, lz, id);
+    const key = worldKey(x, y, z);
+    if (BLOCKS[id].automation && !this.machines.has(key)) this.machines.set(key, defaultMachineState(id));
+    else if (!BLOCKS[id].automation) this.machines.delete(key);
+  }
+
+  private rotatedVillagePoint(
+    building: VillageBuildingPlan,
+    localX: number,
+    localZ: number,
+    width: number,
+    depth: number,
+  ): [number, number] {
+    const x = localX - Math.floor(width / 2);
+    const z = localZ - Math.floor(depth / 2);
+    if (building.rotation === 1) return [building.x - z, building.z + x];
+    if (building.rotation === 2) return [building.x - x, building.z - z];
+    if (building.rotation === 3) return [building.x + z, building.z - x];
+    return [building.x + x, building.z + z];
+  }
+
+  private villageDoor(building: VillageBuildingPlan, width: number, depth: number): [number, number] {
+    return this.rotatedVillagePoint(building, Math.floor(width / 2), depth - 1, width, depth);
+  }
+
+  private prepareVillageFootprint(
+    chunk: ChunkData,
+    building: VillageBuildingPlan,
+    width: number,
+    depth: number,
+    clearance: number,
+  ): number | null {
+    const cells: Array<[number, number]> = [];
+    for (let localX = 0; localX < width; localX += 1) {
+      for (let localZ = 0; localZ < depth; localZ += 1) {
+        cells.push(this.rotatedVillagePoint(building, localX, localZ, width, depth));
+      }
+    }
+    const heights = cells.map(([x, z]) => this.getHeight(x, z));
+    const baseY = Math.max(...heights);
+    if (baseY - Math.min(...heights) > 7) return null;
+    for (const [x, z] of cells) {
+      const terrainY = this.getHeight(x, z);
+      for (let y = terrainY + 1; y <= baseY; y += 1) this.villageBlock(chunk, x, y, z, BlockId.Cobblestone);
+      this.villageBlock(chunk, x, baseY, z, BlockId.Cobblestone);
+      for (let y = baseY + 1; y <= baseY + clearance; y += 1) this.villageBlock(chunk, x, y, z, BlockId.Air);
+    }
+    return baseY;
+  }
+
+  private buildVillageStructure(chunk: ChunkData, building: VillageBuildingPlan, biome: string): void {
+    const dimensions: Record<VillageBuildingKind, [number, number, number]> = {
+      cottage: [5, 5, 3],
+      longhouse: [7, 5, 3],
+      forge: [6, 5, 4],
+      library: [5, 6, 4],
+      workshop: [6, 5, 3],
+      tower: [5, 5, 6],
+      farm: [7, 7, 1],
+    };
+    const [width, depth, wallHeight] = dimensions[building.kind];
+    const baseY = this.prepareVillageFootprint(chunk, building, width, depth, wallHeight + 4);
+    if (baseY === null) return;
+    const timber = biome === "Frostcap Expanse" ? BlockId.FrostpinePlanks : BlockId.EmberwoodPlanks;
+    const frame = biome === "Frostcap Expanse" ? BlockId.FrostpineLog : BlockId.TimberFrame;
+
+    if (building.kind === "farm") {
+      for (let localX = 0; localX < width; localX += 1) {
+        for (let localZ = 0; localZ < depth; localZ += 1) {
+          const [x, z] = this.rotatedVillagePoint(building, localX, localZ, width, depth);
+          const edge = localX === 0 || localZ === 0 || localX === width - 1 || localZ === depth - 1;
+          const gate = localX === Math.floor(width / 2) && localZ === depth - 1;
+          this.villageBlock(chunk, x, baseY, z, localX === 3 ? BlockId.Clay : BlockId.Soil);
+          if (edge && !gate) this.villageBlock(chunk, x, baseY + 1, z, BlockId.TimberFence);
+          else if (!edge && localX !== 3 && (localX + localZ) % 2 === 0) {
+            this.villageBlock(chunk, x, baseY + 1, z, (localZ + this.seed) % 3 === 0 ? BlockId.StarBloom : BlockId.CaveMoss);
           }
-          this.forceChunkLocal(chunk, lx, baseY + 4, lz, (lx + lz) % 2 === 0 ? BlockId.Thatch : BlockId.RoofTile);
         }
       }
-      this.forceChunkLocal(chunk, x0 + 2, baseY + 1, z0 + 2, BlockId.FrontierBed);
-      this.forceChunkLocal(chunk, x0 + 1, baseY + 1, z0 + 2, BlockId.Bookshelf);
-      this.forceChunkLocal(chunk, x0 + 3, baseY + 1, z0 + 2, BlockId.FlowerPot);
-    };
-    buildCottage(1, 1, 5, 3);
-    buildCottage(10, 10, 10, 12);
-    this.forceChunkLocal(chunk, 7, baseY + 1, 8, BlockId.TradePost);
-    this.forceChunkLocal(chunk, 8, baseY + 1, 8, BlockId.Crate);
-    for (let lx = 6; lx <= 9; lx += 1) for (let lz = 6; lz <= 9; lz += 1) this.forceChunkLocal(chunk, lx, baseY + 4, lz, BlockId.MarketCanopy);
-    for (const [lx, lz] of [[1, 7], [14, 7], [7, 1], [7, 14]]) this.forceChunkLocal(chunk, lx, baseY + 1, lz, BlockId.WayfinderBrazier);
+      return;
+    }
 
-    const professions = ["farmer", "blacksmith", "builder", "riftwright"] as const;
-    for (let index = 0; index < professions.length; index += 1) {
-      const id = `wayfarer-${chunk.cx}-${chunk.cz}-${index}`;
+    const [doorX, doorZ] = this.villageDoor(building, width, depth);
+    for (let localX = 0; localX < width; localX += 1) {
+      for (let localZ = 0; localZ < depth; localZ += 1) {
+        const [x, z] = this.rotatedVillagePoint(building, localX, localZ, width, depth);
+        this.villageBlock(chunk, x, baseY, z, (localX + localZ) % 4 === 0 ? timber : BlockId.Cobblestone);
+        const edge = localX === 0 || localZ === 0 || localX === width - 1 || localZ === depth - 1;
+        for (let dy = 1; dy <= wallHeight; dy += 1) {
+          if (!edge) {
+            this.villageBlock(chunk, x, baseY + dy, z, BlockId.Air);
+          } else if (x === doorX && z === doorZ && dy <= 2) {
+            this.villageBlock(chunk, x, baseY + dy, z, dy === 1 ? BlockId.TimberDoor : BlockId.Air);
+          } else {
+            const corner = (localX === 0 || localX === width - 1) && (localZ === 0 || localZ === depth - 1);
+            const window = dy === 2 && !corner && (localX + localZ) % 2 === 0;
+            this.villageBlock(chunk, x, baseY + dy, z, window ? BlockId.GlassPane : corner ? frame : BlockId.VillageWall);
+          }
+        }
+        const roofRise = building.kind === "tower" ? 0 : Math.min(localX, width - 1 - localX, 2);
+        this.villageBlock(chunk, x, baseY + wallHeight + 1 + roofRise, z, biome === "Frostcap Expanse" ? BlockId.RoofTile : BlockId.Thatch);
+      }
+    }
+
+    const interior = (localX: number, localZ: number, id: BlockId, dy = 1): void => {
+      const [x, z] = this.rotatedVillagePoint(building, localX, localZ, width, depth);
+      this.villageBlock(chunk, x, baseY + dy, z, id);
+    };
+    if (building.kind === "cottage") {
+      interior(1, 1, BlockId.FrontierBed);
+      interior(width - 2, 1, BlockId.FlowerPot);
+    } else if (building.kind === "longhouse") {
+      interior(1, 1, BlockId.FrontierBed);
+      interior(width - 2, 1, BlockId.FrontierBed);
+      interior(Math.floor(width / 2), 1, BlockId.Crate);
+    } else if (building.kind === "forge") {
+      interior(1, 1, BlockId.HearthFurnace);
+      interior(width - 2, 1, BlockId.IronBars);
+      interior(1, 1, BlockId.Basalt, wallHeight + 1);
+    } else if (building.kind === "library") {
+      for (let localZ = 1; localZ < depth - 1; localZ += 2) interior(1, localZ, BlockId.Bookshelf);
+      interior(width - 2, 1, BlockId.Workbench);
+    } else if (building.kind === "workshop") {
+      interior(1, 1, BlockId.Workbench);
+      interior(width - 2, 1, BlockId.Crate);
+      interior(Math.floor(width / 2), 1, BlockId.PolishedStone);
+    } else if (building.kind === "tower") {
+      interior(1, 1, BlockId.RopeLadder);
+      interior(Math.floor(width / 2), Math.floor(depth / 2), BlockId.WayfinderBrazier, wallHeight + 2);
+    }
+  }
+
+  private layVillagePath(chunk: ChunkData, fromX: number, fromZ: number, toX: number, toZ: number, xFirst: boolean): void {
+    let x = fromX;
+    let z = fromZ;
+    const place = (): void => {
+      if (Math.abs(x - toX) <= 3 && Math.abs(z - toZ) <= 3) return;
+      const y = this.getHeight(x, z);
+      this.villageBlock(chunk, x, y, z, BlockId.Cobblestone);
+      this.villageBlock(chunk, x, y + 1, z, BlockId.Air);
+      this.villageBlock(chunk, x, y + 2, z, BlockId.Air);
+    };
+    const walkX = (): void => {
+      while (x !== toX) {
+        place();
+        x += Math.sign(toX - x);
+      }
+    };
+    const walkZ = (): void => {
+      while (z !== toZ) {
+        place();
+        z += Math.sign(toZ - z);
+      }
+    };
+    if (xFirst) { walkX(); walkZ(); } else { walkZ(); walkX(); }
+    place();
+  }
+
+  private addVillageLandmark(chunk: ChunkData, plan: VillagePlan): void {
+    const biome = this.getBiome(plan.centerX, plan.centerZ);
+    let plazaY = 0;
+    for (let dx = -3; dx <= 3; dx += 1) {
+      for (let dz = -3; dz <= 3; dz += 1) plazaY = Math.max(plazaY, this.getHeight(plan.centerX + dx, plan.centerZ + dz));
+    }
+    for (let dx = -3; dx <= 3; dx += 1) {
+      for (let dz = -3; dz <= 3; dz += 1) {
+        const x = plan.centerX + dx;
+        const z = plan.centerZ + dz;
+        const terrainY = this.getHeight(x, z);
+        for (let y = terrainY + 1; y <= plazaY; y += 1) this.villageBlock(chunk, x, y, z, BlockId.Cobblestone);
+        this.villageBlock(chunk, x, plazaY, z, (Math.abs(dx) + Math.abs(dz)) % 3 === 0 ? BlockId.PolishedStone : BlockId.Cobblestone);
+        for (let y = plazaY + 1; y <= plazaY + 5; y += 1) this.villageBlock(chunk, x, y, z, BlockId.Air);
+      }
+    }
+    this.villageBlock(chunk, plan.centerX, plazaY + 1, plan.centerZ, BlockId.TradePost);
+    this.villageBlock(chunk, plan.centerX + 1, plazaY + 1, plan.centerZ, BlockId.Crate);
+    for (let dx = -2; dx <= 2; dx += 1) {
+      for (let dz = -2; dz <= 2; dz += 1) {
+        if (Math.abs(dx) === 2 && Math.abs(dz) === 2) {
+          for (let dy = 1; dy <= 3; dy += 1) this.villageBlock(chunk, plan.centerX + dx, plazaY + dy, plan.centerZ + dz, BlockId.TimberFence);
+        }
+        this.villageBlock(chunk, plan.centerX + dx, plazaY + 4, plan.centerZ + dz, (dx + dz + this.seed) % 3 === 0 ? BlockId.Thatch : BlockId.MarketCanopy);
+      }
+    }
+    for (const [dx, dz] of [[-4, 0], [4, 0], [0, -4], [0, 4]]) {
+      this.villageBlock(chunk, plan.centerX + dx, plazaY + 1, plan.centerZ + dz, BlockId.WayfinderBrazier);
+    }
+
+    for (let index = 0; index < plan.buildings.length; index += 1) {
+      const building = plan.buildings[index];
+      const dimensions: Record<VillageBuildingKind, [number, number]> = {
+        cottage: [5, 5], longhouse: [7, 5], forge: [6, 5], library: [5, 6],
+        workshop: [6, 5], tower: [5, 5], farm: [7, 7],
+      };
+      const [width, depth] = dimensions[building.kind];
+      const [doorX, doorZ] = this.villageDoor(building, width, depth);
+      this.layVillagePath(chunk, doorX, doorZ, plan.centerX, plan.centerZ, (hash3(plan.centerCx, index, plan.centerCz, this.seed) & 1) === 0);
+      this.buildVillageStructure(chunk, building, biome);
+    }
+
+    const tradeKey = worldKey(plan.centerX, plazaY + 1, plan.centerZ);
+    if (
+      floorDiv(plan.centerX, CHUNK_SIZE) === chunk.cx
+      && floorDiv(plan.centerZ, CHUNK_SIZE) === chunk.cz
+      && !this.machines.has(tradeKey)
+    ) this.machines.set(tradeKey, defaultMachineState(BlockId.TradePost));
+
+    if (chunk.cx !== plan.centerCx || chunk.cz !== plan.centerCz) return;
+    for (let index = 0; index < plan.professions.length; index += 1) {
+      const id = `wayfarer-${plan.centerCx}-${plan.centerCz}-${index}`;
       if (this.mobs.some((mob) => mob.id === id)) continue;
+      const offsetX = (index % 3) - 1;
+      const offsetZ = Math.floor(index / 3) - 1;
       this.mobs.push({
         id,
         kind: "wayfarer",
-        position: { x: baseX + 6.5 + index, y: baseY + 1.01, z: baseZ + 8.5 + (index % 2) },
+        position: { x: plan.centerX + offsetX + 0.5, y: plazaY + 1.01, z: plan.centerZ + offsetZ + 0.5 },
         velocity: { x: 0, y: 0, z: 0 },
         health: 30,
-        yaw: index * 2.1,
-        targetTimer: 1 + index,
+        yaw: (hash3(plan.centerCx, index, plan.centerCz, this.seed) % 628) / 100,
+        targetTimer: 1 + (index % 4),
         attackTimer: 0,
         hurtTimer: 0,
-        voiceTimer: 3 + index * 2,
-        activity: "wander",
-        home: { x: baseX + 8, y: baseY + 1, z: baseZ + 8 },
-        profession: professions[index],
+        voiceTimer: 3 + index * 1.4,
+        activity: index % 3 === 0 ? "idle" : "wander",
+        home: { x: plan.centerX, y: plazaY + 1, z: plan.centerZ },
+        profession: plan.professions[index],
       });
     }
   }
@@ -623,7 +934,7 @@ export class VoxelWorld {
     ] as BlockId;
   }
 
-  private writeBlock(x: number, y: number, z: number, id: BlockId, record = true): void {
+  private writeBlock(x: number, y: number, z: number, id: BlockId, record = true, trackNetwork = record): void {
     const bx = Math.floor(x);
     const by = Math.floor(y);
     const bz = Math.floor(z);
@@ -636,7 +947,10 @@ export class VoxelWorld {
     ] = id;
     chunk.revision += 1;
     const key = worldKey(bx, by, bz);
-    if (record) this.mutations.set(key, id);
+    if (record) {
+      this.mutations.set(key, id);
+      if (trackNetwork) this.pendingNetworkMutations.set(key, id);
+    }
     if (id !== BlockId.Water) this.waterLevels.delete(key);
     if (BLOCKS[id].automation && !this.machines.has(key)) {
       this.machines.set(key, defaultMachineState(id));
@@ -802,8 +1116,31 @@ export class VoxelWorld {
     });
   }
 
+  drainNetworkMutations(): MutationTuple[] {
+    const mutations = Array.from(this.pendingNetworkMutations, ([key, id]) => {
+      const [x, y, z] = key.split(",").map(Number);
+      return [x, y, z, id] as MutationTuple;
+    });
+    this.pendingNetworkMutations.clear();
+    return mutations;
+  }
+
+  applyAuthoritativeMutations(mutations: MutationTuple[]): void {
+    for (const [x, y, z, id] of mutations) {
+      if (
+        Number.isInteger(x)
+        && Number.isInteger(y)
+        && Number.isInteger(z)
+        && y > WORLD_MIN_Y
+        && y < WORLD_MAX_Y
+        && BLOCKS[id]
+      ) this.writeBlock(x, y, z, id, true, false);
+    }
+  }
+
   loadMutations(mutations: MutationTuple[]): void {
     this.mutations.clear();
+    this.pendingNetworkMutations.clear();
     this.chunks.clear();
     for (const [x, y, z, id] of mutations) {
       if (

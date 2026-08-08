@@ -1,11 +1,12 @@
 import { strFromU8, strToU8, zlibSync, unzlibSync } from "fflate";
 import { hashString } from "./prng";
-import { SAVE_VERSION, WORLD_GENERATION_VERSION, WORLD_MAX_Y, WORLD_MIN_Y, WorldSave } from "./types";
+import { SAVE_VERSION, WORLD_MAX_Y, WORLD_MIN_Y, WorldSave } from "./types";
 import { parseWorldKey, worldKey } from "./prng";
 
 export const LOCAL_SAVE_KEY = "voxel-frontier.save.v1";
 const MAX_KEY_LENGTH = 8_000_000;
 const LEGACY_Y_OFFSET = 46;
+const TALL_WORLD_GENERATION = 2;
 
 function shiftPositionY<T extends { y: number }>(position: T): T {
   return {
@@ -21,10 +22,10 @@ function shiftWorldKeyY(key: string): string {
 
 /** Lifts Version 5's 0…47 world state into the taller Version 6 terrain datum. */
 export function migrateWorldSave(save: WorldSave): WorldSave {
-  if ((save.generation ?? 1) >= WORLD_GENERATION_VERSION) return save;
+  if ((save.generation ?? 1) >= TALL_WORLD_GENERATION) return save;
   return {
     ...save,
-    generation: WORLD_GENERATION_VERSION,
+    generation: TALL_WORLD_GENERATION,
     player: {
       ...save.player,
       position: shiftPositionY(save.player.position),

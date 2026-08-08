@@ -8,6 +8,7 @@ import {
   createOriginalTextureAtlas,
   itemForBlock,
   itemName,
+  isLeafBlock,
   tileUv,
 } from "./blocks";
 import { AutomationSystem } from "./automation";
@@ -110,6 +111,7 @@ interface ChunkMeshSet {
 }
 
 const AUTOSAVE_SECONDS = 18;
+const NETWORK_CHECKPOINT_SECONDS = 12;
 
 function cloneInventory(inventory: Inventory): Inventory {
   return { ...inventory };
@@ -437,6 +439,8 @@ export class GameEngine {
   private automationTimer = 0;
   private networkTimer = 0;
   private mobNetworkTimer = 0;
+  private worldNetworkTimer = 0;
+  private checkpointTimer = 0;
   private chunkTimer = 0;
   private mobTimer = 0;
   private mobSpawnTimer = 4;
@@ -786,12 +790,14 @@ export class GameEngine {
     this.automationTimer += dt;
     if (this.automationTimer >= 0.2) {
       this.automationTimer %= 0.2;
-      const players = [
-        { x: this.physics.position.x, y: this.physics.position.y, z: this.physics.position.z },
-        ...Array.from(this.remotePlayers.values(), (player) => player.position),
-      ];
-      const events = this.automation.tick(this.world, players, this.timeOfDay);
-      if (events.length > 0) this.audio.play("machine");
+      if (this.network.role !== "guest") {
+        const players = [
+          { x: this.physics.position.x, y: this.physics.position.y, z: this.physics.position.z },
+          ...Array.from(this.remotePlayers.values(), (player) => player.position),
+        ];
+        const events = this.automation.tick(this.world, players, this.timeOfDay);
+        if (events.length > 0) this.audio.play("machine");
+      }
       this.updateIndicators();
     }
 
@@ -824,6 +830,25 @@ export class GameEngine {
         timeOfDay: this.timeOfDay,
         dayCount: this.dayCount,
       });
+    }
+    this.worldNetworkTimer += dt;
+    if (this.worldNetworkTimer >= 0.5 && this.network.role === "host" && this.network.connectedPeers > 0) {
+      this.worldNetworkTimer = 0;
+      const mutations = this.world.drainNetworkMutations();
+      this.network.send({
+        type: "world-state",
+        mutations,
+        machines: Array.from(this.world.machines, ([key, state]) => [
+          key,
+          { ...state, storage: cloneInventory(state.storage) },
+        ]),
+        ...(mutations.length > 0 ? { waterLevels: this.world.serializeWaterLevels() } : {}),
+      });
+    }
+    this.checkpointTimer += dt;
+    if (this.checkpointTimer >= NETWORK_CHECKPOINT_SECONDS && this.network.role === "host") {
+      this.checkpointTimer = 0;
+      this.network.checkpoint(this.makeSave());
     }
     this.autosaveTimer += dt;
     if (this.autosaveTimer >= AUTOSAVE_SECONDS && this.network.role !== "guest") {
@@ -1408,7 +1433,12 @@ export class GameEngine {
   }
 
   private broadcastMachine(key: string, state: MachineState): void {
-    this.network.send({ type: "machine", key, state: { ...state, storage: cloneInventory(state.storage) } });
+    const message = {
+      type: this.network.role === "guest" ? "request-machine" : "machine",
+      key,
+      state: { ...state, storage: cloneInventory(state.storage) },
+    } as NetworkMessage;
+    this.network.send(message);
   }
 
   private queueChunk(key: string): void {
@@ -2056,7 +2086,12 @@ export class GameEngine {
                 ? new THREE.CylinderGeometry(0.11, 0.21, 0.28, 4)
                 : new THREE.BoxGeometry(0.26, 0.26, 0.26);
       paintBlockUv(geometry, blockId);
-      return new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ map: this.atlas, transparent: !BLOCKS[blockId].opaque, alphaTest: 0.08, side: THREE.DoubleSide }));
+      return new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({
+        map: this.atlas,
+        transparent: !BLOCKS[blockId].opaque && !isLeafBlock(blockId),
+        alphaTest: 0.08,
+        side: THREE.DoubleSide,
+      }));
     }
     const geometry: THREE.BufferGeometry = item.startsWith("tool:")
       ? new THREE.BoxGeometry(0.09, 0.46, 0.09)
@@ -2214,19 +2249,71 @@ export class GameEngine {
     } else if (message.type === "snapshot" && this.network.role === "guest") {
       this.applyRemoteSnapshot(message.save);
       this.callbacks.onToast(`Joined world “${message.save.seed}”`);
+    } else if (message.type === "resync" && this.network.role === "guest") {
+      this.applyRemoteSnapshot(message.save, true);
+      this.callbacks.onToast("Room reconnected · local inventory preserved");
+    } else if (message.type === "host-transfer" && this.network.role === "host") {
+      this.applyRemoteSnapshot(message.save, true);
+      this.callbacks.onToast("The previous host left. You now own the synchronized world.");
     } else if (message.type === "request-block" && this.network.role === "host") {
-      if (Number.isInteger(message.x) && Number.isInteger(message.y) && Number.isInteger(message.z)) {
+      const coordinatesValid = Number.isInteger(message.x)
+        && Number.isInteger(message.y)
+        && Number.isInteger(message.z)
+        && message.y > WORLD_MIN_Y
+        && message.y < WORLD_MAX_Y;
+      const blockValid = Number.isInteger(message.id) && Boolean(BLOCKS[message.id]);
+      const player = this.remotePeerPlayers.get(peerId);
+      const withinReach = coordinatesValid && player && Math.hypot(
+        player.position.x - (message.x + 0.5),
+        player.position.y + 1 - (message.y + 0.5),
+        player.position.z - (message.z + 0.5),
+      ) <= 7;
+      if (withinReach && blockValid) {
         const removed = this.world.getBlock(message.x, message.y, message.z);
         this.applyBlockChange(message.x, message.y, message.z, message.id, true);
         if (message.id === BlockId.Air && this.canHarvest(removed, message.item ?? null)) {
           this.spawnDrop(this.blockDrop(removed), 1, { x: message.x + 0.5, y: message.y - 0.05, z: message.z + 0.5 });
         }
         this.network.send({ ...message, type: "block" });
-      }
+      } else if (coordinatesValid) this.network.send({
+        type: "block",
+        x: message.x,
+        y: message.y,
+        z: message.z,
+        id: this.world.getBlock(message.x, message.y, message.z),
+      }, peerId);
     } else if (message.type === "block") {
       this.applyBlockChange(message.x, message.y, message.z, message.id, true);
+    } else if (message.type === "request-machine" && this.network.role === "host") {
+      if (!message.state || typeof message.state !== "object" || !message.state.storage || typeof message.state.storage !== "object") return;
+      const [x, y, z] = parseWorldKey(message.key);
+      if (![x, y, z].every(Number.isInteger) || y <= WORLD_MIN_Y || y >= WORLD_MAX_Y) return;
+      const player = this.remotePeerPlayers.get(peerId);
+      const blockId = this.world.getBlock(x, y, z);
+      const existing = this.world.machines.get(message.key);
+      const withinReach = player && Math.hypot(
+        player.position.x - (x + 0.5),
+        player.position.y + 1 - (y + 0.5),
+        player.position.z - (z + 0.5),
+      ) <= 9;
+      if (!existing || !withinReach || !BLOCKS[blockId].automation) return;
+      const state = { ...message.state, storage: cloneInventory(message.state.storage) };
+      state.orientation = Math.max(0, Math.min(3, Math.floor(state.orientation))) as 0 | 1 | 2 | 3;
+      state.signal = Math.max(0, Math.min(15, Number.isFinite(state.signal) ? state.signal : 0));
+      state.energy = Math.max(0, Math.min(100_000, Number.isFinite(state.energy) ? state.energy : 0));
+      this.world.machines.set(message.key, state);
+      this.world.setBlock(x, y, z, this.world.getBlock(x, y, z), false);
+      this.network.send({ type: "machine", key: message.key, state });
     } else if (message.type === "machine") {
       this.world.machines.set(message.key, { ...message.state, storage: cloneInventory(message.state.storage) });
+      const [x, y, z] = parseWorldKey(message.key);
+      if ([x, y, z].every(Number.isInteger)) this.world.setBlock(x, y, z, this.world.getBlock(x, y, z), false);
+    } else if (message.type === "world-state" && this.network.role === "guest") {
+      this.world.applyAuthoritativeMutations(message.mutations);
+      if (message.waterLevels) this.world.loadWaterLevels(message.waterLevels);
+      for (const [key, state] of message.machines) {
+        this.world.machines.set(key, { ...state, storage: cloneInventory(state.storage) });
+      }
     } else if (message.type === "request-mob-hit" && this.network.role === "host") {
       const player = this.remotePeerPlayers.get(peerId);
       const mob = this.world.mobs.find((candidate) => candidate.id === message.mobId);
@@ -2322,6 +2409,12 @@ export class GameEngine {
     } else if (message.type === "player") {
       this.remotePlayers.set(message.player.id, message.player);
       this.remotePeerPlayers.set(peerId, message.player);
+      if (this.network.role === "host") {
+        this.world.getChunk(
+          floorDiv(Math.floor(message.player.position.x), CHUNK_SIZE),
+          floorDiv(Math.floor(message.player.position.z), CHUNK_SIZE),
+        );
+      }
     } else if (message.type === "peer-left") {
       const player = this.remotePeerPlayers.get(message.playerId);
       if (player) this.remotePlayers.delete(player.id);
@@ -2331,7 +2424,7 @@ export class GameEngine {
     }
   }
 
-  private applyRemoteSnapshot(save: WorldSave): void {
+  private applyRemoteSnapshot(save: WorldSave, preserveLocalPlayer = false): void {
     this.world = new VoxelWorld(save.seed, save.generation ?? WORLD_GENERATION_VERSION);
     this.wildlifeRandom = seededRandom(hashString(`wildlife:${this.world.seedText}`));
     this.world.loadMutations(save.mutations);
@@ -2344,18 +2437,20 @@ export class GameEngine {
     this.timeOfDay = save.timeOfDay;
     this.dayCount = save.dayCount ?? this.dayCount;
     this.mode = save.mode ?? this.mode;
-    this.inventory = this.mode === "creative" ? creativeInventory() : {};
-    this.hotbar = defaultHotbar(this.mode);
-    this.inventorySlots = createInventoryLayout(this.inventory, undefined, this.hotbar);
-    this.hotbar = hotbarFromLayout(this.inventorySlots);
-    this.selectedSlot = 0;
-    this.health = 100;
-    this.hunger = 100;
-    this.stamina = 100;
-    this.tradeCredit = 0;
-    this.creativeFlying = false;
-    this.viewModel.setItem(this.hotbar[0]);
-    this.physics.position.set(save.player.position.x + 1.4, save.player.position.y, save.player.position.z + 1.4);
+    if (!preserveLocalPlayer) {
+      this.inventory = this.mode === "creative" ? creativeInventory() : {};
+      this.hotbar = defaultHotbar(this.mode);
+      this.inventorySlots = createInventoryLayout(this.inventory, undefined, this.hotbar);
+      this.hotbar = hotbarFromLayout(this.inventorySlots);
+      this.selectedSlot = 0;
+      this.health = 100;
+      this.hunger = 100;
+      this.stamina = 100;
+      this.tradeCredit = 0;
+      this.creativeFlying = false;
+      this.physics.position.set(save.player.position.x + 1.4, save.player.position.y, save.player.position.z + 1.4);
+    }
+    this.viewModel.setItem(this.hotbar[this.selectedSlot]);
     for (const meshSet of this.chunks.values()) {
       this.chunkRoot.remove(meshSet.group);
       disposeObject(meshSet.group);
@@ -2706,7 +2801,7 @@ export class GameEngine {
   makeSave(): WorldSave {
     return {
       version: SAVE_VERSION,
-      generation: WORLD_GENERATION_VERSION,
+      generation: this.world.generation,
       createdAt: Date.now(),
       seed: this.world.seedText,
       mode: this.mode,
@@ -2742,7 +2837,9 @@ export class GameEngine {
 
   saveNow(showToast = true): string {
     try {
-      const key = saveLocally(this.makeSave());
+      const save = this.makeSave();
+      const key = saveLocally(save);
+      if (this.network.role === "host") this.network.checkpoint(save);
       if (showToast) this.callbacks.onToast(`World saved · ${key.length.toLocaleString()} character key`);
       return key;
     } catch (error) {

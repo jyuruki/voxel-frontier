@@ -26,6 +26,24 @@ export function seededRandom(seed: number): () => number {
   };
 }
 
+const WORLD_SEED_ADJECTIVES = [
+  "Amber", "Bright", "Copper", "Distant", "Frosted", "Hidden", "Lunar", "Misty",
+  "Quiet", "River", "Solar", "Verdant", "Wild", "Windy", "Woven",
+] as const;
+
+const WORLD_SEED_LANDSCAPES = [
+  "Basin", "Cedar", "Delta", "Hollow", "Mesa", "Orchard", "Prairie", "Range",
+  "Reach", "Ridge", "Valley", "Watershed", "Wilds",
+] as const;
+
+/** Creates a readable, high-entropy seed without running during server render. */
+export function createRandomWorldSeed(): string {
+  const entropy = crypto.getRandomValues(new Uint32Array(3));
+  const adjective = WORLD_SEED_ADJECTIVES[entropy[0] % WORLD_SEED_ADJECTIVES.length];
+  const landscape = WORLD_SEED_LANDSCAPES[entropy[1] % WORLD_SEED_LANDSCAPES.length];
+  return `${adjective} ${landscape} ${entropy[2].toString(36).toUpperCase().padStart(6, "0")}`;
+}
+
 function smoothstep(value: number): number {
   return value * value * (3 - 2 * value);
 }
@@ -106,4 +124,3 @@ export function parseWorldKey(key: string): [number, number, number] {
   const [x, y, z] = key.split(",").map(Number);
   return [x, y, z];
 }
-

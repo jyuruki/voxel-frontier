@@ -4,7 +4,7 @@ export const WORLD_MAX_Y = 320;
 export const WORLD_HEIGHT = WORLD_MAX_Y - WORLD_MIN_Y;
 export const SEA_LEVEL = 64;
 export const SAVE_VERSION = 1;
-export const WORLD_GENERATION_VERSION = 2;
+export const WORLD_GENERATION_VERSION = 3;
 
 export type GameMode = "survival" | "creative";
 

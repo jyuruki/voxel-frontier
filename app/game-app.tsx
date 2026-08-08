@@ -15,6 +15,7 @@ import { itemSalePoints } from "./game/economy";
 import { HOTBAR_START, INVENTORY_SLOT_COUNT } from "./game/inventory";
 import { ItemArt } from "./item-art";
 import { NetworkSession } from "./game/network";
+import { createRandomWorldSeed } from "./game/prng";
 import {
   decodeWorldKey,
   downloadWorldKey,
@@ -294,7 +295,7 @@ export default function GameApp() {
   const [hud, setHud] = useState<HudState>(EMPTY_HUD);
   const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS);
   const [playerName, setPlayerName] = useState("Traveler");
-  const [seed, setSeed] = useState("Copper Skies");
+  const [seed, setSeed] = useState("");
   const [gameMode, setGameMode] = useState<GameMode>("survival");
   const [saveAvailable, setSaveAvailable] = useState(false);
   const [isTouch, setIsTouch] = useState(false);
@@ -310,10 +311,6 @@ export default function GameApp() {
   const [networkMode, setNetworkMode] = useState<"host" | "join">("host");
   const [roomCode, setRoomCode] = useState("");
   const [roomCodeInput, setRoomCodeInput] = useState("");
-  const [inviteKey, setInviteKey] = useState("");
-  const [joinKey, setJoinKey] = useState("");
-  const [answerKey, setAnswerKey] = useState("");
-  const [guestAnswer, setGuestAnswer] = useState("");
   const [networkBusy, setNetworkBusy] = useState(false);
   const [launchError, setLaunchError] = useState("");
   const toastTimer = useRef<number | null>(null);
@@ -415,7 +412,7 @@ export default function GameApp() {
   }, [playerName]);
 
   const begin = (worldSeed: string, save?: WorldSave | null, mode: GameMode = save?.mode ?? gameMode) => {
-    const normalized = worldSeed.trim() || `Frontier-${Math.floor(Math.random() * 999999)}`;
+    const normalized = worldSeed.trim() || createRandomWorldSeed();
     setHud({ ...EMPTY_HUD, gameMode: mode });
     setLaunchError("");
     setOverlay("none");
@@ -484,18 +481,18 @@ export default function GameApp() {
             <span className="brand__mark"><i /><i /><i /></span>
             <span><strong>VOXEL</strong><em>FRONTIER</em></span>
           </div>
-          <span className="build-tag">Highlands &amp; Handshakes · Version 6.1</span>
+          <span className="build-tag">Shared Horizons · Version 7</span>
         </header>
 
         <section className="landing__content">
           <div className="hero-copy">
             <p className="eyebrow">Shape the wild. Let the world answer.</p>
-            <h1>Climb higher. Build smarter. Bring a friend.</h1>
+            <h1>Build a world worth sharing.</h1>
             <p>
-              Scale terrain from deep slate at Y −64 to snowbound summits near Y 320, dam flowing water, trade any resource, prototype in flight, or share one short code to explore together.
+              Cross rivers and rolling country, discover villages that grow from different plans, build anywhere from Y −64 to 319, or open a server-backed room with one six-character code.
             </p>
             <div className="feature-chips">
-              <span>One-code multiplayer</span><span>−64 to 320 terrain</span><span>Creative flight</span><span>Universal village sales</span>
+              <span>Reliable room server</span><span>Fresh seed by default</span><span>Dynamic villages</span><span>Balanced terrain</span>
             </div>
           </div>
 
@@ -511,9 +508,10 @@ export default function GameApp() {
             <label>
               World seed
               <div className="seed-row">
-                <input value={seed} maxLength={42} onChange={(event) => setSeed(event.target.value)} placeholder="Any phrase or number" />
-                <button className="icon-button" onClick={() => setSeed(`Frontier-${Math.floor(Math.random() * 999999)}`)} title="Random seed">↻</button>
+                <input value={seed} maxLength={42} onChange={(event) => setSeed(event.target.value)} placeholder="Blank = a fresh random world" />
+                <button className="icon-button" onClick={() => setSeed(createRandomWorldSeed())} title="Generate a visible random seed">↻</button>
               </div>
+              <small>Leave this blank for a different seed every time. Enter a phrase only when you want to replay a specific world.</small>
             </label>
             <fieldset className="mode-picker">
               <legend>World mode</legend>
@@ -763,11 +761,12 @@ export default function GameApp() {
       )}
 
       {overlay === "network" && (
-        <Modal title="Online room" eyebrow="One-code encrypted multiplayer" onClose={closeOverlay} wide>
+        <Modal title="Online room" eyebrow="Server-backed multiplayer · Version 7" onClose={closeOverlay} wide>
           <div className="network-callout">
-            <strong>Share one short room code. Direct or relayed, no answer key is needed.</strong>
-            <span>Discovery relays introduce browsers. WebRTC connects them directly when possible and automatically uses an encrypted TURN relay when NAT or a firewall blocks that route.</span>
+            <strong>Share one six-character code. Both players connect to the same room server.</strong>
+            <span>No SDP exchange, router negotiation, or manual answer key. The server routes authoritative world updates, preserves checkpoints, reconnects interrupted browsers, and promotes a guest if the host leaves.</span>
           </div>
+          {!network.serverConfigured && <p className="form-error">This build does not have a multiplayer server URL yet. The game server must be deployed before online rooms can open.</p>}
           <div className="tab-row">
             <button className={networkMode === "host" ? "active" : ""} onClick={() => setNetworkMode("host")}>Host this world</button>
             <button className={networkMode === "join" ? "active" : ""} onClick={() => setNetworkMode("join")}>Join a host</button>
@@ -775,7 +774,7 @@ export default function GameApp() {
           {networkMode === "host" ? (
             <div className="quick-room">
               <div className="quick-room__copy"><span className="step-number">1</span><div><h3>Open a room</h3><p>Keep this tab open. Any friend can join with the same code.</p></div></div>
-              <button className="primary-button" disabled={networkBusy} onClick={async () => {
+              <button className="primary-button" disabled={networkBusy || !network.serverConfigured} onClick={async () => {
                 setNetworkBusy(true);
                 try {
                   const code = await network.hostRoom();
@@ -784,7 +783,7 @@ export default function GameApp() {
                   showToast("Room opened. Share the code with your friend.");
                 } catch (error) { showToast(error instanceof Error ? error.message : "Could not open a room."); }
                 setNetworkBusy(false);
-              }}>{networkBusy ? "Securing routes…" : roomCode && network.role === "host" ? "Create a new code" : "Create room code"}</button>
+              }}>{networkBusy ? "Opening server room…" : roomCode && network.role === "host" ? "Create a new code" : "Create room code"}</button>
               {roomCode && network.role === "host" && (
                 <div className="room-code-card">
                   <small>YOUR ROOM CODE</small><strong>{roomCode}</strong>
@@ -794,10 +793,10 @@ export default function GameApp() {
             </div>
           ) : (
             <div className="quick-room">
-              <div className="quick-room__copy"><span className="step-number">1</span><div><h3>Enter the host&apos;s code</h3><p>The host&apos;s world will synchronize automatically after the route opens.</p></div></div>
+              <div className="quick-room__copy"><span className="step-number">1</span><div><h3>Enter the host&apos;s code</h3><p>The room server will synchronize the host&apos;s world automatically.</p></div></div>
               <div className="room-code-entry">
-                <input value={roomCodeInput} maxLength={48} autoCapitalize="characters" spellCheck={false} onChange={(event) => setRoomCodeInput(event.target.value.toUpperCase())} placeholder="EMBER-OTTER-4827" />
-                <button className="primary-button" disabled={roomCodeInput.trim().length < 6 || networkBusy} onClick={async () => {
+                <input value={roomCodeInput} maxLength={6} autoCapitalize="characters" spellCheck={false} onChange={(event) => setRoomCodeInput(event.target.value.toUpperCase().replace(/[^A-Z2-9]/g, ""))} placeholder="F7K2P9" />
+                <button className="primary-button" disabled={roomCodeInput.trim().length !== 6 || networkBusy || !network.serverConfigured} onClick={async () => {
                   setNetworkBusy(true);
                   try {
                     const code = await network.joinRoomCode(roomCodeInput);
@@ -805,43 +804,10 @@ export default function GameApp() {
                     showToast(`Joining ${code}…`);
                   } catch (error) { showToast(error instanceof Error ? error.message : "Could not join the room."); }
                   setNetworkBusy(false);
-                }}>{networkBusy ? "Securing routes…" : "Join room"}</button>
+                }}>{networkBusy ? "Joining server room…" : "Join room"}</button>
               </div>
             </div>
           )}
-          <details className="network-manual">
-            <summary>Manual signaling fallback</summary>
-            <p>Use this only if room discovery is unavailable. It requires one invite from the host and one answer back from the guest; direct and TURN relay routes remain available.</p>
-            {networkMode === "host" ? (
-              <div className="network-steps">
-                <button className="secondary-button" disabled={networkBusy} onClick={async () => {
-                  setNetworkBusy(true);
-                  try { setInviteKey(await network.createHostInvite()); }
-                  catch (error) { showToast(error instanceof Error ? error.message : "Invite failed."); }
-                  setNetworkBusy(false);
-                }}>{networkBusy ? "Finding route…" : "Generate manual invite"}</button>
-                {inviteKey && <><textarea className="key-field key-field--small" readOnly value={inviteKey} /><button className="secondary-button" onClick={() => void copyText(inviteKey, "Invite")}>Copy invite</button></>}
-                <textarea className="key-field key-field--small" value={guestAnswer} onChange={(event) => setGuestAnswer(event.target.value)} placeholder="Paste the guest answer…" />
-                <button className="secondary-button" disabled={!guestAnswer || networkBusy} onClick={async () => {
-                  setNetworkBusy(true);
-                  try { await network.acceptAnswer(guestAnswer); showToast("Answer accepted. Connecting…"); }
-                  catch (error) { showToast(error instanceof Error ? error.message : "Could not accept answer."); }
-                  setNetworkBusy(false);
-                }}>Accept manual answer</button>
-              </div>
-            ) : (
-              <div className="network-steps">
-                <textarea className="key-field key-field--small" value={joinKey} onChange={(event) => setJoinKey(event.target.value)} placeholder="Paste the host's manual invite…" />
-                <button className="secondary-button" disabled={!joinKey || networkBusy} onClick={async () => {
-                  setNetworkBusy(true);
-                  try { setAnswerKey(await network.joinInvite(joinKey)); }
-                  catch (error) { showToast(error instanceof Error ? error.message : "Could not join."); }
-                  setNetworkBusy(false);
-                }}>{networkBusy ? "Finding route…" : "Create manual answer"}</button>
-                {answerKey && <><textarea className="key-field key-field--small" readOnly value={answerKey} /><button className="secondary-button" onClick={() => void copyText(answerKey, "Answer")}>Copy answer</button></>}
-              </div>
-            )}
-          </details>
           {network.role !== "offline" && <button className="text-button danger" onClick={() => { network.close(); setRoomCode(""); }}>Leave online room</button>}
           <p className="network-status-line"><span className={network.role === "offline" ? "" : "online"} /> {hud.networkStatus}</p>
         </Modal>
@@ -971,31 +937,31 @@ function OptionsModal({
 
 function GuideModal({ onClose }: { onClose: () => void }) {
   return (
-    <Modal title="Frontier field guide" eyebrow="Highlands & Handshakes · Version 6.1" onClose={onClose} wide>
+    <Modal title="Frontier field guide" eyebrow="Shared Horizons · Version 7" onClose={onClose} wide>
       <div className="guide-grid">
         <article className="guide-card guide-card--accent">
-          <span>01</span><h3>One room code</h3>
-          <p>Host an online room and share one readable code. Discovery is automatic; WebRTC stays direct when possible and falls back to an encrypted TURN relay across restrictive NAT or firewalls. The old invite/answer flow survives as a manual signaling fallback.</p>
+          <span>01</span><h3>Server-backed rooms</h3>
+          <p>Host a world and share one six-character code. Both browsers connect over WebSockets to the same room server, which enforces host authority, saves checkpoints, reconnects interruptions, and can promote a guest if the host leaves.</p>
         </article>
         <article className="guide-card">
-          <span>02</span><h3>Water can be engineered</h3>
-          <p>Place blocks directly into water. A dam removes every downstream flow cell that can no longer reach its source, while reachable water refills to the same seven-block limit.</p>
+          <span>02</span><h3>Balanced horizons</h3>
+          <p>Generation 3 favors rivers, plains, and rolling country. Mountain ranges still exist, but natural terrain is capped far below the Y 320 build ceiling so the upper world belongs to ambitious builders.</p>
         </article>
         <article className="guide-card">
-          <span>03</span><h3>A taller frontier</h3>
-          <p>The build space now spans Y −64 through 319. Broad hill country leads into rare Skybreak ranges with sharp ridges and summits that can approach the Y 320 ceiling.</p>
+          <span>03</span><h3>Living settlements</h3>
+          <p>Villages now spread across multiple chunks with crossroads, courtyards, or lanes; 3–7 randomized cottages, farms, forges, libraries, workshops, halls, and towers; varied populations; paths; markets; and biome-aware materials.</p>
         </article>
         <article className="guide-card">
-          <span>04</span><h3>Sell anything</h3>
-          <p>Drag any carried stack into a villager&apos;s sell tray. Every item has a value, fractional value carries forward, sales pay only Frontier Marks, and each profession keeps distinct purchase stock.</p>
+          <span>04</span><h3>A fresh world by default</h3>
+          <p>Leave the seed field blank and every new world gets a new readable, high-entropy seed. Enter a phrase only when you deliberately want to replay the same terrain.</p>
         </article>
         <article className="guide-card">
-          <span>05</span><h3>Creative control</h3>
-          <p>Press V or double-tap Space to fly; Space rises and Ctrl descends. Instant mining is edge-triggered, so one click removes exactly one aimed block instead of drilling a line.</p>
+          <span>05</span><h3>Clean foliage</h3>
+          <p>Leaf textures now use alpha-tested depth rendering. Their small cutout gaps remain, but water behind a canopy no longer makes the entire tree look translucent.</p>
         </article>
         <article className="guide-card">
-          <span>06</span><h3>Readable engineering &amp; combat</h3>
-          <p>Every Flux component has unique item art; observers and funnels show direction; repeater delay has four visible settings. Strike while descending for a 1.5× critical hit and clear feedback.</p>
+          <span>06</span><h3>Everything from Version 6</h3>
+          <p>Finite water and dams, Creative flight, exact one-click mining, ledge-safe crouching, critical hits, universal village sales, four-delay repeaters, directional machinery, survival progression, and portable world keys remain intact.</p>
         </article>
       </div>
       <div className="controls-table">
@@ -1004,7 +970,7 @@ function GuideModal({ onClose }: { onClose: () => void }) {
       </div>
       <div className="scope-note">
         <strong>What this release contains</strong>
-        <p>Version 6.1 combines one-code online rooms with automatic TURN fallback and reconnection grace, source-aware water dams, a −64…320 world envelope, high mountain generation, legacy-world elevation migration, Creative flight and exact one-click mining, edge-safe crouching, critical hits, universal item sales, clearer directional machinery, unique circuit icons, 115 original textured blocks, ten animated creature types, autosave, and portable VF1 keys.</p>
+        <p>Version 7 replaces WebRTC and manual answer keys with a stateful room server, six-character codes, checkpoint persistence, live world/machine deltas, reconnects, host handoff, and server-side authority rules. It also introduces Generation 3 terrain, randomized multi-chunk villages, fresh default seeds, corrected leaf/water depth, 42 deterministic simulation tests, and an end-to-end two-client multiplayer lifecycle test.</p>
       </div>
     </Modal>
   );

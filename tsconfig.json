@@ -37,6 +37,7 @@
     "examples/**",
     "build/**",
     "drizzle.config.ts",
-    "vite.config.ts"
+    "vite.config.ts",
+    "server/**"
   ]
 }

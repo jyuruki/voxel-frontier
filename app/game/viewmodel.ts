@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BLOCKS, blockForItem, tileUv } from "./blocks";
+import { BLOCKS, blockForItem, isLeafBlock, tileUv } from "./blocks";
 import { ItemId } from "./types";
 
 type SwingKind = "mine" | "attack" | "place" | "use";
@@ -138,8 +138,8 @@ export class FirstPersonViewModel {
         depthTest: false,
         depthWrite: false,
         toneMapped: false,
-        transparent: true,
-        opacity: BLOCKS[blockId].opaque ? 1 : 0.82,
+        transparent: !BLOCKS[blockId].opaque && !isLeafBlock(blockId),
+        opacity: BLOCKS[blockId].opaque || isLeafBlock(blockId) ? 1 : 0.82,
         side: THREE.DoubleSide,
       });
       const mesh = new THREE.Mesh(geometry, material);

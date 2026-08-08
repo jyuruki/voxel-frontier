@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
 import test from "node:test";
 import * as THREE from "three";
 import { AutomationSystem } from "../app/game/automation";
-import { ALL_ITEMS, BLOCKS, RECIPES, itemForBlock } from "../app/game/blocks";
+import { ALL_ITEMS, BLOCKS, RECIPES, isLeafBlock, itemForBlock } from "../app/game/blocks";
 import { CRITICAL_DAMAGE_MULTIPLIER, isCriticalHit, weaponStats } from "../app/game/combat";
 import { itemSalePoints } from "../app/game/economy";
-import { createIceServers, createTurnCredentials, hasTurnRelay } from "../app/game/ice";
 import {
   HOTBAR_START,
   INVENTORY_SLOT_COUNT,
@@ -16,12 +14,15 @@ import {
   shiftInventorySlot,
 } from "../app/game/inventory";
 import { MOB_DEFINITIONS, mobIntersectsSolid, mobWaterImmersion, moveMobWithCollision, resolveMobPenetration } from "../app/game/mobs";
-import { generateRoomCode, normalizeRoomCode } from "../app/game/network";
+import { blockRenderLayer } from "../app/game/mesher";
+import { configuredMultiplayerServer, generateRoomCode, normalizeRoomCode } from "../app/game/network";
 import { PlayerPhysics } from "../app/game/physics";
+import { createRandomWorldSeed } from "../app/game/prng";
 import { voxelRaycast } from "../app/game/raycast";
 import { decodeWorldKey, encodeWorldKey } from "../app/game/save";
 import { BlockId, CHUNK_SIZE, InputFrame, MobState, SAVE_VERSION, WORLD_GENERATION_VERSION, WORLD_MAX_Y, WORLD_MIN_Y, WorldSave } from "../app/game/types";
-import { EMBERDEEP_OFFSET, isVillageChunk, VoxelWorld } from "../app/game/world";
+import { EMBERDEEP_OFFSET, createVillagePlan, isVillageChunk, VoxelWorld } from "../app/game/world";
+import { isValidRoomCode, routeGameMessage } from "../shared/room-protocol";
 
 function prepareArena(
   world: VoxelWorld,
@@ -58,17 +59,21 @@ test("procedural terrain is deterministic for a seed", () => {
   assert.ok(samples.some(([x, , z]) => first.getHeight(x, z) !== different.getHeight(x, z)));
 });
 
-test("terrain mixes broad lowlands, rolling hills, and rare tall mountains", () => {
+test("terrain is mostly low rolling country with rare bounded mountains", () => {
   const world = new VoxelWorld("Copper Skies");
   const heights: number[] = [];
   for (let x = -512; x <= 512; x += 8) {
     for (let z = -512; z <= 512; z += 8) heights.push(world.getHeight(x, z));
   }
-  const tall = heights.filter((height) => height >= 200).length / heights.length;
-  const hilly = heights.filter((height) => height >= 120).length / heights.length;
-  assert.ok(Math.max(...heights) - Math.min(...heights) >= 240, "terrain should span lowlands through dramatic summits");
-  assert.ok(hilly > 0.2 && hilly < 0.5, `rolling terrain balance drifted to ${(hilly * 100).toFixed(1)}%`);
-  assert.ok(tall > 0.03 && tall < 0.15, `mountain balance drifted to ${(tall * 100).toFixed(1)}%`);
+  const lowCountry = heights.filter((height) => height < 100).length / heights.length;
+  const mountains = heights.filter((height) => height >= 110).length / heights.length;
+  const sorted = heights.toSorted((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  assert.ok(Math.max(...heights) - Math.min(...heights) >= 65, "terrain should still include meaningful ranges");
+  assert.ok(median >= 62 && median <= 78, `median terrain drifted to Y ${median}`);
+  assert.ok(lowCountry > 0.95, `only ${(lowCountry * 100).toFixed(1)}% of terrain remained low country`);
+  assert.ok(mountains > 0.002 && mountains < 0.03, `mountain balance drifted to ${(mountains * 100).toFixed(2)}%`);
+  assert.ok(Math.max(...heights) <= 196, "natural terrain must leave the upper build space empty");
   assert.ok(Math.max(...heights) < WORLD_MAX_Y && Math.min(...heights) > WORLD_MIN_Y);
 });
 
@@ -82,6 +87,19 @@ test("block mutations work across negative chunk boundaries", () => {
   restored.loadMutations(world.serializeMutations());
   assert.equal(restored.getBlock(-17, 42, -1), BlockId.FluxLamp);
   assert.equal(restored.getBlock(-16, 42, 0), BlockId.Toggle);
+});
+
+test("authoritative mutation deltas drain once without echoing on guests", () => {
+  const host = new VoxelWorld("network mutation bench");
+  host.setBlock(2, 72, -3, BlockId.FluxLamp);
+  const delta = host.drainNetworkMutations();
+  assert.deepEqual(delta, [[2, 72, -3, BlockId.FluxLamp]]);
+  assert.deepEqual(host.drainNetworkMutations(), []);
+  const guest = new VoxelWorld("network mutation bench");
+  guest.applyAuthoritativeMutations(delta);
+  assert.equal(guest.getBlock(2, 72, -3), BlockId.FluxLamp);
+  assert.deepEqual(guest.drainNetworkMutations(), [], "received authority should not echo back into the network");
+  assert.ok(guest.serializeMutations().some(([x, y, z, id]) => x === 2 && y === 72 && z === -3 && id === BlockId.FluxLamp));
 });
 
 test("the buildable world spans y -64 through the 320 ceiling", () => {
@@ -220,9 +238,11 @@ test("portable world keys round-trip and detect corruption", () => {
   delete legacySave.mode;
   delete legacySave.dayCount;
   const migrated = decodeWorldKey(encodeWorldKey(legacySave));
-  assert.equal(migrated.generation, WORLD_GENERATION_VERSION);
+  assert.equal(migrated.generation, 2);
   assert.equal(migrated.player.position.y, legacySave.player.position.y + 46);
   assert.equal(migrated.mutations[0][1], legacySave.mutations[0][1] + 46);
+  const versionSixSave = { ...save, generation: 2, createdAt: 654321 };
+  assert.deepEqual(decodeWorldKey(encodeWorldKey(versionSixSave)), versionSixSave, "Generation 2 worlds must not be rewritten onto Generation 3 terrain");
   const parts = key.split(".");
   const damaged = `${parts[0]}.${parts[1]}x.${parts[2]}`;
   assert.throws(() => decodeWorldKey(damaged), /damaged|integrity/i);
@@ -339,24 +359,36 @@ test("every inventory item has a deterministic villager sale value", () => {
   assert.ok(itemSalePoints(itemForBlock(BlockId.PulseRepeater)) > itemSalePoints(itemForBlock(BlockId.Stone)));
 });
 
-test("automatic multiplayer uses normalized human-readable room codes", () => {
-  assert.equal(normalizeRoomCode(" ember otter 4827 "), "EMBER-OTTER-4827");
-  assert.match(generateRoomCode(), /^[A-Z]+-[A-Z]+-\d{4}$/);
+test("server multiplayer uses normalized six-character room codes", () => {
+  assert.equal(normalizeRoomCode(" f7-k2-p9 "), "F7K2P9");
+  const code = generateRoomCode();
+  assert.match(code, /^[A-HJ-NP-Z2-9]{6}$/);
+  assert.equal(isValidRoomCode(code), true);
 });
 
-test("multiplayer has valid expiring TURN routes for restrictive networks", async () => {
-  const now = Date.UTC(2026, 7, 8, 12, 0, 0);
-  const credentials = await createTurnCredentials(now);
-  assert.equal(credentials.username, `${Math.floor(now / 1000) + 86_400}:voxel-frontier`);
-  assert.equal(
-    credentials.credential,
-    createHmac("sha1", "openrelayprojectsecret").update(credentials.username).digest("base64"),
-  );
-  const servers = await createIceServers(now);
-  assert.equal(hasTurnRelay(servers), true);
-  const relayUrls = servers.flatMap((server) => Array.isArray(server.urls) ? server.urls : [server.urls]);
-  assert.ok(relayUrls.some((url) => url.startsWith("turns:") && url.includes("transport=tcp")));
-  assert.ok(relayUrls.some((url) => url.startsWith("turn:") && url.endsWith(":80")));
+test("room server policy preserves host authority and upgrades secure endpoints", () => {
+  assert.equal(routeGameMessage("guest", "request-block"), "host");
+  assert.equal(routeGameMessage("guest", "request-machine"), "host");
+  assert.equal(routeGameMessage("guest", "block"), "reject");
+  assert.equal(routeGameMessage("guest", "player"), "broadcast");
+  assert.equal(routeGameMessage("host", "snapshot"), "snapshot");
+  assert.equal(configuredMultiplayerServer("https://rooms.example.com/"), "wss://rooms.example.com");
+  assert.equal(configuredMultiplayerServer("ftp://rooms.example.com"), null);
+});
+
+test("fresh world seeds are readable and unique", () => {
+  const seeds = new Set(Array.from({ length: 24 }, () => createRandomWorldSeed()));
+  assert.equal(seeds.size, 24);
+  assert.ok(Array.from(seeds).every((seed) => /^[A-Za-z]+ [A-Za-z]+ [A-Z0-9]{6,7}$/.test(seed)));
+});
+
+test("leaf cutouts write depth instead of blending with water behind them", () => {
+  for (const id of [BlockId.EmberwoodLeaves, BlockId.FrostpineLeaves, BlockId.RiftwoodLeaves]) {
+    assert.equal(isLeafBlock(id), true);
+    assert.equal(blockRenderLayer(id), "solid");
+  }
+  assert.equal(blockRenderLayer(BlockId.Water), "liquid");
+  assert.equal(blockRenderLayer(BlockId.Glass), "translucent");
 });
 
 test("Wayfarer ruins generate deterministically with an interactable Relic Cache", () => {
@@ -702,11 +734,32 @@ test("villages generate deterministically with homes, markets, and resident Wayf
   }
   assert.ok(village, "expected a valid village in the survey area");
   const villageWayfarers = first.mobs.filter((mob) => mob.kind === "wayfarer" && mob.id.startsWith(`wayfarer-${village.cx}-${village.cz}`));
-  assert.equal(villageWayfarers.length, 4);
-  assert.deepEqual(new Set(villageWayfarers.map((mob) => mob.profession)), new Set(["farmer", "blacksmith", "builder", "riftwright"]));
+  const plan = createVillagePlan(village.cx, village.cz, first.seed);
+  assert.equal(villageWayfarers.length, plan.professions.length);
+  assert.ok(villageWayfarers.length >= 5 && villageWayfarers.length <= 10);
   assert.ok(villageWayfarers.every((mob) => mob.home && mob.activity));
   const second = new VoxelWorld("v4 survey");
   assert.ok(second.getChunk(village.cx, village.cz).blocks.includes(BlockId.TradePost));
+  assert.equal(createVillagePlan(village.cx, village.cz, second.seed).signature, plan.signature);
+});
+
+test("village plans vary in layout, buildings, and population", () => {
+  const world = new VoxelWorld("village diversity survey");
+  const signatures = new Set<string>();
+  const buildingCounts = new Set<number>();
+  const populations = new Set<number>();
+  for (let cx = -48; cx <= 48; cx += 1) {
+    for (let cz = -48; cz <= 48; cz += 1) {
+      if (!isVillageChunk(cx, cz, world.seed)) continue;
+      const plan = createVillagePlan(cx, cz, world.seed);
+      signatures.add(plan.signature);
+      buildingCounts.add(plan.buildings.length);
+      populations.add(plan.professions.length);
+    }
+  }
+  assert.ok(signatures.size >= 12, `only ${signatures.size} distinct village plans were produced`);
+  assert.ok(buildingCounts.size >= 4, "village building counts should vary substantially");
+  assert.ok(populations.size >= 3, "village populations should not be fixed");
 });
 
 test("village candidates are spaced and substantially rarer than Version 4 chunk rolls", () => {

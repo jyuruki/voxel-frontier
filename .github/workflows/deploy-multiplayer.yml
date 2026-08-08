@@ -1,0 +1,31 @@
+name: Deploy free multiplayer server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - "shared/room-protocol.ts"
+      - ".github/workflows/deploy-multiplayer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: multiplayer-server
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Deploy Durable Object room server
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --config server/wrangler.jsonc

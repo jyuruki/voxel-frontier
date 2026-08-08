@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BLOCKS, tileUv } from "./blocks";
+import { BLOCKS, isLeafBlock, tileUv } from "./blocks";
 import { worldKey } from "./prng";
 import { BlockId, CHUNK_SIZE, WORLD_MAX_Y, WORLD_MIN_Y } from "./types";
 import { VoxelWorld } from "./world";
@@ -48,9 +48,19 @@ function targetBuffers(
   translucent: GeometryBuffers,
   liquid: GeometryBuffers,
 ): GeometryBuffers {
-  if (BLOCKS[id].liquid) return liquid;
-  if (!BLOCKS[id].opaque) return translucent;
+  const layer = blockRenderLayer(id);
+  if (layer === "liquid") return liquid;
+  // Leaves use alpha-tested cutouts in the depth-writing solid pass. Sending
+  // them through the blended pass made water behind a tree tint the canopy.
+  if (layer === "solid") return solid;
+  if (layer === "translucent") return translucent;
   return solid;
+}
+
+export function blockRenderLayer(id: BlockId): "solid" | "translucent" | "liquid" {
+  if (BLOCKS[id].liquid) return "liquid";
+  if (isLeafBlock(id) || BLOCKS[id].opaque) return "solid";
+  return "translucent";
 }
 
 function shouldRenderFace(id: BlockId, neighbor: BlockId): boolean {

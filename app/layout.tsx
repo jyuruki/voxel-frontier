@@ -4,9 +4,9 @@ import "./globals.css";
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
 export const metadata: Metadata = {
-  title: "Voxel Frontier — Highlands & Handshakes",
+  title: "Voxel Frontier — Shared Horizons",
   description:
-    "An original voxel survival game with one-code multiplayer, a -64 to 320 procedural world, source-aware water, creative flight, universal trading, combat, and automation.",
+    "An original voxel survival game with server-backed multiplayer, balanced procedural terrain, dynamic villages, source-aware water, creative flight, trading, combat, and automation.",
   applicationName: "Voxel Frontier",
   manifest: `${basePath}/manifest.webmanifest`,
   icons: {
