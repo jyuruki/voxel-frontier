@@ -1,5 +1,6 @@
 import { strFromU8, strToU8, zlibSync, unzlibSync } from "fflate";
 import { joinRoom, type MessageAction, type Room } from "trystero";
+import { createIceServers } from "./ice";
 import { BlockId, DroppedItemState, ItemId, MachineState, MobState, PlayerSnapshot, Vec3Data, WorldSave } from "./types";
 
 export type NetworkMessage =
@@ -33,11 +34,6 @@ type InviteEnvelope = {
   peerId: string;
   sdp: RTCSessionDescriptionInit;
 };
-
-const ICE_SERVERS: RTCIceServer[] = [
-  { urls: "stun:stun.cloudflare.com:3478" },
-  { urls: "stun:stun.l.google.com:19302" },
-];
 
 const NET_PREFIX = "VFNET1.";
 const CHUNK_LENGTH = 12_000;
@@ -225,6 +221,12 @@ export class NetworkSession {
     return `Joining ${this.activeRoomCode ?? "room"}…`;
   }
 
+  private getIceServers(): Promise<RTCIceServer[]> {
+    // Refresh the time-limited credential for every new room attempt so a tab
+    // left open overnight never retries with an expired TURN username.
+    return createIceServers();
+  }
+
   private sendRoomPacket(packet: RoomPacket, target: string | string[]): void {
     if (!this.roomAction || (Array.isArray(target) && target.length === 0)) return;
     void this.roomAction.send(JSON.stringify(packet), { target }).catch(() => {
@@ -256,10 +258,12 @@ export class NetworkSession {
     }
   }
 
-  private enterAutomaticRoom(codeValue: string, role: "host" | "guest"): string {
+  private async enterAutomaticRoom(codeValue: string, role: "host" | "guest"): Promise<string> {
     if (typeof RTCPeerConnection === "undefined") throw new Error("WebRTC is unavailable in this browser.");
     const code = normalizeRoomCode(codeValue);
     if (code.length < 6) throw new Error("Enter the complete room code.");
+    this.onStatus?.("Preparing direct and relay routes…");
+    const iceServers = await this.getIceServers();
     this.close(false);
     this.role = role;
     this.activeRoomCode = code;
@@ -268,9 +272,14 @@ export class NetworkSession {
       password: `voxel-frontier:${code}`,
       trickleIce: true,
       relayConfig: { redundancy: 3 },
-      rtcConfig: { iceServers: ICE_SERVERS },
+      rtcConfig: { iceServers },
     }, `vf6-${code.toLowerCase()}`, {
-      onJoinError: ({ error }) => this.onStatus?.(`Room discovery failed · ${error}`),
+      onJoinError: ({ error }) => {
+        const routeFailure = /TURN|connect to peer|exchanging SDP/i.test(error);
+        this.onStatus?.(routeFailure
+          ? "Network relay could not open a route · retry once or disable a restrictive VPN"
+          : `Room discovery failed · ${error}`);
+      },
     });
     this.room = room;
     this.roomAction = room.makeAction<string>("frontier-v6");
@@ -304,25 +313,27 @@ export class NetworkSession {
     return code;
   }
 
-  hostRoom(code = generateRoomCode()): string {
+  hostRoom(code = generateRoomCode()): Promise<string> {
     return this.enterAutomaticRoom(code, "host");
   }
 
-  joinRoomCode(code: string): string {
+  joinRoomCode(code: string): Promise<string> {
     return this.enterAutomaticRoom(code, "guest");
   }
 
   async createHostInvite(): Promise<string> {
     if (typeof RTCPeerConnection === "undefined") throw new Error("WebRTC is unavailable in this browser.");
+    this.onStatus?.("Preparing direct and relay routes…");
+    const iceServers = await this.getIceServers();
     if (this.room || this.role === "guest") this.close(false);
     this.role = "host";
     const peerId = randomId("guest");
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const pc = new RTCPeerConnection({ iceServers });
     this.configurePeer(peerId, pc);
     const channel = pc.createDataChannel("frontier", { ordered: true });
     this.attachChannel(peerId, channel);
     await pc.setLocalDescription(await pc.createOffer());
-    this.onStatus?.("Gathering a direct route…");
+    this.onStatus?.("Gathering direct and relay routes…");
     await waitForIce(pc);
     if (!pc.localDescription) throw new Error("The browser could not create an invite.");
     this.onStatus?.("Invite ready");
@@ -338,15 +349,17 @@ export class NetworkSession {
     if (typeof RTCPeerConnection === "undefined") throw new Error("WebRTC is unavailable in this browser.");
     const offer = decodeEnvelope(invite);
     if (offer.kind !== "offer") throw new Error("Paste the host's invite key here.");
-    this.close();
+    this.onStatus?.("Preparing direct and relay routes…");
+    const iceServers = await this.getIceServers();
+    this.close(false);
     this.role = "guest";
     this.guestHostId = offer.peerId;
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const pc = new RTCPeerConnection({ iceServers });
     this.configurePeer(offer.peerId, pc);
     pc.addEventListener("datachannel", (event) => this.attachChannel(offer.peerId, event.channel));
     await pc.setRemoteDescription(offer.sdp);
     await pc.setLocalDescription(await pc.createAnswer());
-    this.onStatus?.("Gathering a direct route…");
+    this.onStatus?.("Gathering direct and relay routes…");
     await waitForIce(pc);
     if (!pc.localDescription) throw new Error("The browser could not create an answer.");
     this.onStatus?.("Answer ready · send it to the host");

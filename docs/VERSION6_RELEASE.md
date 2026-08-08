@@ -1,15 +1,22 @@
-# Version 6 — Highlands & Handshakes
+# Version 6.1 — Highlands & Handshakes
 
 Highlands & Handshakes is a connectivity, terrain, simulation, and quality release. It replaces the multiplayer signaling ritual with a single room code, makes water respond to dams, opens the full Y −64…320 building envelope, and turns the prior mountain uplift into unmistakable highland ranges. It also closes several interaction gaps in Creative, combat, crouching, trade, and circuit readability.
 
 ## Multiplayer: one code, one step
 
+### 6.1 relay hotfix
+
+- Room discovery could previously exchange SDP successfully and still fail when symmetric NAT, carrier NAT, a VPN, or a firewall rejected every direct ICE candidate.
+- Every room now includes short-lived HMAC-authenticated TURN credentials for Open Relay's documented static-auth service.
+- ICE still prefers direct transport. TURN carries traffic only when needed, with UDP on ports 80/443 plus TCP and TLS-on-443 alternatives for restrictive networks.
+- TURN relays the existing encrypted WebRTC data channel and cannot read the host-authoritative game messages.
+- The manual invite/answer workflow uses the same direct-first relay fallback, so it is now named **Manual signaling fallback**.
+
 - **Create room code** opens an encrypted automatically discovered room with a readable code such as `EMBER-OTTER-4827`.
 - Every guest enters that same code once. No answer key needs to travel back to the host.
 - The host can reuse one room for multiple guests, and still owns terrain, machines, time, creatures, drops, combat validation, sleeping, and rift travel.
 - A transient WebRTC `disconnected` state no longer destroys the peer immediately. Automatic and manual routes both receive an 18-second recovery window.
-- The original invite → answer exchange remains under **Manual direct-key fallback** for environments where relay discovery is unavailable.
-- Discovery does not make a direct WebRTC route universally possible; highly restrictive or symmetric-NAT networks can still require a future TURN relay.
+- The original invite → answer exchange remains under **Manual signaling fallback** for environments where relay discovery itself is unavailable.
 
 ## Water that respects construction
 
@@ -55,4 +62,4 @@ Highlands & Handshakes is a connectivity, terrain, simulation, and quality relea
 
 ## Verification gate
 
-Version 6 runs ESLint, TypeScript validation, 37 deterministic simulation tests, and a production GitHub Pages export. New regressions cover vertical bounds, dramatic terrain distribution, finite flow cutoff, water placement targeting, legacy elevation migration, one-code normalization, Creative flight/hover, crouch ledges, critical-hit eligibility, and positive sale values for every item. The full earlier suite for collision, swimming, animal water motion, mob penetration/jumps, caves, ore clustering, villages, recipes, smelting, circuits, rams, funnels, drops, dimensions, and save integrity remains active.
+Version 6.1 runs ESLint, TypeScript validation, 38 deterministic simulation tests, and a production GitHub Pages export. New regressions cover the exact TURN REST HMAC, credential expiry, UDP/TCP/TLS relay presence, vertical bounds, dramatic terrain distribution, finite flow cutoff, water placement targeting, legacy elevation migration, one-code normalization, Creative flight/hover, crouch ledges, critical-hit eligibility, and positive sale values for every item. The full earlier suite for collision, swimming, animal water motion, mob penetration/jumps, caves, ore clustering, villages, recipes, smelting, circuits, rams, funnels, drops, dimensions, and save integrity remains active.

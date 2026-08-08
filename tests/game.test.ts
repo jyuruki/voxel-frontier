@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import test from "node:test";
 import * as THREE from "three";
 import { AutomationSystem } from "../app/game/automation";
 import { ALL_ITEMS, BLOCKS, RECIPES, itemForBlock } from "../app/game/blocks";
 import { CRITICAL_DAMAGE_MULTIPLIER, isCriticalHit, weaponStats } from "../app/game/combat";
 import { itemSalePoints } from "../app/game/economy";
+import { createIceServers, createTurnCredentials, hasTurnRelay } from "../app/game/ice";
 import {
   HOTBAR_START,
   INVENTORY_SLOT_COUNT,
@@ -340,6 +342,21 @@ test("every inventory item has a deterministic villager sale value", () => {
 test("automatic multiplayer uses normalized human-readable room codes", () => {
   assert.equal(normalizeRoomCode(" ember otter 4827 "), "EMBER-OTTER-4827");
   assert.match(generateRoomCode(), /^[A-Z]+-[A-Z]+-\d{4}$/);
+});
+
+test("multiplayer has valid expiring TURN routes for restrictive networks", async () => {
+  const now = Date.UTC(2026, 7, 8, 12, 0, 0);
+  const credentials = await createTurnCredentials(now);
+  assert.equal(credentials.username, `${Math.floor(now / 1000) + 86_400}:voxel-frontier`);
+  assert.equal(
+    credentials.credential,
+    createHmac("sha1", "openrelayprojectsecret").update(credentials.username).digest("base64"),
+  );
+  const servers = await createIceServers(now);
+  assert.equal(hasTurnRelay(servers), true);
+  const relayUrls = servers.flatMap((server) => Array.isArray(server.urls) ? server.urls : [server.urls]);
+  assert.ok(relayUrls.some((url) => url.startsWith("turns:") && url.includes("transport=tcp")));
+  assert.ok(relayUrls.some((url) => url.startsWith("turn:") && url.endsWith(":80")));
 });
 
 test("Wayfarer ruins generate deterministically with an interactable Relic Cache", () => {

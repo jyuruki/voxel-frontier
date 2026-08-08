@@ -484,7 +484,7 @@ export default function GameApp() {
             <span className="brand__mark"><i /><i /><i /></span>
             <span><strong>VOXEL</strong><em>FRONTIER</em></span>
           </div>
-          <span className="build-tag">Highlands &amp; Handshakes · Version 6</span>
+          <span className="build-tag">Highlands &amp; Handshakes · Version 6.1</span>
         </header>
 
         <section className="landing__content">
@@ -765,8 +765,8 @@ export default function GameApp() {
       {overlay === "network" && (
         <Modal title="Online room" eyebrow="One-code encrypted multiplayer" onClose={closeOverlay} wide>
           <div className="network-callout">
-            <strong>Share one short room code. No answer key is needed.</strong>
-            <span>Public discovery relays introduce browsers, then encrypted peer-to-peer channels carry the host-authoritative world. No account or dedicated game server is required.</span>
+            <strong>Share one short room code. Direct or relayed, no answer key is needed.</strong>
+            <span>Discovery relays introduce browsers. WebRTC connects them directly when possible and automatically uses an encrypted TURN relay when NAT or a firewall blocks that route.</span>
           </div>
           <div className="tab-row">
             <button className={networkMode === "host" ? "active" : ""} onClick={() => setNetworkMode("host")}>Host this world</button>
@@ -775,14 +775,16 @@ export default function GameApp() {
           {networkMode === "host" ? (
             <div className="quick-room">
               <div className="quick-room__copy"><span className="step-number">1</span><div><h3>Open a room</h3><p>Keep this tab open. Any friend can join with the same code.</p></div></div>
-              <button className="primary-button" onClick={() => {
+              <button className="primary-button" disabled={networkBusy} onClick={async () => {
+                setNetworkBusy(true);
                 try {
-                  const code = network.hostRoom();
+                  const code = await network.hostRoom();
                   setRoomCode(code);
                   setRoomCodeInput(code);
                   showToast("Room opened. Share the code with your friend.");
                 } catch (error) { showToast(error instanceof Error ? error.message : "Could not open a room."); }
-              }}>{roomCode && network.role === "host" ? "Create a new code" : "Create room code"}</button>
+                setNetworkBusy(false);
+              }}>{networkBusy ? "Securing routes…" : roomCode && network.role === "host" ? "Create a new code" : "Create room code"}</button>
               {roomCode && network.role === "host" && (
                 <div className="room-code-card">
                   <small>YOUR ROOM CODE</small><strong>{roomCode}</strong>
@@ -795,19 +797,21 @@ export default function GameApp() {
               <div className="quick-room__copy"><span className="step-number">1</span><div><h3>Enter the host&apos;s code</h3><p>The host&apos;s world will synchronize automatically after the route opens.</p></div></div>
               <div className="room-code-entry">
                 <input value={roomCodeInput} maxLength={48} autoCapitalize="characters" spellCheck={false} onChange={(event) => setRoomCodeInput(event.target.value.toUpperCase())} placeholder="EMBER-OTTER-4827" />
-                <button className="primary-button" disabled={roomCodeInput.trim().length < 6} onClick={() => {
+                <button className="primary-button" disabled={roomCodeInput.trim().length < 6 || networkBusy} onClick={async () => {
+                  setNetworkBusy(true);
                   try {
-                    const code = network.joinRoomCode(roomCodeInput);
+                    const code = await network.joinRoomCode(roomCodeInput);
                     setRoomCode(code);
                     showToast(`Joining ${code}…`);
                   } catch (error) { showToast(error instanceof Error ? error.message : "Could not join the room."); }
-                }}>Join room</button>
+                  setNetworkBusy(false);
+                }}>{networkBusy ? "Securing routes…" : "Join room"}</button>
               </div>
             </div>
           )}
           <details className="network-manual">
-            <summary>Manual direct-key fallback</summary>
-            <p>Use this only if room discovery is unavailable. It requires one invite from the host and one answer back from the guest.</p>
+            <summary>Manual signaling fallback</summary>
+            <p>Use this only if room discovery is unavailable. It requires one invite from the host and one answer back from the guest; direct and TURN relay routes remain available.</p>
             {networkMode === "host" ? (
               <div className="network-steps">
                 <button className="secondary-button" disabled={networkBusy} onClick={async () => {
@@ -967,11 +971,11 @@ function OptionsModal({
 
 function GuideModal({ onClose }: { onClose: () => void }) {
   return (
-    <Modal title="Frontier field guide" eyebrow="Highlands & Handshakes · Version 6" onClose={onClose} wide>
+    <Modal title="Frontier field guide" eyebrow="Highlands & Handshakes · Version 6.1" onClose={onClose} wide>
       <div className="guide-grid">
         <article className="guide-card guide-card--accent">
           <span>01</span><h3>One room code</h3>
-          <p>Host an online room and share one readable code. Discovery is automatic, world data remains encrypted peer-to-peer, and the old invite/answer flow survives as a manual fallback.</p>
+          <p>Host an online room and share one readable code. Discovery is automatic; WebRTC stays direct when possible and falls back to an encrypted TURN relay across restrictive NAT or firewalls. The old invite/answer flow survives as a manual signaling fallback.</p>
         </article>
         <article className="guide-card">
           <span>02</span><h3>Water can be engineered</h3>
@@ -1000,7 +1004,7 @@ function GuideModal({ onClose }: { onClose: () => void }) {
       </div>
       <div className="scope-note">
         <strong>What this release contains</strong>
-        <p>Version 6 combines one-code online rooms, reconnection grace, source-aware water dams, a −64…320 world envelope, high mountain generation, legacy-world elevation migration, Creative flight and exact one-click mining, edge-safe crouching, critical hits, universal item sales, clearer directional machinery, unique circuit icons, 115 original textured blocks, ten animated creature types, autosave, and portable VF1 keys.</p>
+        <p>Version 6.1 combines one-code online rooms with automatic TURN fallback and reconnection grace, source-aware water dams, a −64…320 world envelope, high mountain generation, legacy-world elevation migration, Creative flight and exact one-click mining, edge-safe crouching, critical hits, universal item sales, clearer directional machinery, unique circuit icons, 115 original textured blocks, ten animated creature types, autosave, and portable VF1 keys.</p>
       </div>
     </Modal>
   );

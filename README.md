@@ -4,7 +4,7 @@ Voxel Frontier is an original, mobile-friendly procedural voxel survival, explor
 
 **Play:** [jyuruki.github.io/voxel-frontier](https://jyuruki.github.io/voxel-frontier/)
 
-> Highlands & Handshakes (Version 6) replaces the multiplayer answer-key exchange with one readable room code, adds reconnection grace, expands the world to Y −64…319, introduces dramatic Skybreak mountain ranges, lets placed dams cut downstream flow, adds Creative flight and exact one-click mining, makes crouching ledge-safe, adds falling critical hits, accepts every inventory item in a value-based villager sell tray, and gives circuits clearer direction and unique item art. See the [Version 6 release notes](docs/VERSION6_RELEASE.md) and [feature matrix](docs/FEATURE_MATRIX.md).
+> Highlands & Handshakes (Version 6.1) replaces the multiplayer answer-key exchange with one readable room code, adds automatic TURN fallback and reconnection grace, expands the world to Y −64…319, introduces dramatic Skybreak mountain ranges, lets placed dams cut downstream flow, adds Creative flight and exact one-click mining, makes crouching ledge-safe, adds falling critical hits, accepts every inventory item in a value-based villager sell tray, and gives circuits clearer direction and unique item art. See the [Version 6 release notes](docs/VERSION6_RELEASE.md) and [feature matrix](docs/FEATURE_MATRIX.md).
 
 ## Highlights
 
@@ -23,7 +23,7 @@ Voxel Frontier is an original, mobile-friendly procedural voxel survival, explor
 - A coal-fired Hearth Furnace, discoverable sand-to-glass smelting, four mining tiers, raw ore refinement, metal/gem storage blocks, and returnable Rift Gates into the volcanic Emberdeep
 - Rarer villages with Farmers, Blacksmiths, Builders, Riftwrights, a Market Clerk, daily limited purchase stock, a drag-and-drop sell tray accepting every carried item, value carryover for cheap materials, and spendable Frontier Mark currency; selling yields currency only
 - Local autosave every 18 seconds plus compressed, checksummed, copyable world keys
-- Host-authoritative WebRTC rooms with encrypted automatic discovery from one human-readable code, multi-peer room reuse, an 18-second transient-disconnect grace period, and a manual invite/answer fallback
+- Host-authoritative WebRTC rooms with encrypted automatic discovery from one human-readable code, direct-first STUN plus authenticated TURN fallback over UDP/TCP/TLS, multi-peer room reuse, an 18-second transient-disconnect grace period, and a manual signaling fallback
 - Responsive touch controls, left-handed layout, graphics presets, render distance, FOV, sensitivity, volume controls, animal-like procedural voices, and a seeded 72 BPM ambient score built from voiced diatonic progressions, bass, arpeggios, and melodic motifs
 
 ## Play and controls
@@ -54,7 +54,7 @@ The game needs a browser with WebGL and WebRTC. Current Chrome, Edge, Firefox, a
 2. The host sends that short code to any friends who should join.
 3. Each guest opens **Join a host**, enters the code once, and the host's world snapshot synchronizes automatically.
 
-The connection is peer-to-peer; no account or custom game server is required. Encrypted public relay discovery replaces the manual signaling exchange, while game state travels over WebRTC. The host owns terrain, machines, time, creature simulation, combat validation, damage, loot, sleeping, and validated rift travel. The previous two-way key workflow remains under **Manual direct-key fallback**. A restrictive corporate network can still block direct WebRTC routes because this release uses public STUN but no paid TURN relay.
+No player account or custom game server is required. Encrypted public discovery replaces the manual signaling exchange, while game state travels over WebRTC. ICE prefers a direct peer route; when symmetric NAT or a firewall prevents one, short-lived authenticated Open Relay TURN routes carry the same encrypted data over UDP, TCP, or TLS. The host owns terrain, machines, time, creature simulation, combat validation, damage, loot, sleeping, and validated rift travel. The previous two-way key workflow remains under **Manual signaling fallback**.
 
 ## Portable world keys
 
@@ -78,7 +78,7 @@ npm test
 # GitHub Pages output is written to out/
 ```
 
-The 37-test suite covers water distance, persistence and dam cutoff; liquid placement targeting; Y −64…320 bounds; deterministic mountain balance; legacy save migration; 36-slot uniqueness; collision; auto-jump; crouch ledges; Creative flight; critical-hit rules; sale values for every item; one-code normalization; sparse veins; caves; shore exits; continuous mob jumps; aquatic motion; livestock; recipes; furnaces; spaced profession villages; Emberdeep terrain; signals; pistons; and physical logistics. Every push to `main` reruns linting, tests, a production export, and GitHub Pages deployment.
+The 38-test suite covers TURN credential/configuration validity; water distance, persistence and dam cutoff; liquid placement targeting; Y −64…320 bounds; deterministic mountain balance; legacy save migration; 36-slot uniqueness; collision; auto-jump; crouch ledges; Creative flight; critical-hit rules; sale values for every item; one-code normalization; sparse veins; caves; shore exits; continuous mob jumps; aquatic motion; livestock; recipes; furnaces; spaced profession villages; Emberdeep terrain; signals; pistons; and physical logistics. Every push to `main` reruns linting, tests, a production export, and GitHub Pages deployment.
 
 ## Architecture
 
@@ -86,7 +86,7 @@ The 37-test suite covers water distance, persistence and dam cutoff; liquid plac
 - Three.js renders face-culled terrain, eighteen shape families, unique world-matching circuit icons, and procedural articulated creature rigs from runtime-generated textures.
 - The game simulation is framework-independent TypeScript under `app/game/`.
 - Terrain stores only player mutations; untouched chunks regenerate from the seed.
-- Multiplayer uses Trystero-assisted encrypted room discovery plus browser-native WebRTC data channels with the host as authority; manual signaling remains available.
+- Multiplayer uses Trystero-assisted encrypted room discovery plus browser-native WebRTC data channels with the host as authority; STUN attempts direct transport first and expiring TURN credentials supply an encrypted relay fallback.
 
 ## Original-work notice
 
