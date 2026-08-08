@@ -55,7 +55,7 @@ jobs:
         run: npx next build
         env:
           NEXT_PUBLIC_BASE_PATH: /voxel-frontier
-          NEXT_PUBLIC_MULTIPLAYER_URL: ${{ vars.MULTIPLAYER_URL }}
+          NEXT_PUBLIC_MULTIPLAYER_URL: ${{ vars.MULTIPLAYER_URL || 'wss://voxel-frontier-multiplayer.jkyuruki.workers.dev' }}
           VOXEL_STATIC_EXPORT: "true"
 
       - name: Upload Pages artifact
