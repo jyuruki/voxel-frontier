@@ -23,9 +23,17 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
 
-      - name: Deploy Durable Object room server
-        uses: cloudflare/wrangler-action@v3
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy --config server/wrangler.jsonc
+          node-version: 24
+          cache: npm
+
+      - name: Install pinned server toolchain
+        run: npm ci
+
+      - name: Deploy Durable Object room server
+        run: npm exec wrangler deploy -- --config server/wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
