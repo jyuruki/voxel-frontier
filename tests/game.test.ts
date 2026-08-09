@@ -16,6 +16,13 @@ import {
   moveInventorySlot,
   shiftInventorySlot,
 } from "../app/game/inventory";
+import {
+  TOUCH_MINE_DRAG_THRESHOLD,
+  TOUCH_MINE_HOLD_MS,
+  releaseTransientInput,
+  screenPointToNdc,
+  touchMovedBeyondHoldSlop,
+} from "../app/game/input";
 import { MOB_DEFINITIONS, mobIntersectsSolid, mobWaterImmersion, moveMobWithCollision, resolveMobPenetration } from "../app/game/mobs";
 import { blockRenderLayer } from "../app/game/mesher";
 import { buildLocatorMarkers, compassHeading } from "../app/game/locator";
@@ -47,6 +54,44 @@ function prepareArena(
     }
   }
 }
+
+test("mobile touch input releases held actions and maps direct mining to the touched point", () => {
+  const input: InputFrame = {
+    forward: 1,
+    strafe: -1,
+    lookX: 18,
+    lookY: -9,
+    jump: true,
+    sprint: true,
+    crouch: true,
+    mine: true,
+    place: true,
+    interact: true,
+  };
+  releaseTransientInput(input, true);
+  assert.deepEqual(input, {
+    forward: 0,
+    strafe: 0,
+    lookX: 0,
+    lookY: 0,
+    jump: false,
+    sprint: true,
+    crouch: false,
+    mine: false,
+    place: false,
+    interact: false,
+  });
+  releaseTransientInput(input);
+  assert.equal(input.sprint, false, "hold-to-run must release when an overlay interrupts it");
+
+  const rect = { left: 100, top: 50, width: 400, height: 200 };
+  assert.deepEqual(screenPointToNdc(300, 150, rect), { x: 0, y: 0 });
+  assert.deepEqual(screenPointToNdc(500, 50, rect), { x: 1, y: 1 });
+  assert.equal(screenPointToNdc(99, 150, rect), null);
+  assert.equal(touchMovedBeyondHoldSlop(20, 20, 20 + TOUCH_MINE_DRAG_THRESHOLD, 20), false);
+  assert.equal(touchMovedBeyondHoldSlop(20, 20, 21 + TOUCH_MINE_DRAG_THRESHOLD, 20), true);
+  assert.ok(TOUCH_MINE_HOLD_MS >= 300, "direct mining needs an intentional-hold delay");
+});
 
 test("procedural terrain is deterministic for a seed", () => {
   const first = new VoxelWorld("copper skies");

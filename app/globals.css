@@ -736,6 +736,7 @@ button:disabled {
 .combat-target__track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #c84842, #ff7669); transition: width .12s ease; }
 
 .pause-button {
+  z-index: 16;
   top: max(18px, env(safe-area-inset-top));
   right: max(18px, env(safe-area-inset-right));
   display: grid;
@@ -1533,6 +1534,36 @@ kbd {
 
 .touch-look--left { right: 42%; left: 0; }
 
+.touch-mine-cue {
+  position: absolute;
+  z-index: 1;
+  width: 34px;
+  height: 34px;
+  transform: translate(-50%, -50%);
+  border: 2px solid rgba(224,248,244,.9);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(5,22,24,.72), 0 0 15px rgba(86,203,193,.42);
+  pointer-events: none;
+  animation: touch-mine-hold 360ms linear both;
+}
+
+.touch-mine-cue--active {
+  border-color: #fff0ae;
+  background: rgba(229,184,88,.18);
+  box-shadow: 0 0 0 2px rgba(5,22,24,.72), 0 0 19px rgba(229,184,88,.58);
+  animation: touch-mine-active .72s ease-in-out infinite alternate;
+}
+
+@keyframes touch-mine-hold {
+  from { opacity: .45; transform: translate(-50%, -50%) scale(.62); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+@keyframes touch-mine-active {
+  from { transform: translate(-50%, -50%) scale(.94); }
+  to { transform: translate(-50%, -50%) scale(1.12); }
+}
+
 .move-stick {
   position: absolute;
   z-index: 7;
@@ -1564,7 +1595,19 @@ kbd {
 .touch-button--attack { border-color: rgba(237,128,80,.7); background: rgba(157,65,40,.76); }
 .touch-button--place { border-color: rgba(86,203,193,.62); color: #dffbf7; background: rgba(31,91,89,.76); font-size: .48rem; }
 .touch-button--sneak { border-color: rgba(92,190,224,.62); background: rgba(42,102,132,.72); }
+.touch-button--run { border-color: rgba(229,184,88,.66); color: #fff0ae; background: rgba(86,67,30,.76); }
 .touch-button.active { border-color: rgba(255,220,111,.82); color: #fff0ae; background: rgba(105,79,33,.82); box-shadow: 0 0 16px rgba(229,184,88,.3); }
+
+.touch-run {
+  position: absolute;
+  z-index: 8;
+  bottom: max(144px, calc(env(safe-area-inset-bottom) + 132px));
+  left: max(164px, calc(env(safe-area-inset-left) + 156px));
+  width: 52px;
+  height: 52px;
+}
+
+.touch-run--right { right: max(164px, calc(env(safe-area-inset-right) + 156px)); left: auto; }
 
 @media (max-width: 920px) {
   .landing__content { grid-template-columns: 1fr; align-items: start; padding-bottom: 140px; }
@@ -1662,6 +1705,8 @@ kbd {
   .touch-actions { grid-template-columns: repeat(2, 56px); grid-template-rows: repeat(2, 56px); gap: 7px; }
   .move-stick { width: 116px; height: 116px; }
   .move-stick__knob { top: 36px; left: 36px; width: 44px; height: 44px; }
+  .touch-run { bottom: max(137px, calc(env(safe-area-inset-bottom) + 125px)); left: max(148px, calc(env(safe-area-inset-left) + 140px)); width: 50px; height: 50px; }
+  .touch-run--right { right: max(148px, calc(env(safe-area-inset-right) + 140px)); left: auto; }
 }
 
 @media (pointer: coarse) and (orientation: landscape) and (max-height: 600px) {
@@ -1691,6 +1736,8 @@ kbd {
   .touch-actions--left { right: auto; left: max(8px, env(safe-area-inset-left)); }
   .touch-button { border-width: 1px; font-size: .46rem; }
   .touch-button--place { font-size: .4rem; }
+  .touch-run { right: auto; bottom: max(36px, calc(env(safe-area-inset-bottom) + 29px)); left: max(118px, calc(env(safe-area-inset-left) + 110px)); width: 45px; height: 45px; }
+  .touch-run--right { right: max(118px, calc(env(safe-area-inset-right) + 110px)); left: auto; }
   .touch-look { top: 0; }
   .crosshair { transform: translate(-50%, -50%) scale(.72); }
   .combat-target { top: calc(50% + 25px); width: 156px; padding: 6px 8px; }

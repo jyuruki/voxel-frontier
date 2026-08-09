@@ -389,6 +389,7 @@ export interface GameSettings {
   invertY: boolean;
   leftHanded: boolean;
   touchOpacity: number;
+  directTouchMining: boolean;
   showFps: boolean;
   autoJump: boolean;
   toggleSprint: boolean;
@@ -484,6 +485,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   invertY: false,
   leftHanded: false,
   touchOpacity: 0.72,
+  directTouchMining: true,
   showFps: false,
   autoJump: false,
   toggleSprint: true,
