@@ -13,6 +13,7 @@ import { ALL_ITEMS, BLOCKS, RECIPES, blockForItem, itemDescription, itemName, ma
 import { ChestPanelData, GameEngine, MachinePanelData, TradePanelData } from "./game/engine";
 import { itemSalePoints } from "./game/economy";
 import { HOTBAR_START, INVENTORY_SLOT_COUNT } from "./game/inventory";
+import { TOUCH_MINE_HOLD_MS, touchMovedBeyondHoldSlop } from "./game/input";
 import { ItemArt } from "./item-art";
 import { NetworkSession } from "./game/network";
 import { SMELTING_RECIPES, type FurnaceSlot, furnaceSlotItem } from "./game/smelting";
@@ -252,26 +253,104 @@ function MoveStick({ onMove, leftHanded, opacity }: StickProps) {
   );
 }
 
-function TouchLookZone({ onLook, leftHanded }: { onLook: (x: number, y: number) => void; leftHanded: boolean }) {
+function TouchLookZone({
+  onLook,
+  onMineStart,
+  onMineEnd,
+  leftHanded,
+  directMining,
+}: {
+  onLook: (x: number, y: number) => void;
+  onMineStart: (x: number, y: number) => void;
+  onMineEnd: () => void;
+  leftHanded: boolean;
+  directMining: boolean;
+}) {
+  const root = useRef<HTMLDivElement>(null);
   const pointerId = useRef<number | null>(null);
   const previous = useRef({ x: 0, y: 0 });
+  const holdOrigin = useRef({ x: 0, y: 0 });
+  const holdTimer = useRef<number | null>(null);
+  const mining = useRef(false);
+  const onMineStartRef = useRef(onMineStart);
+  const onMineEndRef = useRef(onMineEnd);
+  const [mineCue, setMineCue] = useState<{ x: number; y: number; mining: boolean } | null>(null);
+
+  useEffect(() => {
+    onMineStartRef.current = onMineStart;
+    onMineEndRef.current = onMineEnd;
+  }, [onMineEnd, onMineStart]);
+
+  const clearHoldTimer = () => {
+    if (holdTimer.current === null) return;
+    window.clearTimeout(holdTimer.current);
+    holdTimer.current = null;
+  };
+  const stopMining = () => {
+    clearHoldTimer();
+    if (mining.current) onMineEndRef.current();
+    mining.current = false;
+    setMineCue(null);
+  };
+  const release = (releasedPointerId: number) => {
+    if (pointerId.current !== releasedPointerId) return;
+    pointerId.current = null;
+    stopMining();
+  };
+
+  useEffect(() => () => {
+    if (holdTimer.current !== null) window.clearTimeout(holdTimer.current);
+    if (mining.current) onMineEndRef.current();
+  }, []);
+
   return (
     <div
+      ref={root}
       className={`touch-look ${leftHanded ? "touch-look--left" : ""}`}
       onPointerDown={(event) => {
+        if (pointerId.current !== null) return;
         pointerId.current = event.pointerId;
         previous.current = { x: event.clientX, y: event.clientY };
+        holdOrigin.current = previous.current;
         event.currentTarget.setPointerCapture(event.pointerId);
+        if (!directMining) return;
+        const rect = root.current?.getBoundingClientRect();
+        if (!rect) return;
+        setMineCue({ x: event.clientX - rect.left, y: event.clientY - rect.top, mining: false });
+        holdTimer.current = window.setTimeout(() => {
+          holdTimer.current = null;
+          if (pointerId.current !== event.pointerId) return;
+          mining.current = true;
+          setMineCue({ x: event.clientX - rect.left, y: event.clientY - rect.top, mining: true });
+          onMineStartRef.current(event.clientX, event.clientY);
+        }, TOUCH_MINE_HOLD_MS);
       }}
       onPointerMove={(event) => {
         if (pointerId.current !== event.pointerId) return;
-        onLook((event.clientX - previous.current.x) * 1.35, (event.clientY - previous.current.y) * 1.35);
+        if (directMining && touchMovedBeyondHoldSlop(
+          holdOrigin.current.x,
+          holdOrigin.current.y,
+          event.clientX,
+          event.clientY,
+        )) stopMining();
+        if (!mining.current) {
+          onLook((event.clientX - previous.current.x) * 1.35, (event.clientY - previous.current.y) * 1.35);
+        }
         previous.current = { x: event.clientX, y: event.clientY };
       }}
-      onPointerUp={() => { pointerId.current = null; }}
-      onPointerCancel={() => { pointerId.current = null; }}
+      onPointerUp={(event) => release(event.pointerId)}
+      onPointerCancel={(event) => release(event.pointerId)}
+      onLostPointerCapture={(event) => release(event.pointerId)}
       aria-label="Camera look area"
-    />
+    >
+      {mineCue && (
+        <span
+          className={`touch-mine-cue ${mineCue.mining ? "touch-mine-cue--active" : ""}`}
+          style={{ left: mineCue.x, top: mineCue.y }}
+          aria-hidden="true"
+        />
+      )}
+    </div>
   );
 }
 
@@ -279,20 +358,36 @@ function HoldButton({
   label,
   className = "",
   onChange,
+  active = false,
+  style,
 }: {
   label: string;
   className?: string;
   onChange: (pressed: boolean) => void;
+  active?: boolean;
+  style?: CSSProperties;
 }) {
+  const pointerId = useRef<number | null>(null);
+  const release = (releasedPointerId: number) => {
+    if (pointerId.current !== releasedPointerId) return;
+    pointerId.current = null;
+    onChange(false);
+  };
   return (
     <button
-      className={`touch-button ${className}`}
+      type="button"
+      className={`touch-button ${className} ${active ? "active" : ""}`}
+      style={style}
+      aria-pressed={active}
       onPointerDown={(event) => {
+        event.preventDefault();
+        pointerId.current = event.pointerId;
         event.currentTarget.setPointerCapture(event.pointerId);
         onChange(true);
       }}
-      onPointerUp={() => onChange(false)}
-      onPointerCancel={() => onChange(false)}
+      onPointerUp={(event) => release(event.pointerId)}
+      onPointerCancel={(event) => release(event.pointerId)}
+      onLostPointerCapture={(event) => release(event.pointerId)}
       onContextMenu={(event) => event.preventDefault()}
     >
       {label}
@@ -602,7 +697,7 @@ export default function GameApp() {
             <span className="brand__mark"><i /><i /><i /></span>
             <span><strong>VOXEL</strong><em>FRONTIER</em></span>
           </div>
-          <span className="build-tag">Realmworks · Version 10</span>
+          <span className="build-tag">Realmworks · Version 10.1</span>
         </header>
 
         <section className="landing__content">
@@ -824,11 +919,24 @@ export default function GameApp() {
 
       {isTouch && overlay === "none" && !chatOpen && (
         <div className="touch-controls">
-          <TouchLookZone leftHanded={settings.leftHanded} onLook={(x, y) => engineRef.current?.addLook(x, y)} />
+          <TouchLookZone
+            leftHanded={settings.leftHanded}
+            directMining={settings.directTouchMining}
+            onLook={(x, y) => engineRef.current?.addLook(x, y)}
+            onMineStart={(x, y) => engineRef.current?.beginTouchMine(x, y)}
+            onMineEnd={() => engineRef.current?.endTouchMine()}
+          />
           <MoveStick
             leftHanded={settings.leftHanded}
             opacity={settings.touchOpacity}
             onMove={(x, y) => engineRef.current?.setMove(x, y)}
+          />
+          <HoldButton
+            label="RUN"
+            className={`touch-button--run touch-run ${settings.leftHanded ? "touch-run--right" : ""}`}
+            active={hud.sprinting}
+            style={{ opacity: settings.touchOpacity }}
+            onChange={(pressed) => engineRef.current?.setAction("sprint", pressed)}
           />
           <div className={`touch-actions ${settings.leftHanded ? "touch-actions--left" : ""}`} style={{ opacity: settings.touchOpacity }}>
             <HoldButton label="ATTACK" className="touch-button--attack" onChange={(pressed) => engineRef.current?.setAction("mine", pressed)} />
@@ -945,7 +1053,7 @@ export default function GameApp() {
       )}
 
       {overlay === "network" && (
-        <Modal title="Online room" eyebrow="Server-backed multiplayer · Version 10" onClose={closeOverlay} wide>
+        <Modal title="Online room" eyebrow="Server-backed multiplayer · Version 10.1" onClose={closeOverlay} wide>
           <div className="network-callout">
             <strong>Share one six-character code. Both players connect to the same room server.</strong>
             <span>No SDP exchange, router negotiation, or manual answer key. The server routes authoritative world updates, preserves world and per-player checkpoints, reconnects interrupted browsers, and promotes a guest if the host leaves.</span>
@@ -1171,6 +1279,7 @@ function OptionsModal({
           <label>Touch opacity <output>{Math.round(settings.touchOpacity * 100)}%</output><input type="range" min="0.3" max="1" step="0.05" value={settings.touchOpacity} onChange={(e) => update("touchOpacity", Number(e.target.value))} /></label>
           <label className="switch-row"><input type="checkbox" checked={settings.invertY} onChange={(e) => update("invertY", e.target.checked)} /><span>Invert vertical look</span></label>
           <label className="switch-row"><input type="checkbox" checked={settings.leftHanded} onChange={(e) => update("leftHanded", e.target.checked)} /><span>Left-handed touch layout</span></label>
+          <label className="switch-row"><input type="checkbox" checked={settings.directTouchMining} onChange={(e) => update("directTouchMining", e.target.checked)} /><span>Hold the touched block to mine</span></label>
           <label className="switch-row"><input type="checkbox" checked={settings.autoJump} onChange={(e) => update("autoJump", e.target.checked)} /><span>Auto-jump one-block rises</span></label>
           <label className="switch-row"><input type="checkbox" checked={settings.toggleSprint} onChange={(e) => update("toggleSprint", e.target.checked)} /><span>Toggle sprint (R)</span></label>
           <label className="switch-row"><input type="checkbox" checked={settings.showFps} onChange={(e) => update("showFps", e.target.checked)} /><span>Show frame rate</span></label>
@@ -1189,7 +1298,7 @@ function GuideModal({ onClose }: { onClose: () => void }) {
     || itemDescription(item).toLowerCase().includes(query)
     || acquisitionHint(item).toLowerCase().includes(query));
   return (
-    <Modal title="Frontier guidebook" eyebrow="Realmworks · Version 10" onClose={onClose} wide>
+    <Modal title="Frontier guidebook" eyebrow="Realmworks · Version 10.1" onClose={onClose} wide>
       <div className="guide-intro">
         <div><span aria-hidden="true">▤</span><div><strong>Everything important, in one place.</strong><p>Start with the short chapters, then search any block, tool, part, food, vehicle, or machine below to learn where it comes from.</p></div></div>
       </div>
@@ -1224,12 +1333,12 @@ function GuideModal({ onClose }: { onClose: () => void }) {
         </article>
         <article className="guide-card">
           <span>08</span><h3>Rooms, chat & saves</h3>
-          <p>Chat messages fade after a few seconds; reopen Chat for the recent archive. A Version 10 world key carries the world, boats, and saved profiles for players who joined with their stable browser identity.</p>
+          <p>Chat messages fade after a few seconds; reopen Chat for the recent archive. A Version 10.1 world key carries the world, boats, and saved profiles for players who joined with their stable browser identity.</p>
         </article>
       </div>
       <div className="controls-table">
         <h3>Controls</h3>
-        <div><span><kbd>W A S D</kbd> Move / swim / fly</span><span><kbd>R</kbd> Toggle sprint</span><span><kbd>Shift</kbd> Sneak / dive / dismount</span><span><kbd>Space</kbd> Jump / ascend</span><span><kbd>Q</kbd> Drop one</span><span><kbd>Shift + Q</kbd> Drop stack</span><span><kbd>T / Enter</kbd> Chat archive</span><span><kbd>V</kbd> Creative flight</span><span><kbd>Mouse</kbd> Look</span><span><kbd>LMB</kbd> Mine / attack</span><span><kbd>RMB</kbd> Place / use</span><span><kbd>F</kbd> Interact / board</span><span><kbd>X</kbd> Rotate machinery</span><span><kbd>E</kbd> Inventory</span><span><kbd>Mobile</kbd> Stick + Attack, Place / Use, Jump, Sneak</span></div>
+        <div><span><kbd>W A S D</kbd> Move / swim / fly</span><span><kbd>R</kbd> Toggle sprint</span><span><kbd>Shift</kbd> Sneak / dive / dismount</span><span><kbd>Space</kbd> Jump / ascend</span><span><kbd>Q</kbd> Drop one</span><span><kbd>Shift + Q</kbd> Drop stack</span><span><kbd>T / Enter</kbd> Chat archive</span><span><kbd>V</kbd> Creative flight</span><span><kbd>Mouse</kbd> Look</span><span><kbd>LMB</kbd> Mine / attack</span><span><kbd>RMB</kbd> Place / use</span><span><kbd>F</kbd> Interact / board</span><span><kbd>X</kbd> Rotate machinery</span><span><kbd>E</kbd> Inventory</span><span><kbd>Mobile</kbd> Stick + Run, Attack, Place / Use, Jump, Sneak; hold a block briefly to mine it directly</span></div>
       </div>
       <section className="guide-index">
         <header><div><p className="eyebrow">Acquisition index</p><h3>How do I get…?</h3></div><span>{visibleItems.length} matches</span></header>

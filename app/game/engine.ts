@@ -36,6 +36,7 @@ import { hashString, parseWorldKey, seededRandom, worldKey } from "./prng";
 import { voxelRaycast } from "./raycast";
 import { encodeWorldKey, saveLocally } from "./save";
 import { FirstPersonViewModel } from "./viewmodel";
+import { releaseTransientInput, screenPointToNdc } from "./input";
 import { createDungeonPlan, DungeonPlan, isDungeonCoordinate } from "./dungeons";
 import { damageIndicatorAngle, mobCanMeleeHit, mobCanShootPlayer } from "./encounters";
 import { buildLocatorMarkers, compassHeading } from "./locator";
@@ -616,6 +617,7 @@ export class GameEngine {
   private targetedMob: MobState | null = null;
   private currentHit: ReturnType<typeof voxelRaycast> = null;
   private placementHit: ReturnType<typeof voxelRaycast> = null;
+  private touchMineNdc: THREE.Vector2 | null = null;
   private readonly selection: THREE.LineSegments;
   private readonly breakOverlay: THREE.Mesh;
   private readonly breakMaterials: THREE.MeshBasicMaterial[];
@@ -718,6 +720,8 @@ export class GameEngine {
   };
   private readonly onVisibility = () => {
     if (!document.hidden) return;
+    releaseTransientInput(this.input, this.settings.toggleSprint);
+    this.touchMineNdc = null;
     if (this.network.role === "guest") this.network.send({ type: "player-profile", profile: this.playerSaveState() });
     else this.saveNow();
   };
@@ -1124,13 +1128,21 @@ export class GameEngine {
   }
 
   private updateTargeting(dt: number): void {
-    const direction = new THREE.Vector3();
-    this.camera.getWorldDirection(direction);
+    const centerDirection = new THREE.Vector3();
+    this.camera.getWorldDirection(centerDirection);
+    let direction = centerDirection;
+    if (this.touchMineNdc && this.input.mine) {
+      this.camera.updateMatrixWorld();
+      direction = new THREE.Vector3(this.touchMineNdc.x, this.touchMineNdc.y, 0.5)
+        .unproject(this.camera)
+        .sub(this.camera.position)
+        .normalize();
+    }
     const selected = this.hotbar[this.selectedSlot];
     const reach = weaponStats(selected).reach;
     this.currentHit = voxelRaycast(this.world, this.camera.position, direction, Math.max(6.2, reach));
-    this.placementHit = voxelRaycast(this.world, this.camera.position, direction, 6.2, true);
-    this.targetedMob = this.findTargetedMob(direction, reach);
+    this.placementHit = voxelRaycast(this.world, this.camera.position, centerDirection, 6.2, true);
+    this.targetedMob = this.touchMineNdc ? null : this.findTargetedMob(centerDirection, reach);
     if (this.currentHit && !this.targetedMob) {
       const { x, y, z } = this.currentHit.block;
       const bounds = blockVisualBounds(this.currentHit.id);
@@ -4480,6 +4492,21 @@ export class GameEngine {
     this.input.lookY += y;
   }
 
+  beginTouchMine(clientX: number, clientY: number): void {
+    const target = screenPointToNdc(clientX, clientY, this.canvas.getBoundingClientRect());
+    if (!target) return;
+    this.touchMineNdc = new THREE.Vector2(target.x, target.y);
+    this.input.mine = true;
+    this.viewModel.swing("attack");
+    void this.audio.unlock();
+  }
+
+  endTouchMine(): void {
+    if (!this.touchMineNdc) return;
+    this.touchMineNdc = null;
+    this.input.mine = false;
+  }
+
   setAction(action: "jump" | "sprint" | "crouch" | "mine" | "place" | "interact", active: boolean): void {
     if (action === "sprint" && this.settings.toggleSprint) {
       if (active) this.input.sprint = !this.input.sprint;
@@ -4487,6 +4514,7 @@ export class GameEngine {
       this.emitHud();
       return;
     }
+    if (action === "mine" && active) this.touchMineNdc = null;
     this.input[action] = active;
     if (action === "mine" && active) this.viewModel.swing("attack");
     if (active) void this.audio.unlock();
@@ -4582,6 +4610,15 @@ export class GameEngine {
 
   pause(): void {
     this.paused = true;
+    releaseTransientInput(this.input, this.settings.toggleSprint);
+    this.touchMineNdc = null;
+    this.miningKey = "";
+    this.miningProgress = 0;
+    this.breakOverlay.visible = false;
+    this.interactLatch = false;
+    this.creativeMineLatch = false;
+    this.jumpNutritionLatch = false;
+    this.rideCrouchLatch = false;
     if (document.pointerLockElement === this.canvas) document.exitPointerLock();
   }
 

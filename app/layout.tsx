@@ -4,7 +4,7 @@ import "./globals.css";
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
 export const metadata: Metadata = {
-  title: "Voxel Frontier — Realmworks",
+  title: "Voxel Frontier — Realmworks 10.1",
   description:
     "An original voxel survival game with responsive combat, boats, rebuilt Fluxstone automation, server-backed multiplayer, and monumental procedural realm delves.",
   applicationName: "Voxel Frontier",

@@ -4,7 +4,7 @@ Voxel Frontier is an original, mobile-friendly procedural voxel survival, explor
 
 **Play:** [jyuruki.github.io/voxel-frontier](https://jyuruki.github.io/voxel-frontier/)
 
-> **Realmworks (Version 10)** fixes unseen through-floor enemy damage with three-dimensional reach and voxel line-of-sight checks, adds hit feedback and dodgeable ranged Shardcasters, launches physics-driven boats, rebuilds Fluxstone around familiar circuit components, opens some caves to the surface, and moves enormous randomized delves into their own logical realms. Chat fades into a reopenable archive, beds set personal spawn, multiplayer checkpoints preserve stable player profiles, player models carry visible gear, and mobile landscape now uses four compact actions. See the [Version 10 release notes](docs/VERSION10_RELEASE.md) and [feature matrix](docs/FEATURE_MATRIX.md).
+> **Realmworks (Version 10.1)** keeps Version 10's combat, boats, Fluxstone, realms, profiles, and guidebook while repairing mobile input: Pause now sits above the landscape look surface, opening any panel releases held actions, Run is restored, and direct hold-to-mine targets the block beneath the player's finger after an intentional delay. See the [Version 10.1 patch notes](docs/VERSION10_1_RELEASE.md), [Version 10 release notes](docs/VERSION10_RELEASE.md), and [feature matrix](docs/FEATURE_MATRIX.md).
 
 ## Highlights
 
@@ -27,7 +27,7 @@ All code, names, textures, models, UI, and synthesized audio are original to thi
 
 ## Play and controls
 
-The game needs a current browser with WebGL and WebSocket support. Chrome, Edge, Firefox, and Safari are recommended. Mobile landscape uses a compact movement/look layout with Attack, Place / Use, Jump, and Sneak actions; chat sits separately at the top edge.
+The game needs a current browser with WebGL and WebSocket support. Chrome, Edge, Firefox, and Safari are recommended. Mobile landscape uses a compact movement/look layout with Run, Attack, Place / Use, Jump, and Sneak; chat and Pause sit separately at the top edge. With direct touch mining enabled, holding briefly on a block mines that touched block while dragging remains camera look.
 
 | Desktop input | Action |
 | --- | --- |
@@ -89,11 +89,11 @@ Full validation:
 npm test
 ```
 
-This runs linting, 55 deterministic simulation tests, Cloudflare Worker type-checking and bundling, a real two-client Miniflare room lifecycle test, and a production GitHub Pages export. The multiplayer integration opens a host and guest, sanitizes chat and death messages, transfers a snapshot and live world delta, verifies guest authority rejection plus item, chest, furnace, dungeon, profile, and boat intent routing, writes a checkpoint larger than one storage row, disconnects the host, and verifies promotion with recovered state.
+This runs linting, 56 deterministic simulation tests, Cloudflare Worker type-checking and bundling, a real two-client Miniflare room lifecycle test, and a production GitHub Pages export. The multiplayer integration opens a host and guest, sanitizes chat and death messages, transfers a snapshot and live world delta, verifies guest authority rejection plus item, chest, furnace, dungeon, profile, and boat intent routing, writes a checkpoint larger than one storage row, disconnects the host, and verifies promotion with recovered state.
 
 ## Free server deployment
 
-[GitHub Pages serves static files only](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages), so Version 10 keeps the game frontend there and deploys `server/` to a Cloudflare Durable Object. Cloudflare documents Durable Objects on its [Workers Free plan](https://developers.cloudflare.com/durable-objects/platform/pricing/) and recommends its [WebSocket Hibernation API](https://developers.cloudflare.com/durable-objects/best-practices/websockets/) for multiplayer rooms that sleep without disconnecting clients.
+[GitHub Pages serves static files only](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages), so Version 10.1 keeps the game frontend there and deploys `server/` to a Cloudflare Durable Object. Cloudflare documents Durable Objects on its [Workers Free plan](https://developers.cloudflare.com/durable-objects/platform/pricing/) and recommends its [WebSocket Hibernation API](https://developers.cloudflare.com/durable-objects/best-practices/websockets/) for multiplayer rooms that sleep without disconnecting clients.
 
 For a manual deployment:
 
