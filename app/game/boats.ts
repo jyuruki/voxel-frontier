@@ -104,26 +104,54 @@ export function updateBoatPhysics(
   const inWater = surface !== null;
   const forwardInput = Math.max(-1, Math.min(1, input.forward));
   const turnInput = Math.max(-1, Math.min(1, input.turn));
-  const speed = Math.hypot(boat.velocity.x, boat.velocity.z);
-  const steering = inWater ? 2.2 : 0.7;
-  const steeringAuthority = 0.32 + Math.min(1, speed / 2.4) * 0.68;
-  boat.angularVelocity += turnInput * steering * steeringAuthority * safeDt;
-  boat.angularVelocity *= Math.exp(-(inWater ? 4.2 : 8.5) * safeDt);
-  boat.yaw += boat.angularVelocity;
+  if (!Number.isFinite(boat.angularVelocity)) boat.angularVelocity = 0;
 
+  // Angular velocity is radians per second. The previous implementation added
+  // it directly once per frame, which caused uncontrolled, frame-rate-dependent
+  // spinning. Boats retain gentle in-place oar steering and gain authority as
+  // they move, while reverse steering naturally flips direction.
+  const initialForwardX = -Math.sin(boat.yaw);
+  const initialForwardZ = -Math.cos(boat.yaw);
+  const signedSpeed = boat.velocity.x * initialForwardX + boat.velocity.z * initialForwardZ;
+  const speed = Math.hypot(boat.velocity.x, boat.velocity.z);
+  const steeringAuthority = 0.28 + Math.min(1, speed / 3.2) * 0.72;
+  const steeringAcceleration = inWater ? 5.4 : 1.25;
+  const reverseSteering = signedSpeed < -0.18 ? -1 : 1;
+  const angularDrag = inWater ? 4.8 : 8.5;
+  const angularForce = turnInput * steeringAcceleration * steeringAuthority * reverseSteering;
+  const angularDecay = Math.exp(-angularDrag * safeDt);
+  const angularTarget = angularForce / angularDrag;
+  const previousAngularVelocity = boat.angularVelocity;
+  boat.angularVelocity = angularTarget + (previousAngularVelocity - angularTarget) * angularDecay;
+  boat.angularVelocity = Math.max(-1.55, Math.min(1.55, boat.angularVelocity));
+  boat.yaw += angularTarget * safeDt
+    + (previousAngularVelocity - angularTarget) * (1 - angularDecay) / angularDrag;
+  boat.yaw = Math.atan2(Math.sin(boat.yaw), Math.cos(boat.yaw));
+
+  // Resolve velocity along the hull and heavily damp sideways slip. This gives
+  // the familiar Minecraft-like "point, paddle, coast" response instead of a
+  // hovercraft orbit around the steering axis.
   const forwardX = -Math.sin(boat.yaw);
   const forwardZ = -Math.cos(boat.yaw);
-  const thrust = inWater ? (forwardInput >= 0 ? 11 : 5.5) : 2.2;
-  boat.velocity.x += forwardX * forwardInput * thrust * safeDt;
-  boat.velocity.z += forwardZ * forwardInput * thrust * safeDt;
-  const drag = Math.exp(-(inWater ? (forwardInput ? 1.15 : 2.15) : 5.5) * safeDt);
-  boat.velocity.x *= drag;
-  boat.velocity.z *= drag;
-  const maxSpeed = inWater ? 7.4 : 2.1;
+  const rightX = Math.cos(boat.yaw);
+  const rightZ = -Math.sin(boat.yaw);
+  let forwardSpeed = boat.velocity.x * forwardX + boat.velocity.z * forwardZ;
+  let lateralSpeed = boat.velocity.x * rightX + boat.velocity.z * rightZ;
+  const thrust = inWater ? (forwardInput >= 0 ? 9.4 : 4.8) : 1.8;
+  const forwardDrag = inWater ? (Math.abs(forwardInput) > 0.02 ? 0.72 : 1.72) : 5.5;
+  const forwardDecay = Math.exp(-forwardDrag * safeDt);
+  const forwardTarget = forwardInput * thrust / forwardDrag;
+  forwardSpeed = forwardTarget + (forwardSpeed - forwardTarget) * forwardDecay;
+  lateralSpeed *= Math.exp(-(inWater ? 7.2 : 8.8) * safeDt);
+  const maxForward = inWater ? 6.6 : 1.7;
+  const maxReverse = inWater ? 3.1 : 1.1;
+  forwardSpeed = Math.max(-maxReverse, Math.min(maxForward, forwardSpeed));
+  boat.velocity.x = forwardX * forwardSpeed + rightX * lateralSpeed;
+  boat.velocity.z = forwardZ * forwardSpeed + rightZ * lateralSpeed;
   const horizontalSpeed = Math.hypot(boat.velocity.x, boat.velocity.z);
-  if (horizontalSpeed > maxSpeed) {
-    boat.velocity.x = (boat.velocity.x / horizontalSpeed) * maxSpeed;
-    boat.velocity.z = (boat.velocity.z / horizontalSpeed) * maxSpeed;
+  if (horizontalSpeed > maxForward) {
+    boat.velocity.x = boat.velocity.x / horizontalSpeed * maxForward;
+    boat.velocity.z = boat.velocity.z / horizontalSpeed * maxForward;
   }
 
   if (surface !== null) {
@@ -136,6 +164,7 @@ export function updateBoatPhysics(
   const hitY = moveBoatVertical(world, boat, boat.velocity.y * safeDt);
   const hitX = moveBoatAxis(world, boat, "x", boat.velocity.x * safeDt);
   const hitZ = moveBoatAxis(world, boat, "z", boat.velocity.z * safeDt);
+  if (hitX || hitZ) boat.angularVelocity *= 0.35;
   return { inWater, collided: hitX || hitY || hitZ };
 }
 

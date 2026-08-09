@@ -4,7 +4,7 @@ Voxel Frontier is an original, mobile-friendly procedural voxel survival, explor
 
 **Play:** [jyuruki.github.io/voxel-frontier](https://jyuruki.github.io/voxel-frontier/)
 
-> **Realmworks (Version 10.1)** keeps Version 10's combat, boats, Fluxstone, realms, profiles, and guidebook while repairing mobile input: Pause now sits above the landscape look surface, opening any panel releases held actions, Run is restored, and direct hold-to-mine targets the block beneath the player's finger after an intentional delay. See the [Version 10.1 patch notes](docs/VERSION10_1_RELEASE.md), [Version 10 release notes](docs/VERSION10_RELEASE.md), and [feature matrix](docs/FEATURE_MATRIX.md).
+> **Realmworks (Version 11.2)** rebuilds crafting as a paged 25-icon recipe book with 2×2 personal and 3×3 Tinker Bench grids, adds tiered tool durability, repairs dungeon fall tracking and boat steering, and extends aiming and multiplayer animation. See the [Version 11.2 release notes](docs/VERSION11_2_RELEASE.md), [Version 10.1 patch notes](docs/VERSION10_1_RELEASE.md), and [feature matrix](docs/FEATURE_MATRIX.md).
 
 ## Highlights
 
@@ -12,11 +12,11 @@ Voxel Frontier is an original, mobile-friendly procedural voxel survival, explor
 - Dynamic settlements using crossroads, courtyards, or lanes; 3–7 randomized farms, cottages, longhouses, forges, libraries, workshops, and towers; varied residents and profession mixes; paths, markets, furnishings, and biome-aware timber
 - 121 original block types with generated textures and eighteen mesh families, including alpha-tested foliage, clearer glass, doors, fences, flora, Fluxstone dust, directional components, torches, linked chests, slabs, stairs, pistons, beds, and portals
 - Survival with an empty starting inventory, physical drops, mining tiers, crafting, smelting, hunger, combat, beds, and trade; Creative with a searchable catalog, collision-aware flight, block picking, and exact one-click mining
-- A persistent 4×9 inventory with the bottom row as the hotbar, unique tool placement, one-click pick/place organization, shift-click transfer, item throwing, recipe search, craftable/all filters, contextual workbench recipes, and detailed tooltips
-- Smooth acceleration, partial-block collision, step-up motion, coyote time, jump buffering, ledge-safe crouching, mobile auto-jump, swimming, and physics-driven boats with buoyancy, drag, speed-aware steering, shore collision, and safe dismounting
+- A persistent 4×9 inventory with the bottom row as the hotbar, pick/place organization, shift-click and hover-number transfer, pitch-aware item throwing, 25-entry recipe pages, 2×2 personal crafting, 3×3 bench crafting, and per-copy saved durability
+- Smooth acceleration, partial-block collision, step-up motion, coyote time, jump buffering, ledge-safe crouching, mobile auto-jump, swimming, reset-safe realm travel, and stable frame-rate-independent boats with buoyancy, hull drag, bounded steering, reverse, shore collision, and safe dismounting
 - Rebuilt directional 0–15 Fluxstone circuits with dust, levers, torches, four-delay repeaters, comparators, observers, buttons, plates, targets, lamps, pistons, sticky pistons, hoppers, dispensers, droppers, conveyors, storage, drills, furnaces, and fabricators
 - Sheep, cows, pigs, chickens, villagers, and original creatures with procedural textures, articulated animation, recognizable synthesized voices, collision-safe water motion, combat, and loot; Shardcasters lead imperfect avoidable shots while melee requires vertical overlap and clear sight
-- Day/night lighting, a clock and day counter, brighter readable nights, craftable beds, a seeded diatonic ambient score, procedural effects, and original animal-like calls
+- Twelve-minute day/night lighting, a clock and day counter, brighter readable nights, craftable beds, a seeded diatonic ambient score, procedural effects, and original animal-like calls
 - Universal villager sales priced by item value, Frontier Mark currency, five daily limited offers per profession, and drag/tap selling
 - Local autosave plus compressed, checksummed, copyable `VF2` world keys containing boats and up to 32 stable-browser player profiles
 - Six-character online rooms with server-owned membership and routing policy, host-authoritative simulation, snapshots, 12-second persistent checkpoints, reconnection backoff, multi-peer updates, transient/reopenable chat, and automatic host handoff
@@ -47,7 +47,7 @@ The game needs a current browser with WebGL and WebSocket support. Chrome, Edge,
 | `X` | Rotate the targeted machine |
 | `E` | Open or close inventory and crafting |
 | `G` | Open the field guide |
-| `1`–`9` / wheel | Select a hotbar slot |
+| `1`–`9` / wheel | Select a hotbar slot; while inventory is open, hover a pack item and press `1`–`9` to swap it into that slot |
 | `Esc` | Pause |
 
 ### Start an online room
@@ -89,11 +89,11 @@ Full validation:
 npm test
 ```
 
-This runs linting, 56 deterministic simulation tests, Cloudflare Worker type-checking and bundling, a real two-client Miniflare room lifecycle test, and a production GitHub Pages export. The multiplayer integration opens a host and guest, sanitizes chat and death messages, transfers a snapshot and live world delta, verifies guest authority rejection plus item, chest, furnace, dungeon, profile, and boat intent routing, writes a checkpoint larger than one storage row, disconnects the host, and verifies promotion with recovered state.
+This runs linting, 65 deterministic simulation tests, Cloudflare Worker type-checking and bundling, a real two-client Miniflare room lifecycle test, and a production GitHub Pages export. The multiplayer integration opens a host and guest, sanitizes chat and death messages, transfers a snapshot and live world delta, verifies guest authority rejection plus item, chest, furnace, dungeon, profile, and boat intent routing, writes a checkpoint larger than one storage row, disconnects the host, and verifies promotion with recovered state.
 
 ## Free server deployment
 
-[GitHub Pages serves static files only](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages), so Version 10.1 keeps the game frontend there and deploys `server/` to a Cloudflare Durable Object. Cloudflare documents Durable Objects on its [Workers Free plan](https://developers.cloudflare.com/durable-objects/platform/pricing/) and recommends its [WebSocket Hibernation API](https://developers.cloudflare.com/durable-objects/best-practices/websockets/) for multiplayer rooms that sleep without disconnecting clients.
+[GitHub Pages serves static files only](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages), so Version 11.2 keeps the game frontend there and deploys `server/` to a Cloudflare Durable Object. Cloudflare documents Durable Objects on its [Workers Free plan](https://developers.cloudflare.com/durable-objects/platform/pricing/) and recommends its [WebSocket Hibernation API](https://developers.cloudflare.com/durable-objects/best-practices/websockets/) for multiplayer rooms that sleep without disconnecting clients.
 
 For a manual deployment:
 

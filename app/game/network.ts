@@ -26,9 +26,9 @@ export type NetworkMessage =
   | { type: "hit-confirm"; mobId: string; critical: boolean }
   | { type: "damage"; amount: number; source: string; origin?: Vec3Data }
   | { type: "player-profile"; profile: PlayerSaveState }
-  | { type: "give-item"; item: ItemId; count: number; targetSlot?: number }
-  | { type: "request-drop"; item: ItemId; count: number }
-  | { type: "request-chest"; key: string; direction: "deposit"; item: ItemId; count: number; sourceSlot?: number; targetSlot?: number }
+  | { type: "give-item"; item: ItemId; count: number; durability?: number[]; targetSlot?: number }
+  | { type: "request-drop"; item: ItemId; count: number; durability?: number[] }
+  | { type: "request-chest"; key: string; direction: "deposit"; item: ItemId; count: number; durability?: number[]; sourceSlot?: number; targetSlot?: number }
   | { type: "request-chest"; key: string; direction: "withdraw"; item: ItemId; count: number; sourceSlot?: number; targetSlot?: number }
   | { type: "request-chest"; key: string; direction: "move"; sourceSlot: number; targetSlot: number }
   | { type: "request-furnace"; key: string; direction: "deposit"; slot: Exclude<FurnaceSlot, "output">; item: ItemId; count: number; sourceSlot?: number }

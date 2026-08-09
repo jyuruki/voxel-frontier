@@ -147,6 +147,42 @@ function validItemSlot(value: unknown): boolean {
   return value === null || (typeof value === "string" && value.length > 0 && value.length <= 80);
 }
 
+function validDurabilityValue(value: unknown): value is number {
+  return Number.isInteger(value) && typeof value === "number" && value >= 1 && value <= 100_000;
+}
+
+function validDurabilityRecord(
+  value: unknown,
+  inventory: Record<string, unknown>,
+  allowLegacySingleValue = false,
+): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const durability = value as Record<string, unknown>;
+  if (Object.keys(durability).length > 32) return false;
+  return Object.entries(durability).every(([item, stored]) => {
+    if (!item.startsWith("tool:") || item.length > 80) return false;
+    if (allowLegacySingleValue && validDurabilityValue(stored)) return true;
+    const count = inventory[item];
+    return Array.isArray(stored)
+      && stored.length <= 4_096
+      && typeof count === "number"
+      && Number.isInteger(count)
+      && stored.length <= count
+      && stored.every(validDurabilityValue);
+  });
+}
+
+function validTransferredDurability(value: unknown, item: unknown, count: unknown): boolean {
+  if (value === undefined) return true;
+  return typeof item === "string"
+    && item.startsWith("tool:")
+    && typeof count === "number"
+    && Number.isInteger(count)
+    && Array.isArray(value)
+    && value.length <= Math.min(count, 4_096)
+    && value.every(validDurabilityValue);
+}
+
 function validProfilePoint(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const point = value as Record<string, unknown>;
@@ -173,6 +209,9 @@ function validPlayerProfile(value: unknown): boolean {
     || data.inventorySlots.length > 36
     || !data.inventorySlots.every(validItemSlot)
   )) return false;
+  if (data.durability !== undefined) {
+    if (!validDurabilityRecord(data.durability, inventory, true)) return false;
+  }
   if (data.spawnPoint !== undefined && !validProfilePoint(data.spawnPoint)) return false;
   if (data.tradeCredit !== undefined && (!finiteCoordinate(data.tradeCredit, 1_000_000_000) || typeof data.tradeCredit !== "number" || data.tradeCredit < 0)) return false;
   if (data.realm !== undefined && (typeof data.realm !== "string" || data.realm.length > 80)) return false;
@@ -189,8 +228,12 @@ function validGuestIntent(message: GameMessage): boolean {
       && Number.isInteger(message.id) && typeof message.id === "number" && message.id >= 0 && message.id <= 255;
   }
   if (message.type === "request-machine") {
-    return typeof message.key === "string" && /^-?\d+,-?\d+,-?\d+$/.test(message.key)
-      && Boolean(message.state) && typeof message.state === "object";
+    if (typeof message.key !== "string" || !/^-?\d+,-?\d+,-?\d+$/.test(message.key)
+      || !message.state || typeof message.state !== "object" || Array.isArray(message.state)) return false;
+    const state = message.state as unknown as Record<string, unknown>;
+    if (!state.storage || typeof state.storage !== "object" || Array.isArray(state.storage)) return false;
+    return state.durability === undefined
+      || validDurabilityRecord(state.durability, state.storage as Record<string, unknown>);
   }
   if (message.type === "request-mob-hit") return typeof message.mobId === "string" && message.mobId.length <= 120;
   if (message.type === "player-profile") {
@@ -215,7 +258,8 @@ function validGuestIntent(message: GameMessage): boolean {
   }
   if (message.type === "request-drop") {
     return typeof message.item === "string" && message.item.length <= 80
-      && Number.isInteger(message.count) && typeof message.count === "number" && message.count > 0 && message.count <= 999;
+      && Number.isInteger(message.count) && typeof message.count === "number" && message.count > 0 && message.count <= 999
+      && validTransferredDurability(message.durability, message.item, message.count);
   }
   if (message.type === "request-chest") {
     const validKey = typeof message.key === "string" && /^-?\d+,-?\d+,-?\d+$/.test(message.key);
@@ -224,6 +268,7 @@ function validGuestIntent(message: GameMessage): boolean {
     return (message.direction === "deposit" || message.direction === "withdraw")
       && typeof message.item === "string" && message.item.length <= 80
       && Number.isInteger(message.count) && typeof message.count === "number" && message.count > 0 && message.count <= 999
+      && (message.direction === "withdraw" || validTransferredDurability(message.durability, message.item, message.count))
       && (message.sourceSlot === undefined || validSlot(message.sourceSlot, 54))
       && (message.targetSlot === undefined || validSlot(message.targetSlot, 54));
   }

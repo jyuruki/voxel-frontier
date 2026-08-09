@@ -8,6 +8,18 @@ const STANDING_HEIGHT = 1.76;
 const CROUCH_HEIGHT = 1.27;
 const STEP_HEIGHT = 0.58;
 
+export const SAFE_FALL_DISTANCE = 4;
+
+/**
+ * Converts a measured block fall into damage. Ordinary jumps and small combat
+ * knock-ups stay below the safe distance; genuinely long falls ramp up in a
+ * predictable way without the old near-instant-death multiplier.
+ */
+export function fallDamageForDistance(distance: number): number {
+  if (!Number.isFinite(distance) || distance <= SAFE_FALL_DISTANCE) return 0;
+  return Math.min(100, (distance - SAFE_FALL_DISTANCE) * 5);
+}
+
 export class PlayerPhysics {
   readonly position = new THREE.Vector3();
   readonly velocity = new THREE.Vector3();
@@ -25,6 +37,22 @@ export class PlayerPhysics {
   constructor(position: { x: number; y: number; z: number }) {
     this.position.set(position.x, position.y, position.z);
     this.verticalPeak = position.y;
+  }
+
+  /** Move the player without carrying fall history across realms or respawns. */
+  teleport(
+    position: { x: number; y: number; z: number },
+    velocity: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 },
+  ): void {
+    this.position.set(position.x, position.y, position.z);
+    this.velocity.set(velocity.x, velocity.y, velocity.z);
+    this.verticalPeak = position.y;
+    this.grounded = false;
+    this.coyoteTimer = 0;
+    this.jumpBuffer = 0;
+    this.shoreAssistTimer = 0;
+    this.waterImmersion = 0;
+    this.swimming = false;
   }
 
   get eyeHeight(): number {
@@ -307,9 +335,7 @@ export class PlayerPhysics {
 
     if (this.position.y < WORLD_MIN_Y - 16) {
       const spawn = world.findSpawn();
-      this.position.set(spawn.x, spawn.y, spawn.z);
-      this.velocity.set(0, 0, 0);
-      this.verticalPeak = spawn.y;
+      this.teleport(spawn);
     }
   }
 }

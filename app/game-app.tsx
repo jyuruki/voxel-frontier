@@ -10,6 +10,8 @@ import {
   useState,
 } from "react";
 import { ALL_ITEMS, BLOCKS, RECIPES, blockForItem, itemDescription, itemName, matchingRecipeInputs, recipeInputOptions } from "./game/blocks";
+import { craftingGridCells, craftingGridSize, RECIPE_BOOK_PAGE_SIZE } from "./game/crafting";
+import { currentItemDurability, durabilityPercent, maxItemDurability } from "./game/durability";
 import { ChestPanelData, GameEngine, MachinePanelData, TradePanelData } from "./game/engine";
 import { itemSalePoints } from "./game/economy";
 import { HOTBAR_START, INVENTORY_SLOT_COUNT } from "./game/inventory";
@@ -31,6 +33,7 @@ import {
   GameMode,
   GameSettings,
   HudState,
+  ItemDurability,
   ItemId,
   Recipe,
   WorldSave,
@@ -46,6 +49,7 @@ const EMPTY_HUD: HudState = {
   hotbar: [],
   inventorySlots: Array(INVENTORY_SLOT_COUNT).fill(null),
   inventory: {},
+  durability: {},
   targetedBlock: null,
   miningProgress: 0,
   timeOfDay: 0.3,
@@ -121,14 +125,32 @@ function acquisitionHint(item: ItemId): string {
   return "Find this through exploration, creature drops, dungeon rewards, or Wayfarer trading.";
 }
 
-function ItemIcon({ item, count, compact = false }: { item: ItemId; count?: number | string; compact?: boolean }) {
+function ItemIcon({
+  item,
+  count,
+  compact = false,
+  showDurability = false,
+  durability,
+}: {
+  item: ItemId;
+  count?: number | string;
+  compact?: boolean;
+  showDurability?: boolean;
+  durability?: number | readonly number[];
+}) {
+  const durabilityRatio = showDurability ? durabilityPercent(item, durability) : null;
   return (
     <span
-      className={`item-icon ${compact ? "item-icon--compact" : ""}`}
+      className={`item-icon ${compact ? "item-icon--compact" : ""} ${durabilityRatio !== null ? "item-icon--durable" : ""}`}
       title={itemName(item)}
     >
       <ItemArt item={item} />
       {count !== undefined && <span className="item-icon__count">{count}</span>}
+      {durabilityRatio !== null && (
+        <span className={`item-icon__durability ${durabilityRatio <= 0.2 ? "danger" : durabilityRatio <= 0.45 ? "warning" : ""}`}>
+          <i style={{ width: `${durabilityRatio * 100}%` }} />
+        </span>
+      )}
     </span>
   );
 }
@@ -136,6 +158,7 @@ function ItemIcon({ item, count, compact = false }: { item: ItemId; count?: numb
 function InventorySlotGrid({
   slots,
   inventory,
+  durability,
   creative,
   selectedHotbar,
   onMove,
@@ -143,16 +166,29 @@ function InventorySlotGrid({
 }: {
   slots: Array<ItemId | null>;
   inventory: Record<string, number>;
+  durability: ItemDurability;
   creative: boolean;
   selectedHotbar: number;
   onMove: (from: number, to: number) => void;
   onShift: (slot: number) => void;
 }) {
   const [picked, setPicked] = useState<number | null>(null);
+  const hovered = useRef<number | null>(null);
   const move = (from: number, to: number) => {
     if (from !== to) onMove(from, to);
     setPicked(null);
   };
+  useEffect(() => {
+    const swapWithNumber = (event: KeyboardEvent) => {
+      if (event.repeat || event.altKey || event.ctrlKey || event.metaKey || !/^Digit[1-9]$/.test(event.code)) return;
+      const from = hovered.current;
+      if (from === null || from >= HOTBAR_START || !slots[from]) return;
+      event.preventDefault();
+      move(from, HOTBAR_START + Number(event.code.slice(5)) - 1);
+    };
+    window.addEventListener("keydown", swapWithNumber, true);
+    return () => window.removeEventListener("keydown", swapWithNumber, true);
+  });
   return (
     <div className="slot-grid" role="grid" aria-label="Four row inventory; bottom row is the hotbar">
       {Array.from({ length: INVENTORY_SLOT_COUNT }, (_, index) => {
@@ -166,6 +202,10 @@ function InventorySlotGrid({
             role="gridcell"
             className={`inventory-slot ${isHotbar ? "inventory-slot--hotbar" : ""} ${hotbarNumber === selectedHotbar + 1 ? "inventory-slot--selected" : ""} ${picked === index ? "inventory-slot--picked" : ""}`}
             aria-label={item ? `${itemName(item)}, ${creative ? "infinite" : inventory[item] ?? 0}` : `Empty ${isHotbar ? `hotbar ${hotbarNumber}` : "inventory"} slot`}
+            onPointerEnter={() => { hovered.current = index; }}
+            onPointerLeave={() => { if (hovered.current === index) hovered.current = null; }}
+            onFocus={() => { hovered.current = index; }}
+            onBlur={() => { if (hovered.current === index) hovered.current = null; }}
             onClick={(event) => {
               if (event.shiftKey && item) {
                 onShift(index);
@@ -175,12 +215,13 @@ function InventorySlotGrid({
             }}
           >
             {hotbarNumber && <span className="inventory-slot__number">{hotbarNumber}</span>}
-            {item && <ItemIcon item={item} count={creative ? "∞" : inventory[item] ?? 0} />}
+            {item && <ItemIcon item={item} count={creative ? "∞" : inventory[item] ?? 0} showDurability={!creative} durability={durability[item]} />}
             {item && (
               <span className="inventory-tooltip" role="tooltip">
                 <strong>{itemName(item)}</strong>
                 <span>{itemDescription(item)}</span>
-                <small>{isHotbar ? `Hotbar ${hotbarNumber}` : `Inventory row ${Math.floor(index / 9) + 1}`} · Shift-click to transfer</small>
+                {maxItemDurability(item) && !creative && <small>Durability {currentItemDurability(durability, item)} / {maxItemDurability(item)}</small>}
+                <small>{isHotbar ? `Hotbar ${hotbarNumber}` : `Inventory row ${Math.floor(index / 9) + 1}`} · Shift-click to transfer{!isHotbar ? " · press 1–9 to swap" : ""}</small>
               </span>
             )}
           </button>
@@ -442,7 +483,7 @@ export default function GameApp() {
   const [importValue, setImportValue] = useState("");
   const [importError, setImportError] = useState("");
   const [exportValue, setExportValue] = useState("");
-  const [recipeFilter, setRecipeFilter] = useState<"craftable" | "all">("craftable");
+  const [recipeFilter, setRecipeFilter] = useState<"craftable" | "all">("all");
   const [recipeSearch, setRecipeSearch] = useState("");
   const [catalogSearch, setCatalogSearch] = useState("");
   const [machine, setMachine] = useState<MachinePanelData | null>(null);
@@ -697,7 +738,7 @@ export default function GameApp() {
             <span className="brand__mark"><i /><i /><i /></span>
             <span><strong>VOXEL</strong><em>FRONTIER</em></span>
           </div>
-          <span className="build-tag">Realmworks · Version 10.1</span>
+          <span className="build-tag">Realmworks · Version 11.2</span>
         </header>
 
         <section className="landing__content">
@@ -874,7 +915,7 @@ export default function GameApp() {
               aria-label={item ? `${index + 1}: ${itemName(item)}` : `Empty slot ${index + 1}`}
             >
               <span className="hotbar__number">{index + 1}</span>
-              {item && <ItemIcon item={item} count={hud.gameMode === "creative" ? "∞" : hud.inventory[item] ?? 0} />}
+              {item && <ItemIcon item={item} count={hud.gameMode === "creative" ? "∞" : hud.inventory[item] ?? 0} showDurability={hud.gameMode !== "creative"} durability={hud.durability[item]} />}
             </button>
           );
         })}
@@ -973,12 +1014,13 @@ export default function GameApp() {
               <InventorySlotGrid
                 slots={hud.inventorySlots}
                 inventory={hud.inventory}
+                durability={hud.durability}
                 creative={hud.gameMode === "creative"}
                 selectedHotbar={hud.selectedSlot}
                 onMove={(from, to) => engineRef.current?.moveInventorySlot(from, to)}
                 onShift={(slot) => engineRef.current?.shiftInventorySlot(slot)}
               />
-              <p className="inventory-help">The separated bottom row is your hotbar. On touch screens, tap one occupied slot and then its destination.</p>
+              <p className="inventory-help">The separated bottom row is your hotbar. Hover a pack item and press 1–9 to swap it with that hotbar slot. On touch screens, tap one occupied slot and then its destination.</p>
               <div className="inventory-actions">
                 <button className="secondary-button" disabled={!heldItem} onClick={() => engineRef.current?.dropSelectedItem(false)}>Drop one held item</button>
                 <button className="secondary-button" disabled={!heldItem} onClick={() => engineRef.current?.dropSelectedItem(true)}>Drop held stack</button>
@@ -1003,7 +1045,7 @@ export default function GameApp() {
             <section className="crafting-panel">
               <header className="workspace-heading">
                 <div><p className="eyebrow">Recipe book</p><h3>Crafting</h3></div>
-                <span>Hand and Tinker Bench recipes</span>
+                <span>{craftingStation === "workbench" ? "3 × 3 Tinker Bench recipes" : "2 × 2 personal recipes"}</span>
               </header>
               <div className="recipe-toolbar">
                 <input type="search" value={recipeSearch} onChange={(event) => setRecipeSearch(event.target.value)} placeholder="Search recipes or ingredients…" />
@@ -1012,7 +1054,7 @@ export default function GameApp() {
                   <button className={recipeFilter === "all" ? "active" : ""} onClick={() => setRecipeFilter("all")}>All recipes</button>
                 </div>
               </div>
-              <RecipeList
+              <CraftingBook
                 recipes={RECIPES}
                 inventory={hud.inventory}
                 creative={hud.gameMode === "creative"}
@@ -1053,7 +1095,7 @@ export default function GameApp() {
       )}
 
       {overlay === "network" && (
-        <Modal title="Online room" eyebrow="Server-backed multiplayer · Version 10.1" onClose={closeOverlay} wide>
+        <Modal title="Online room" eyebrow="Server-backed multiplayer · Version 11.2" onClose={closeOverlay} wide>
           <div className="network-callout">
             <strong>Share one six-character code. Both players connect to the same room server.</strong>
             <span>No SDP exchange, router negotiation, or manual answer key. The server routes authoritative world updates, preserves world and per-player checkpoints, reconnects interrupted browsers, and promotes a guest if the host leaves.</span>
@@ -1180,7 +1222,7 @@ export default function GameApp() {
   );
 }
 
-function RecipeList({
+function CraftingBook({
   recipes,
   inventory,
   creative,
@@ -1197,43 +1239,85 @@ function RecipeList({
   search: string;
   onCraft: (id: string) => void;
 }) {
+  const [page, setPage] = useState(0);
+  const [selectedRecipeId, setSelectedRecipeId] = useState<string | null>(null);
   const query = search.trim().toLowerCase();
   const visible = recipes.filter((recipe) => {
     if (recipe.station === "fabricator" || recipe.station === "furnace") return false;
-    const directRecipe = recipe.station === "hand" || (recipe.station === "workbench" && workbenchActive);
-    const canCraft = directRecipe && (creative || Boolean(matchingRecipeInputs(recipe, inventory)));
+    const directRecipe = workbenchActive
+      ? recipe.station === "hand" || recipe.station === "workbench"
+      : recipe.station === "hand";
+    if (!directRecipe) return false;
+    const canCraft = creative || Boolean(matchingRecipeInputs(recipe, inventory));
     if (filter === "craftable" && !canCraft) return false;
     if (!query) return true;
     return recipe.name.toLowerCase().includes(query)
       || recipe.description.toLowerCase().includes(query)
       || recipeInputOptions(recipe).some((option) => Object.keys(option).some((item) => itemName(item as ItemId).toLowerCase().includes(query)));
   });
+  const pageCount = Math.max(1, Math.ceil(visible.length / RECIPE_BOOK_PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageRecipes = visible.slice(safePage * RECIPE_BOOK_PAGE_SIZE, (safePage + 1) * RECIPE_BOOK_PAGE_SIZE);
+  const selectedRecipe = pageRecipes.find((recipe) => recipe.id === selectedRecipeId) ?? pageRecipes[0] ?? null;
+  const gridSize = craftingGridSize(workbenchActive);
+  const cells = selectedRecipe ? craftingGridCells(selectedRecipe, inventory, gridSize) : [];
+  const selectedCanCraft = Boolean(selectedRecipe) && (creative || Boolean(matchingRecipeInputs(selectedRecipe!, inventory)));
   return (
-    <div className="recipe-list">
+    <div className="crafting-book">
       {visible.length === 0 && <div className="empty-inventory"><strong>No matching recipes.</strong><span>Switch to All recipes or try another search.</span></div>}
-      {visible.map((recipe) => {
-        const directRecipe = recipe.station === "hand" || (recipe.station === "workbench" && workbenchActive);
-        const matchingInputs = matchingRecipeInputs(recipe, inventory);
-        const displayedInputs = matchingInputs ?? recipeInputOptions(recipe)[0];
-        const canCraft = directRecipe && (creative || Boolean(matchingInputs));
-        return (
-          <article key={recipe.id}>
-            <ItemIcon item={recipe.output.item} count={recipe.output.count} />
-            <div>
-              <div className="recipe-list__title"><h3>{recipe.name}</h3><span>{recipe.station}</span></div>
-              <p>{recipe.description}</p>
-              <div className="ingredient-row">
-                {Object.entries(displayedInputs).map(([item, count]) => (
-                  <span key={item} className={(inventory[item] ?? 0) >= count ? "ready" : "missing"}>
-                    {itemName(item as ItemId)} {inventory[item] ?? 0}/{count}
+      {visible.length > 0 && (
+        <>
+          <div className="recipe-icon-grid" role="grid" aria-label={`Recipe book page ${safePage + 1} of ${pageCount}`}>
+            {pageRecipes.map((recipe) => {
+              const canCraft = creative || Boolean(matchingRecipeInputs(recipe, inventory));
+              return (
+                <button
+                  type="button"
+                  role="gridcell"
+                  key={recipe.id}
+                  className={`${selectedRecipe?.id === recipe.id ? "selected" : ""} ${canCraft ? "craftable" : "missing"}`}
+                  onClick={() => setSelectedRecipeId(recipe.id)}
+                  title={`${recipe.name} — click to fill the ${gridSize}×${gridSize} crafting grid`}
+                  aria-label={`${recipe.name}${canCraft ? ", craftable" : ", missing ingredients"}`}
+                >
+                  <ItemIcon item={recipe.output.item} count={recipe.output.count > 1 ? recipe.output.count : undefined} compact />
+                </button>
+              );
+            })}
+          </div>
+          <div className="recipe-pagination" aria-label="Recipe book pages">
+            <button type="button" disabled={safePage <= 0} onClick={() => setPage(Math.max(0, safePage - 1))}>‹</button>
+            <span>Page {safePage + 1} / {pageCount}</span>
+            <button type="button" disabled={safePage >= pageCount - 1} onClick={() => setPage(Math.min(pageCount - 1, safePage + 1))}>›</button>
+          </div>
+          {selectedRecipe && (
+            <section className="crafting-grid-panel" aria-label={`${gridSize} by ${gridSize} crafting grid for ${selectedRecipe.name}`}>
+              <div>
+                <small>{workbenchActive ? "TINKER BENCH" : "PERSONAL CRAFTING"} · {gridSize} × {gridSize}</small>
+                <strong>{selectedRecipe.name}</strong>
+              </div>
+              <div className="crafting-grid" style={{ "--craft-grid-size": gridSize } as CSSProperties}>
+                {cells.map((cell, index) => (
+                  <span key={index} className={`crafting-grid__slot ${cell && (creative || cell.available) ? "ready" : cell ? "missing" : ""}`}>
+                    {cell && <ItemIcon item={cell.item} compact />}
                   </span>
                 ))}
               </div>
-            </div>
-            <button className="secondary-button" disabled={!canCraft} onClick={() => onCraft(recipe.id)}>{creative ? "Take" : "Craft"}</button>
-          </article>
-        );
-      })}
+              <span className="crafting-grid__arrow" aria-hidden="true">→</span>
+              <button
+                type="button"
+                className="crafting-output"
+                disabled={!selectedCanCraft}
+                onClick={() => onCraft(selectedRecipe.id)}
+                title={selectedCanCraft ? `Craft ${selectedRecipe.name}` : "Missing ingredients"}
+              >
+                <ItemIcon item={selectedRecipe.output.item} count={selectedRecipe.output.count} />
+                <span>{creative ? "READY" : selectedCanCraft ? "CRAFT" : "MISSING"}</span>
+              </button>
+            </section>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -1298,7 +1382,7 @@ function GuideModal({ onClose }: { onClose: () => void }) {
     || itemDescription(item).toLowerCase().includes(query)
     || acquisitionHint(item).toLowerCase().includes(query));
   return (
-    <Modal title="Frontier guidebook" eyebrow="Realmworks · Version 10.1" onClose={onClose} wide>
+    <Modal title="Frontier guidebook" eyebrow="Realmworks · Version 11.2" onClose={onClose} wide>
       <div className="guide-intro">
         <div><span aria-hidden="true">▤</span><div><strong>Everything important, in one place.</strong><p>Start with the short chapters, then search any block, tool, part, food, vehicle, or machine below to learn where it comes from.</p></div></div>
       </div>
@@ -1317,7 +1401,7 @@ function GuideModal({ onClose }: { onClose: () => void }) {
         </article>
         <article className="guide-card">
           <span>04</span><h3>Boats & beds</h3>
-          <p>Craft a boat from five planks, select it, and Place / Use on water. Interact nearby to board; steer while moving and Sneak to dismount. Place and use a bed at any time to set your personal respawn.</p>
+          <p>Craft a boat from five planks at a Tinker Bench, select it, and Place / Use on water. Interact nearby to board; paddle, coast, reverse, and steer with movement controls, then Sneak to dismount. Place and use a bed to set your personal respawn.</p>
         </article>
         <article className="guide-card">
           <span>05</span><h3>Combat feedback</h3>
@@ -1329,11 +1413,11 @@ function GuideModal({ onClose }: { onClose: () => void }) {
         </article>
         <article className="guide-card">
           <span>07</span><h3>Storage & crafting</h3>
-          <p>Tap one inventory stack and then its destination; shift-click on desktop transfers quickly. Chests hold 27 slots and pair for 54. Furnaces have explicit input, fuel, and output slots.</p>
+          <p>The inventory has 2 × 2 personal crafting; a Tinker Bench opens 3 × 3 crafting. Pick recipes from 25-icon pages, then take the output. Hover a pack item and press 1–9 to swap it with the hotbar. Tools lose durability as they work.</p>
         </article>
         <article className="guide-card">
           <span>08</span><h3>Rooms, chat & saves</h3>
-          <p>Chat messages fade after a few seconds; reopen Chat for the recent archive. A Version 10.1 world key carries the world, boats, and saved profiles for players who joined with their stable browser identity.</p>
+          <p>Chat messages fade after a few seconds; reopen Chat for the recent archive. A Version 11.2 world key carries the world, boats, tool durability, and saved profiles for players who joined with their stable browser identity.</p>
         </article>
       </div>
       <div className="controls-table">

@@ -113,7 +113,8 @@ try {
         health: 92,
         hunger: 80,
         stamina: 74,
-        inventory: { "part:coal": 12 },
+        inventory: { "part:coal": 12, "tool:rough-pick": 1 },
+        durability: { "tool:rough-pick": [31] },
         hotbar: ["part:coal", null, null, null, null, null, null, null, null],
         inventorySlots: ["part:coal"],
         selectedSlot: 0,
@@ -127,6 +128,7 @@ try {
   const profile = await host.next((packet) => packet.kind === "game" && packet.message?.type === "player-profile", "guest player profile");
   assert.equal(profile.peerId, guestId);
   assert.equal(profile.message.profile.inventory["part:coal"], 12);
+  assert.deepEqual(profile.message.profile.durability["tool:rough-pick"], [31]);
 
   guest.send({ kind: "game", message: { type: "player-profile", profile: { position: { x: 2, y: 72, z: 3 }, inventory: { "part:coal": -4 }, hotbar: [], selectedSlot: 0 } } });
   const badProfile = await guest.next((packet) => packet.kind === "error" && packet.code === "bad-intent", "invalid profile rejection");
@@ -167,15 +169,21 @@ try {
   const request = await host.next((packet) => packet.kind === "game" && packet.message?.type === "request-block", "guest block request");
   assert.equal(request.peerId, guestId);
 
-  guest.send({ kind: "game", message: { type: "request-drop", item: "part:coal", count: 2 } });
+  guest.send({ kind: "game", message: { type: "request-drop", item: "tool:rough-pick", count: 1, durability: [31] } });
   const dropRequest = await host.next((packet) => packet.kind === "game" && packet.message?.type === "request-drop", "guest item drop");
   assert.equal(dropRequest.peerId, guestId);
-  assert.equal(dropRequest.message.count, 2);
+  assert.equal(dropRequest.message.count, 1);
+  assert.deepEqual(dropRequest.message.durability, [31]);
 
-  guest.send({ kind: "game", message: { type: "request-chest", key: "1,70,1", direction: "deposit", item: "part:coal", count: 2 } });
+  guest.send({ kind: "game", message: { type: "request-drop", item: "tool:rough-pick", count: 1, durability: [31, 30] } });
+  const badDrop = await guest.next((packet) => packet.kind === "error" && packet.code === "bad-intent", "invalid drop durability rejection");
+  assert.match(badDrop.message, /invalid guest request/i);
+
+  guest.send({ kind: "game", message: { type: "request-chest", key: "1,70,1", direction: "deposit", item: "tool:rough-pick", count: 1, durability: [31] } });
   const chestRequest = await host.next((packet) => packet.kind === "game" && packet.message?.type === "request-chest", "guest chest transfer");
   assert.equal(chestRequest.peerId, guestId);
   assert.equal(chestRequest.message.direction, "deposit");
+  assert.deepEqual(chestRequest.message.durability, [31]);
 
   guest.send({ kind: "game", message: { type: "request-chest", key: "1,70,1", direction: "move", sourceSlot: 0, targetSlot: 26 } });
   const chestMove = await host.next((packet) => packet.kind === "game" && packet.message?.type === "request-chest" && packet.message?.direction === "move", "guest chest rearrangement");

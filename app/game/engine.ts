@@ -14,6 +14,7 @@ import {
 } from "./blocks";
 import { AutomationSystem } from "./automation";
 import { FrontierAudio } from "./audio";
+import { thrownItemLaunch } from "./aiming";
 import { canPlaceBoat, safeBoatDismount, updateBoatPhysics } from "./boats";
 import {
   HOTBAR_SIZE,
@@ -27,11 +28,19 @@ import {
   shiftInventorySlot as shiftSlotInLayout,
 } from "./inventory";
 import { CRITICAL_DAMAGE_MULTIPLIER, WeaponStats, isCriticalHit, weaponStats } from "./combat";
+import {
+  addItemDurability,
+  cloneItemDurability,
+  cloneSerializedItemDurability,
+  damageItemDurability,
+  normalizeDurability,
+  takeItemDurability,
+} from "./durability";
 import { itemSalePoints } from "./economy";
 import { buildChunkGeometries } from "./mesher";
 import { NetworkMessage, NetworkSession } from "./network";
 import { MOB_DEFINITIONS, mobIntersectsSolid, moveMobWithCollision, resolveMobPenetration } from "./mobs";
-import { PlayerPhysics } from "./physics";
+import { fallDamageForDistance, PlayerPhysics } from "./physics";
 import { hashString, parseWorldKey, seededRandom, worldKey } from "./prng";
 import { voxelRaycast } from "./raycast";
 import { encodeWorldKey, saveLocally } from "./save";
@@ -71,12 +80,14 @@ import {
   BoatState,
   ChatEntry,
   CHUNK_SIZE,
+  DAY_LENGTH_SECONDS,
   GameMode,
   GameSettings,
   HudState,
   InputFrame,
   Inventory,
   InventoryLayout,
+  ItemDurability,
   ItemId,
   MachineState,
   MobState,
@@ -165,12 +176,39 @@ function cloneInventory(inventory: Inventory): Inventory {
 }
 
 function cloneMachineState(state: MachineState): MachineState {
+  const storage = cloneInventory(state.storage);
+  const durability = normalizeDurability(storage, state.durability);
   return {
     ...state,
-    storage: cloneInventory(state.storage),
+    storage,
+    durability: Object.keys(durability).length > 0 ? durability : undefined,
     storageSlots: state.storageSlots ? [...state.storageSlots] : undefined,
     link: state.link ? { ...state.link } : undefined,
   };
+}
+
+function machineDurability(state: MachineState): ItemDurability {
+  const durability = normalizeDurability(state.storage, state.durability);
+  state.durability = Object.keys(durability).length > 0 ? durability : undefined;
+  return durability;
+}
+
+function addMachineItemDurability(
+  state: MachineState,
+  item: ItemId,
+  count: number,
+  transferred?: readonly number[],
+): void {
+  const durability = machineDurability(state);
+  addItemDurability(durability, item, count, transferred);
+  state.durability = Object.keys(durability).length > 0 ? durability : undefined;
+}
+
+function takeMachineItemDurability(state: MachineState, item: ItemId, count: number): number[] | undefined {
+  const durability = machineDurability(state);
+  const transferred = takeItemDurability(durability, item, count);
+  state.durability = Object.keys(durability).length > 0 ? durability : undefined;
+  return transferred;
 }
 
 function clonePlayerSaveState(state: PlayerSaveState): PlayerSaveState {
@@ -180,6 +218,7 @@ function clonePlayerSaveState(state: PlayerSaveState): PlayerSaveState {
     inventory: cloneInventory(state.inventory),
     hotbar: [...state.hotbar],
     inventorySlots: state.inventorySlots ? [...state.inventorySlots] : undefined,
+    durability: cloneSerializedItemDurability(state.durability),
     spawnPoint: state.spawnPoint ? { ...state.spawnPoint } : undefined,
   };
 }
@@ -218,6 +257,7 @@ function sanitizeRemotePlayerProfile(
   const inventorySlots = Array.isArray(profile.inventorySlots)
     ? Array.from({ length: INVENTORY_SLOT_COUNT }, (_, index) => knownItem(profile.inventorySlots?.[index]) ? profile.inventorySlots![index] : null)
     : undefined;
+  const durability = normalizeDurability(inventory, profile.durability);
   const spawnPoint = safeProfilePoint(profile.spawnPoint);
   return {
     position: { ...position },
@@ -229,6 +269,7 @@ function sanitizeRemotePlayerProfile(
     inventory,
     hotbar,
     inventorySlots,
+    durability,
     selectedSlot: Math.floor(boundedProfileNumber(profile.selectedSlot, 0, 0, HOTBAR_SIZE - 1)),
     tradeCredit: Math.floor(boundedProfileNumber(profile.tradeCredit, 0, 0, 1_000_000_000)),
     spawnPoint: spawnPoint ?? undefined,
@@ -555,6 +596,7 @@ export class GameEngine {
   private settings: GameSettings;
   private inventory: Inventory;
   private inventorySlots: InventoryLayout;
+  private durability: ItemDurability;
   private hotbar: Array<ItemId | null>;
   private selectedSlot = 0;
   private health = 100;
@@ -707,7 +749,7 @@ export class GameEngine {
     if (event.code === "KeyX") this.rotateTargetedMachine();
     if (event.code === "KeyV") this.toggleCreativeFlight();
     if (event.code === "Escape") this.callbacks.onPause();
-    if (/^Digit[1-9]$/.test(event.code)) this.setSelectedSlot(Number(event.code.slice(5)) - 1);
+    if (!this.paused && /^Digit[1-9]$/.test(event.code)) this.setSelectedSlot(Number(event.code.slice(5)) - 1);
   };
   private readonly onKeyUp = (event: KeyboardEvent) => {
     if (event.code === "KeyW" && this.input.forward > 0) this.input.forward = 0;
@@ -746,7 +788,12 @@ export class GameEngine {
       for (const [key, state] of loaded.machines) {
         this.world.machines.set(key, cloneMachineState(state));
       }
-      this.world.drops.push(...loaded.drops.map((drop) => ({ ...drop, position: { ...drop.position }, velocity: { ...drop.velocity } })));
+      this.world.drops.push(...loaded.drops.map((drop) => ({
+        ...drop,
+        durability: drop.durability ? [...drop.durability] : undefined,
+        position: { ...drop.position },
+        velocity: { ...drop.velocity },
+      })));
       this.world.mobs.push(...loaded.mobs.map((mob) => ({
         ...mob,
         natural: mob.natural ?? (!mob.boss && mob.kind !== "wayfarer"),
@@ -762,6 +809,7 @@ export class GameEngine {
         realm: boat.realm ?? realmForPosition(boat.position),
       })));
       this.inventory = cloneInventory(playerState.inventory);
+      this.durability = normalizeDurability(this.inventory, playerState.durability);
       this.inventorySlots = createInventoryLayout(this.inventory, playerState.inventorySlots, playerState.hotbar);
       this.hotbar = hotbarFromLayout(this.inventorySlots);
       this.selectedSlot = Math.max(0, Math.min(HOTBAR_SIZE - 1, playerState.selectedSlot));
@@ -779,6 +827,7 @@ export class GameEngine {
       this.rememberPlayerProfile(this.network.playerId, playerState);
     } else {
       this.inventory = this.mode === "creative" ? creativeInventory() : {};
+      this.durability = normalizeDurability(this.inventory);
       this.hotbar = defaultHotbar(this.mode);
       this.inventorySlots = createInventoryLayout(this.inventory, undefined, this.hotbar);
       this.hotbar = hotbarFromLayout(this.inventorySlots);
@@ -964,7 +1013,7 @@ export class GameEngine {
     const sprinting = this.input.sprint && (this.mode === "creative" || this.hunger > 10);
     const physicsInput = { ...this.input, sprint: sprinting };
     if (!ridingBoat) this.physics.update(dt, physicsInput, this.world, (fallDistance) => {
-      const damage = Math.max(0, (fallDistance - 3.2) * 6.5);
+      const damage = fallDamageForDistance(fallDistance);
       if (damage > 0) this.damage(damage, "Hard landing");
     }, this.settings.autoJump, this.mode === "creative" && this.creativeFlying);
     if (
@@ -1089,7 +1138,12 @@ export class GameEngine {
       this.network.send({
         type: "mob-state",
         mobs: this.world.mobs.map((mob) => ({ ...mob, position: { ...mob.position }, velocity: { ...mob.velocity } })),
-        drops: this.world.drops.map((drop) => ({ ...drop, position: { ...drop.position }, velocity: { ...drop.velocity } })),
+        drops: this.world.drops.map((drop) => ({
+          ...drop,
+          durability: drop.durability ? [...drop.durability] : undefined,
+          position: { ...drop.position },
+          velocity: { ...drop.velocity },
+        })),
         boats: this.world.boats.map((boat) => ({ ...boat, position: { ...boat.position }, velocity: { ...boat.velocity } })),
         projectiles: this.world.projectiles.map((projectile) => ({ ...projectile, position: { ...projectile.position }, velocity: { ...projectile.velocity } })),
         timeOfDay: this.timeOfDay,
@@ -1284,6 +1338,7 @@ export class GameEngine {
     const selected = this.hotbar[this.selectedSlot];
     const canHarvest = this.canHarvest(id, selected);
     this.applyBlockChange(x, y, z, BlockId.Air);
+    this.wearItem(selected);
     if (this.mode === "survival" && canHarvest && this.network.role !== "guest") {
       this.spawnDrop(this.blockDrop(id), 1, { x: x + 0.5, y: y - 0.05, z: z + 0.5 });
     } else if (this.mode === "survival" && !canHarvest) {
@@ -1407,6 +1462,7 @@ export class GameEngine {
     if (this.mode === "creative") return;
     const selected = this.hotbar[this.selectedSlot];
     this.inventorySlots = reconcileInventoryLayout(this.inventorySlots, this.inventory);
+    this.durability = normalizeDurability(this.inventory, this.durability);
     this.hotbar = hotbarFromLayout(this.inventorySlots);
     if (selected && !itemAvailable(this.inventory, selected)) this.viewModel.setItem(null);
   }
@@ -1415,12 +1471,29 @@ export class GameEngine {
     return itemAvailable(this.inventory, item) || this.inventorySlots.some((slot) => slot === null);
   }
 
-  private collectItem(item: ItemId, count: number): boolean {
+  private collectItem(item: ItemId, count: number, transferredDurability?: readonly number[]): boolean {
     if (this.mode !== "creative" && !this.canStoreItem(item)) return false;
     changeItem(this.inventory, item, count);
+    addItemDurability(this.durability, item, count, transferredDurability);
     this.inventorySlots = addItemToLayout(this.inventorySlots, item, true);
     this.hotbar = hotbarFromLayout(this.inventorySlots);
     return true;
+  }
+
+  private takeCarriedItemDurability(item: ItemId, count: number): number[] | undefined {
+    const transferred = takeItemDurability(this.durability, item, count);
+    changeItem(this.inventory, item, -count);
+    return transferred;
+  }
+
+  private wearItem(item: ItemId | null, amount = 1): void {
+    if (this.mode !== "survival" || !item || amount <= 0) return;
+    const result = damageItemDurability(this.durability, item, amount);
+    if (!result?.broke) return;
+    changeItem(this.inventory, item, -1);
+    this.clearDepletedHotbar();
+    this.viewModel.setItem(this.hotbar[this.selectedSlot]);
+    this.callbacks.onToast(`${itemName(item)} broke.`);
   }
 
   private spawnDrop(
@@ -1429,9 +1502,12 @@ export class GameEngine {
     position: MobState["position"],
     velocity?: Vec3Data,
     pickupDelay = 0.32,
+    transferredDurability?: readonly number[],
   ): void {
     this.dropSerial += 1;
     const angle = this.wildlifeRandom() * Math.PI * 2;
+    const durability: ItemDurability = {};
+    addItemDurability(durability, item, count, transferredDurability);
     this.world.drops.push({
       id: `loot-${Date.now().toString(36)}-${this.dropSerial.toString(36)}`,
       item,
@@ -1443,6 +1519,7 @@ export class GameEngine {
         z: Math.sin(angle) * (0.5 + this.wildlifeRandom()),
       },
       pickupDelay,
+      durability: durability[item] ? [...durability[item]!] : undefined,
     });
   }
 
@@ -1455,23 +1532,15 @@ export class GameEngine {
     const available = this.mode === "creative" ? 1 : this.inventory[item] ?? 0;
     const count = this.mode === "creative" ? 1 : fullStack ? available : Math.min(1, available);
     if (count <= 0) return false;
-    const direction = {
-      x: -Math.sin(this.physics.yaw) * 4.4,
-      y: 1.25 + Math.sin(this.physics.pitch) * 1.1,
-      z: -Math.cos(this.physics.yaw) * 4.4,
-    };
-    const position = {
-      x: this.physics.position.x - Math.sin(this.physics.yaw) * 0.75,
-      y: this.physics.position.y + 0.72,
-      z: this.physics.position.z - Math.cos(this.physics.yaw) * 0.75,
-    };
+    const launch = thrownItemLaunch(this.physics.position, this.physics.yaw, this.physics.pitch);
+    let transferredDurability: number[] | undefined;
     if (this.mode === "survival") {
-      changeItem(this.inventory, item, -count);
+      transferredDurability = this.takeCarriedItemDurability(item, count);
       this.clearDepletedHotbar();
     }
     if (this.network.role === "guest") {
-      this.network.send({ type: "request-drop", item, count });
-    } else this.spawnDrop(item, count, position, direction, 1.15);
+      this.network.send({ type: "request-drop", item, count, durability: transferredDurability });
+    } else this.spawnDrop(item, count, launch.position, launch.velocity, 1.15, transferredDurability);
     this.audio.play("click");
     this.callbacks.onToast(`Dropped ${count} × ${itemName(item)}${fullStack ? " stack" : ""}.`);
     this.emitHud();
@@ -1496,6 +1565,7 @@ export class GameEngine {
     this.viewModel.swing("attack");
     this.audio.play(selected === "tool:aether-repeater" ? "shoot" : "attack");
     if (selected === "tool:aether-repeater") this.spawnAetherTracer(mob, this.network.playerId);
+    this.wearItem(selected);
     if (this.network.role === "guest") {
       this.network.send({ type: "request-mob-hit", mobId: mob.id, item: selected });
       return;
@@ -1826,8 +1896,7 @@ export class GameEngine {
       return;
     }
     const destination = this.riftDestination(origin);
-    this.physics.position.set(destination.x, destination.y, destination.z);
-    this.physics.velocity.set(0, 0, 0);
+    this.physics.teleport(destination);
     this.portalReleaseRequired = true;
     this.queueNearbyChunks(true);
     const entering = isEmberdeepCoordinate(destination.x);
@@ -2068,8 +2137,7 @@ export class GameEngine {
       && Math.abs(position.y - origin.y) <= 6;
     let travelers = 0;
     if (inStagingArea(this.physics.position)) {
-      this.physics.position.set(plan.destination.x, plan.destination.y, plan.destination.z);
-      this.physics.velocity.set(0, 0, 0);
+      this.physics.teleport(plan.destination);
       this.portalReleaseRequired = true;
       this.queueNearbyChunks(true);
       travelers += 1;
@@ -2094,8 +2162,7 @@ export class GameEngine {
     const text = "Returned safely to the expedition staging ring.";
     if (requesterPeerId) this.network.send({ type: "teleport", position: state.link, text }, requesterPeerId);
     else {
-      this.physics.position.set(state.link.x, state.link.y, state.link.z);
-      this.physics.velocity.set(0, 0, 0);
+      this.physics.teleport(state.link);
       this.portalReleaseRequired = true;
       this.queueNearbyChunks(true);
       this.audio.play("rift");
@@ -2388,8 +2455,11 @@ export class GameEngine {
     if (this.network.role === "guest") this.network.send({ type: "request-boat", action: "leave", boatId: boat.id });
     boat.riderId = undefined;
     this.ridingBoatId = null;
-    this.physics.position.set(destination.x, destination.y, destination.z);
-    this.physics.velocity.set(boat.velocity.x * 0.3, Math.max(0, boat.velocity.y), boat.velocity.z * 0.3);
+    this.physics.teleport(destination, {
+      x: boat.velocity.x * 0.3,
+      y: Math.max(0, boat.velocity.y),
+      z: boat.velocity.z * 0.3,
+    });
     this.callbacks.onToast("You stepped out of the boat.");
   }
 
@@ -2492,7 +2562,7 @@ export class GameEngine {
         drop.position.z - this.physics.position.z,
       );
       if (localDistance < 2.25 && (drop.pickupDelay ?? 0) <= 0) {
-        if (!this.collectItem(drop.item, drop.count)) {
+        if (!this.collectItem(drop.item, drop.count, drop.durability)) {
           drop.pickupDelay = 0.7;
           if (this.inventoryFullToastTimer <= 0) {
             this.inventoryFullToastTimer = 2.5;
@@ -2511,7 +2581,7 @@ export class GameEngine {
           drop.position.z - player.position.z,
         );
         if (distance >= 2.25 || (drop.pickupDelay ?? 0) > 0) continue;
-        this.network.send({ type: "give-item", item: drop.item, count: drop.count }, peerId);
+        this.network.send({ type: "give-item", item: drop.item, count: drop.count, durability: drop.durability }, peerId);
         this.world.drops.splice(index, 1);
         break;
       }
@@ -3242,10 +3312,14 @@ export class GameEngine {
     };
     add(group, [0.58, 0.76, 0.34], [0, 1.04, 0], shirt, "remote-body");
     add(group, [0.6, 0.15, 0.36], [0, 1.27, -0.01], trim, "remote-trim");
-    add(group, [0.48, 0.48, 0.48], [0, 1.68, 0], skin, "remote-head");
-    add(group, [0.5, 0.13, 0.5], [0, 1.89, 0], hair, "remote-hair");
-    if ((seed >>> 6) % 3 === 0) add(group, [0.5, 0.2, 0.08], [0, 1.79, 0.22], hair, "remote-hair-back");
-    for (const x of [-0.13, 0.13]) add(group, [0.055, 0.055, 0.025], [x, 1.72, -0.253], eye, "remote-eye");
+    const headPivot = new THREE.Group();
+    headPivot.name = "remote-head-pivot";
+    headPivot.position.set(0, 1.52, 0);
+    add(headPivot, [0.48, 0.48, 0.48], [0, 0.16, 0], skin, "remote-head");
+    add(headPivot, [0.5, 0.13, 0.5], [0, 0.37, 0], hair, "remote-hair");
+    if ((seed >>> 6) % 3 === 0) add(headPivot, [0.5, 0.2, 0.08], [0, 0.27, 0.22], hair, "remote-hair-back");
+    for (const x of [-0.13, 0.13]) add(headPivot, [0.055, 0.055, 0.025], [x, 0.2, -0.253], eye, "remote-eye");
+    group.add(headPivot);
     for (const [index, x] of [-0.18, 0.18].entries()) {
       const leg = new THREE.Group();
       leg.name = `remote-leg-${index}`;
@@ -3297,6 +3371,11 @@ export class GameEngine {
       mesh.position.lerp(new THREE.Vector3(player.position.x, player.position.y, player.position.z), 0.42);
       const yawDelta = Math.atan2(Math.sin(player.yaw - mesh.rotation.y), Math.cos(player.yaw - mesh.rotation.y));
       mesh.rotation.y += yawDelta * 0.44;
+      const headPivot = mesh.getObjectByName("remote-head-pivot");
+      if (headPivot) {
+        const targetPitch = THREE.MathUtils.clamp(player.pitch, -1.05, 1.05);
+        headPivot.rotation.x += (targetPitch - headPivot.rotation.x) * (1 - Math.exp(-14 * dt));
+      }
       if (mesh.userData.heldItem !== (player.heldItem ?? null)) this.refreshRemoteHeldItem(mesh, player.heldItem ?? null);
       const movement = Math.min(1, (player.moveSpeed ?? 0) / 4.5);
       mesh.userData.gait = Number(mesh.userData.gait ?? 0) + dt * (2.2 + movement * 5.8);
@@ -3323,7 +3402,7 @@ export class GameEngine {
 
   private updateDayNight(dt: number): void {
     const previousTime = this.timeOfDay;
-    this.timeOfDay = (this.timeOfDay + dt / 480) % 1;
+    this.timeOfDay = (this.timeOfDay + dt / DAY_LENGTH_SECONDS) % 1;
     if (previousTime < 0.25 && this.timeOfDay >= 0.25) {
       this.dayCount += 1;
       if (this.mode === "survival") this.objective = `Day ${this.dayCount}: explore farther, improve your gear, and prepare your defenses.`;
@@ -3412,8 +3491,7 @@ export class GameEngine {
       const boat = this.ridingBoatId ? this.world.boats.find((candidate) => candidate.id === this.ridingBoatId) : undefined;
       if (boat) boat.riderId = undefined;
       this.ridingBoatId = null;
-      this.physics.position.set(spawn.x, spawn.y, spawn.z);
-      this.physics.velocity.set(0, 0, 0);
+      this.physics.teleport(spawn);
       this.health = 100;
       this.hunger = 76;
       this.callbacks.onToast(bedSpawn ? "You reformed at your bed spawn." : "You reformed at the frontier beacon.");
@@ -3435,6 +3513,7 @@ export class GameEngine {
       inventory: cloneInventory(this.inventory),
       hotbar: [...this.hotbar],
       inventorySlots: [...this.inventorySlots],
+      durability: cloneItemDurability(this.durability),
       selectedSlot: this.selectedSlot,
       tradeCredit: this.tradeCredit,
       spawnPoint: this.spawnPoint ? { ...this.spawnPoint } : undefined,
@@ -3603,6 +3682,7 @@ export class GameEngine {
       })));
       this.world.drops.splice(0, this.world.drops.length, ...message.drops.map((drop) => ({
         ...drop,
+        durability: drop.durability ? [...drop.durability] : undefined,
         position: { ...drop.position },
         velocity: { ...drop.velocity },
       })));
@@ -3639,7 +3719,7 @@ export class GameEngine {
         player.skinSeed ?? hashString(`skin:${player.id}`),
       ));
     } else if (message.type === "give-item" && this.network.role === "guest") {
-      if (this.collectItem(message.item, message.count)) {
+      if (this.collectItem(message.item, message.count, message.durability)) {
         if (
           message.targetSlot !== undefined
           && message.targetSlot >= 0
@@ -3649,22 +3729,14 @@ export class GameEngine {
         this.audio.play("click");
         this.callbacks.onToast(`Collected ${message.count} × ${itemName(message.item)}.`);
       } else {
-        this.network.send({ type: "request-drop", item: message.item, count: message.count });
+        this.network.send({ type: "request-drop", item: message.item, count: message.count, durability: message.durability });
         this.callbacks.onToast(`Inventory full · ${itemName(message.item)} was returned to the ground.`);
       }
     } else if (message.type === "request-drop" && this.network.role === "host") {
       const player = this.remotePeerPlayers.get(peerId);
       if (!player || !ALL_ITEMS.includes(message.item) || message.count < 1 || message.count > 999) return;
-      const position = {
-        x: player.position.x - Math.sin(player.yaw) * 0.75,
-        y: player.position.y + 0.72,
-        z: player.position.z - Math.cos(player.yaw) * 0.75,
-      };
-      this.spawnDrop(message.item, message.count, position, {
-        x: -Math.sin(player.yaw) * 4.4,
-        y: 1.25 + Math.sin(player.pitch) * 1.1,
-        z: -Math.cos(player.yaw) * 4.4,
-      }, 1.15);
+      const launch = thrownItemLaunch(player.position, player.yaw, player.pitch);
+      this.spawnDrop(message.item, message.count, launch.position, launch.velocity, 1.15, message.durability);
     } else if (message.type === "request-chest" && this.network.role === "host") {
       const player = this.remotePeerPlayers.get(peerId);
       if (!player || !this.chestInRange(message.key, player)) return;
@@ -3674,18 +3746,18 @@ export class GameEngine {
       }
       if (!ALL_ITEMS.includes(message.item)) return;
       if (message.direction === "deposit") {
-        if (!this.addToChest(message.key, message.item, Math.min(999, message.count), message.targetSlot)) {
+        if (!this.addToChest(message.key, message.item, Math.min(999, message.count), message.targetSlot, message.durability)) {
           this.network.send({ type: "toast", text: "That chest has no open slots; the deposit was rejected." }, peerId);
-          this.network.send({ type: "give-item", item: message.item, count: Math.min(999, message.count), targetSlot: message.sourceSlot }, peerId);
+          this.network.send({ type: "give-item", item: message.item, count: Math.min(999, message.count), durability: message.durability, targetSlot: message.sourceSlot }, peerId);
         }
       } else {
         const taken = message.sourceSlot === undefined
           ? (() => {
-            const count = this.takeFromChest(message.key, message.item, Math.min(999, message.count));
-            return count > 0 ? { item: message.item, count } : null;
+            const moved = this.takeFromChest(message.key, message.item, Math.min(999, message.count));
+            return moved.count > 0 ? { item: message.item, ...moved } : null;
           })()
           : this.takeFromChestSlot(message.key, message.sourceSlot, Math.min(999, message.count));
-        if (taken) this.network.send({ type: "give-item", item: taken.item, count: taken.count, targetSlot: message.targetSlot }, peerId);
+        if (taken) this.network.send({ type: "give-item", item: taken.item, count: taken.count, durability: taken.durability, targetSlot: message.targetSlot }, peerId);
       }
     } else if (message.type === "request-furnace" && this.network.role === "host") {
       const player = this.remotePeerPlayers.get(peerId);
@@ -3801,8 +3873,7 @@ export class GameEngine {
         text: entering ? "The Rift Gate opens into the Emberdeep." : "You return to the living frontier.",
       }, peerId);
     } else if (message.type === "teleport" && this.network.role === "guest") {
-      this.physics.position.set(message.position.x, message.position.y, message.position.z);
-      this.physics.velocity.set(0, 0, 0);
+      this.physics.teleport(message.position);
       this.portalReleaseRequired = true;
       this.queueNearbyChunks(true);
       this.audio.play("rift");
@@ -3859,7 +3930,12 @@ export class GameEngine {
     for (const [key, state] of save.machines) {
       this.world.machines.set(key, cloneMachineState(state));
     }
-    this.world.drops.push(...save.drops.map((drop) => ({ ...drop, position: { ...drop.position }, velocity: { ...drop.velocity } })));
+    this.world.drops.push(...save.drops.map((drop) => ({
+      ...drop,
+      durability: drop.durability ? [...drop.durability] : undefined,
+      position: { ...drop.position },
+      velocity: { ...drop.velocity },
+    })));
     this.world.mobs.push(...save.mobs.map((mob) => ({
       ...mob,
       natural: mob.natural ?? (!mob.boss && mob.kind !== "wayfarer"),
@@ -3884,6 +3960,7 @@ export class GameEngine {
     if (!preserveLocalPlayer) {
       const profile = save.playerProfiles?.[this.network.playerId];
       this.inventory = profile ? cloneInventory(profile.inventory) : this.mode === "creative" ? creativeInventory() : {};
+      this.durability = normalizeDurability(this.inventory, profile?.durability);
       this.hotbar = profile ? [...profile.hotbar] : defaultHotbar(this.mode);
       this.inventorySlots = createInventoryLayout(this.inventory, profile?.inventorySlots, this.hotbar);
       this.hotbar = hotbarFromLayout(this.inventorySlots);
@@ -3900,7 +3977,7 @@ export class GameEngine {
         y: save.player.position.y,
         z: save.player.position.z + 1.4,
       };
-      this.physics.position.set(arrival.x, arrival.y, arrival.z);
+      this.physics.teleport(arrival);
       if (profile) {
         this.physics.yaw = profile.yaw;
         this.physics.pitch = profile.pitch;
@@ -3937,6 +4014,7 @@ export class GameEngine {
       hotbar: [...this.hotbar],
       inventorySlots: [...this.inventorySlots],
       inventory: cloneInventory(this.inventory),
+      durability: cloneItemDurability(this.durability),
       targetedBlock: this.currentHit?.id ?? null,
       miningProgress: this.miningProgress,
       timeOfDay: this.timeOfDay,
@@ -3991,6 +4069,7 @@ export class GameEngine {
       ...recipe,
       inputs: { ...recipe.inputs },
       inputOptions: recipe.inputOptions?.map((option) => ({ ...option })),
+      gridPattern: recipe.gridPattern ? [...recipe.gridPattern] : undefined,
       output: { ...recipe.output },
     }));
   }
@@ -4113,7 +4192,13 @@ export class GameEngine {
     return state ? { key: chestKey, state, localSlot: slot % SINGLE_CHEST_SLOTS } : null;
   }
 
-  private addToChest(key: string, item: ItemId, count: number, targetSlot?: number): boolean {
+  private addToChest(
+    key: string,
+    item: ItemId,
+    count: number,
+    targetSlot?: number,
+    transferredDurability?: readonly number[],
+  ): boolean {
     const keys = this.chestKeys(key);
     const states = keys.map((chestKey) => ({ key: chestKey, state: this.ensureChestState(chestKey)! }));
     const requested = targetSlot === undefined ? null : this.chestSlotLocation(key, targetSlot);
@@ -4125,40 +4210,45 @@ export class GameEngine {
     const localTarget = requested?.key === destination.key ? requested.localSlot : undefined;
     destination.state.storageSlots = placeStorageItem(destination.state.storageSlots ?? [], item, localTarget);
     changeItem(destination.state.storage, item, count);
+    addMachineItemDurability(destination.state, item, count, transferredDurability);
     this.broadcastMachine(destination.key, destination.state);
     return true;
   }
 
-  private takeFromChest(key: string, item: ItemId, count: number): number {
+  private takeFromChest(key: string, item: ItemId, count: number): { count: number; durability?: number[] } {
     let remaining = Math.max(0, Math.floor(count));
     let taken = 0;
+    const durability: ItemDurability = {};
     for (const chestKey of this.chestKeys(key)) {
       const state = this.ensureChestState(chestKey);
       if (!state || remaining <= 0) break;
       const available = state.storage[item] ?? 0;
       const amount = Math.min(available, remaining);
       if (amount <= 0) continue;
+      const transferred = takeMachineItemDurability(state, item, amount);
       changeItem(state.storage, item, -amount);
+      addItemDurability(durability, item, amount, transferred);
       if ((state.storage[item] ?? 0) <= 0) state.storageSlots = clearStorageItem(state.storageSlots ?? [], item);
       remaining -= amount;
       taken += amount;
       this.broadcastMachine(chestKey, state);
     }
-    return taken;
+    return { count: taken, durability: durability[item] ? [...durability[item]!] : undefined };
   }
 
-  private takeFromChestSlot(key: string, slot: number, count: number): { item: ItemId; count: number } | null {
+  private takeFromChestSlot(key: string, slot: number, count: number): { item: ItemId; count: number; durability?: number[] } | null {
     const location = this.chestSlotLocation(key, slot);
     const item = location?.state.storageSlots?.[location.localSlot] ?? null;
     if (!location || !item) return null;
     const amount = Math.min(location.state.storage[item] ?? 0, Math.max(0, Math.floor(count)));
     if (amount <= 0) return null;
+    const durability = takeMachineItemDurability(location.state, item, amount);
     changeItem(location.state.storage, item, -amount);
     if ((location.state.storage[item] ?? 0) <= 0) {
       location.state.storageSlots = clearStorageItem(location.state.storageSlots ?? [], item);
     }
     this.broadcastMachine(location.key, location.state);
-    return { item, count: amount };
+    return { item, count: amount, durability };
   }
 
   private moveChestSlotAuthoritative(key: string, sourceSlot: number, targetSlot: number): boolean {
@@ -4175,10 +4265,14 @@ export class GameEngine {
 
     const sourceCount = source.state.storage[sourceItem] ?? 0;
     const targetCount = targetItem ? target.state.storage[targetItem] ?? 0 : 0;
+    const sourceDurability = takeMachineItemDurability(source.state, sourceItem, sourceCount);
+    const targetDurability = targetItem ? takeMachineItemDurability(target.state, targetItem, targetCount) : undefined;
     delete source.state.storage[sourceItem];
     if (targetItem) source.state.storage[targetItem] = targetCount;
     delete target.state.storage[targetItem ?? ""];
     target.state.storage[sourceItem] = sourceCount;
+    addMachineItemDurability(target.state, sourceItem, sourceCount, sourceDurability);
+    if (targetItem) addMachineItemDurability(source.state, targetItem, targetCount, targetDurability);
     const sourceSlots = [...(source.state.storageSlots ?? [])];
     const targetSlots = [...(target.state.storageSlots ?? [])];
     sourceSlots[source.localSlot] = targetItem;
@@ -4203,12 +4297,16 @@ export class GameEngine {
       this.callbacks.onToast("That chest has no open slots.");
       return false;
     }
+    let transferredDurability: number[] | undefined;
     if (this.mode === "survival") {
-      changeItem(this.inventory, item, -count);
+      transferredDurability = this.takeCarriedItemDurability(item, count);
       this.clearDepletedHotbar();
     }
-    if (this.network.role === "guest") this.network.send({ type: "request-chest", key, direction: "deposit", item, count, targetSlot, sourceSlot });
-    else this.addToChest(key, item, count, targetSlot);
+    if (this.network.role === "guest") this.network.send({ type: "request-chest", key, direction: "deposit", item, count, durability: transferredDurability, targetSlot, sourceSlot });
+    else if (!this.addToChest(key, item, count, targetSlot, transferredDurability)) {
+      this.collectItem(item, count, transferredDurability);
+      return false;
+    }
     this.audio.play("click");
     this.emitHud();
     return true;
@@ -4229,7 +4327,7 @@ export class GameEngine {
       return true;
     }
     const taken = this.takeFromChestSlot(key, slot, count);
-    if (!taken || !this.collectItem(taken.item, taken.count)) return false;
+    if (!taken || !this.collectItem(taken.item, taken.count, taken.durability)) return false;
     if (targetSlot !== undefined && this.inventorySlots[targetSlot] === null) this.assignInventorySlot(targetSlot, taken.item);
     this.audio.play("click");
     this.emitHud();
@@ -4303,8 +4401,11 @@ export class GameEngine {
   transferToMachine(key: string, item: ItemId, count = 1): boolean {
     const state = this.world.machines.get(key);
     if (!state || !itemAvailable(this.inventory, item, count)) return false;
-    if (this.mode === "survival") changeItem(this.inventory, item, -count);
+    const transferredDurability = this.mode === "survival"
+      ? this.takeCarriedItemDurability(item, count)
+      : undefined;
     changeItem(state.storage, item, count);
+    addMachineItemDurability(state, item, count, transferredDurability);
     this.broadcastMachine(key, state);
     this.emitHud();
     return true;
@@ -4313,8 +4414,9 @@ export class GameEngine {
   transferFromMachine(key: string, item: ItemId, count = 1): boolean {
     const state = this.world.machines.get(key);
     if (!state || !itemAvailable(state.storage, item, count) || !this.canStoreItem(item)) return false;
+    const transferredDurability = takeMachineItemDurability(state, item, count);
     changeItem(state.storage, item, -count);
-    this.collectItem(item, count);
+    this.collectItem(item, count, transferredDurability);
     this.broadcastMachine(key, state);
     this.emitHud();
     return true;
@@ -4656,7 +4758,12 @@ export class GameEngine {
         key,
         cloneMachineState(state),
       ]),
-      drops: this.world.drops.map((drop) => ({ ...drop, position: { ...drop.position }, velocity: { ...drop.velocity } })),
+      drops: this.world.drops.map((drop) => ({
+        ...drop,
+        durability: drop.durability ? [...drop.durability] : undefined,
+        position: { ...drop.position },
+        velocity: { ...drop.velocity },
+      })),
       mobs: this.world.mobs.map((mob) => ({ ...mob, position: { ...mob.position }, velocity: { ...mob.velocity } })),
       boats: this.world.boats.map((boat) => ({
         ...boat,

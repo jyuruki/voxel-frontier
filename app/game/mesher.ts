@@ -204,18 +204,22 @@ function addFullCube(
 }
 
 function addCross(buffers: GeometryBuffers, id: BlockId, lx: number, y: number, lz: number): void {
-  pushQuad(buffers, [
+  const first: [Point, Point, Point, Point] = [
     [lx + 0.08, y, lz + 0.08],
     [lx + 0.92, y, lz + 0.92],
     [lx + 0.92, y + 0.96, lz + 0.92],
     [lx + 0.08, y + 0.96, lz + 0.08],
-  ], [-0.707, 0, 0.707], id);
-  pushQuad(buffers, [
+  ];
+  const second: [Point, Point, Point, Point] = [
     [lx + 0.92, y, lz + 0.08],
     [lx + 0.08, y, lz + 0.92],
     [lx + 0.08, y + 0.96, lz + 0.92],
     [lx + 0.92, y + 0.96, lz + 0.08],
-  ], [0.707, 0, 0.707], id);
+  ];
+  pushQuad(buffers, first, [-0.707, 0, 0.707], id);
+  pushQuad(buffers, [...first].reverse() as [Point, Point, Point, Point], [0.707, 0, -0.707], id);
+  pushQuad(buffers, second, [0.707, 0, 0.707], id);
+  pushQuad(buffers, [...second].reverse() as [Point, Point, Point, Point], [-0.707, 0, -0.707], id);
 }
 
 function connectsToWire(world: VoxelWorld, x: number, y: number, z: number): boolean {
