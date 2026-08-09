@@ -25,6 +25,10 @@ export type NetworkMessage =
   | { type: "critical-hit"; mobId: string }
   | { type: "damage"; amount: number; source: string }
   | { type: "give-item"; item: ItemId; count: number }
+  | { type: "request-drop"; item: ItemId; count: number }
+  | { type: "request-chest"; key: string; direction: "deposit" | "withdraw"; item: ItemId; count: number }
+  | { type: "request-cache"; origin: Vec3Data }
+  | { type: "request-dungeon"; origin: Vec3Data }
   | { type: "request-sleep" }
   | { type: "request-rift"; origin: Vec3Data }
   | { type: "teleport"; position: Vec3Data; text: string }

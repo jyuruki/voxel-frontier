@@ -605,6 +605,7 @@ button:disabled {
 .network-pill,
 .fps-pill,
 .hotbar,
+.locator-bar,
 .desktop-hints,
 .pause-button,
 .combat-target {
@@ -772,7 +773,7 @@ button:disabled {
 .held-item-label {
   position: absolute;
   z-index: 12;
-  bottom: max(94px, calc(env(safe-area-inset-bottom) + 84px));
+  bottom: max(132px, calc(env(safe-area-inset-bottom) + 122px));
   left: 50%;
   max-width: min(360px, calc(100vw - 32px));
   overflow: hidden;
@@ -792,6 +793,38 @@ button:disabled {
   pointer-events: none;
   backdrop-filter: blur(7px);
 }
+
+.locator-bar {
+  z-index: 12;
+  bottom: max(94px, calc(env(safe-area-inset-bottom) + 84px));
+  left: 50%;
+  display: grid;
+  grid-template-columns: 13px minmax(150px, 245px) 24px 13px;
+  align-items: center;
+  gap: 5px;
+  width: min(330px, calc(100vw - 34px));
+  height: 28px;
+  padding: 3px 8px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(255,255,255,.13);
+  border-radius: 999px;
+  color: rgba(238,250,246,.72);
+  background: rgba(7,23,26,.76);
+  box-shadow: 0 5px 18px rgba(0,0,0,.2);
+  pointer-events: none;
+  backdrop-filter: blur(7px);
+}
+
+.locator-bar__track { position: relative; height: 12px; border-radius: 8px; background: linear-gradient(90deg, rgba(255,255,255,.025), rgba(255,255,255,.13), rgba(255,255,255,.025)); }
+.locator-bar__edge { color: rgba(255,255,255,.4); font-size: .65rem; text-align: center; }
+.locator-bar > strong { color: var(--gold); font-size: .55rem; letter-spacing: .04em; text-align: center; }
+.locator-bar__tick { position: absolute; top: 3px; width: 1px; height: 6px; background: rgba(255,255,255,.25); }
+.locator-bar__tick--left { left: 17%; }
+.locator-bar__tick--center { left: 50%; height: 8px; transform: translateX(-50%); background: rgba(255,255,255,.64); }
+.locator-bar__tick--right { right: 17%; }
+.locator-marker { position: absolute; z-index: 2; top: 50%; left: var(--marker-left); display: grid; place-items: center; transform: translate(-50%, -50%) scale(var(--marker-scale)); filter: drop-shadow(0 1px 2px rgba(0,0,0,.85)); }
+.locator-marker > i { display: block; width: 9px; height: 9px; transform: rotate(45deg); border: 1px solid rgba(255,255,255,.82); border-radius: 2px; background: var(--marker-color); box-shadow: 0 0 5px color-mix(in srgb, var(--marker-color), transparent 25%); }
+.locator-marker > small { position: absolute; left: 12px; color: rgba(255,255,255,.88); font-size: .45rem; line-height: 1; }
 
 .hotbar {
   z-index: 12;
@@ -1071,6 +1104,8 @@ kbd {
 .inventory-slot:nth-child(9n) .inventory-tooltip { right: 0; left: auto; transform: none; }
 
 .inventory-help { margin: 10px 1px 0; color: #819994; font-size: .58rem; line-height: 1.5; }
+.inventory-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.inventory-actions button { flex: 1; min-width: 130px; }
 
 .recipe-toolbar { display: grid; gap: 8px; margin-bottom: 11px; }
 .recipe-toolbar input,
@@ -1148,6 +1183,7 @@ kbd {
 .settings-grid select { grid-column: 1 / -1; min-height: 39px; }
 .settings-grid .switch-row { grid-template-columns: auto 1fr; align-items: center; }
 .switch-row input { width: 17px; height: 17px; accent-color: var(--orange); }
+.fullscreen-button { width: 100%; margin-top: 2px; }
 
 .button-row {
   display: flex;
@@ -1254,6 +1290,17 @@ kbd {
 .transfer-grid section > button span { font-size: .67rem; }
 .transfer-grid section > button em { color: var(--teal-bright); font-size: .65rem; font-style: normal; font-weight: 900; }
 
+.chest-workspace { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+.chest-panel { min-width: 0; padding: 15px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.025); transition: border-color .16s ease, background .16s ease; }
+.chest-panel:has(.chest-grid:hover) { border-color: rgba(86,203,193,.28); }
+.chest-grid { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 4px; padding: 6px; border: 1px solid rgba(255,255,255,.11); border-radius: 8px; background: rgba(3,14,16,.36); }
+.chest-grid > button { position: relative; display: grid; place-items: center; aspect-ratio: 1; min-width: 0; padding: 1px; overflow: hidden; border: 1px solid rgba(255,255,255,.11); border-radius: 4px; background: rgba(255,255,255,.035); }
+.chest-grid > button:disabled { opacity: 1; }
+.chest-grid > button:not(:disabled):hover { border-color: var(--teal-bright); background: rgba(86,203,193,.08); }
+.chest-grid > button.chest-grid__hotbar { border-color: rgba(228,184,89,.28); background: rgba(228,184,89,.055); }
+.chest-grid .item-icon { width: 100%; height: 100%; }
+.chest-grid .item-icon__count { right: 1px; bottom: 0; font-size: .45rem; }
+
 .merchant-sell-workspace { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(190px, .42fr); gap: 14px; margin: 14px 0 18px; }
 .merchant-sell-workspace > div:first-child { padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: rgba(4,17,20,.32); }
 .merchant-sell-workspace header, .merchant-buy-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
@@ -1273,7 +1320,7 @@ kbd {
 .merchant-sell-tray button { margin-top: 3px; }
 .merchant-buy-heading { padding-top: 3px; border-top: 1px solid var(--line); }
 .merchant-buy-heading strong, .merchant-buy-heading span { margin-top: 12px; }
-.trade-list { display: grid; gap: 9px; }
+.trade-list { display: grid; gap: 9px; padding-bottom: max(26px, env(safe-area-inset-bottom)); scroll-padding-bottom: max(26px, env(safe-area-inset-bottom)); }
 .trade-list article { display: grid; grid-template-columns: minmax(150px, .8fr) 28px minmax(150px, .8fr) minmax(170px, 1.2fr) auto; align-items: center; gap: 10px; padding: 11px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.025); }
 .trade-list__item { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .trade-list__item > span { display: grid; gap: 2px; min-width: 0; }
@@ -1376,6 +1423,7 @@ kbd {
 .touch-button:active { transform: scale(.93); background: rgba(86,203,193,.55); }
 .touch-button--mine { grid-column: 3; grid-row: 1 / span 2; align-self: center; width: 74px; height: 74px; border-color: rgba(237,128,80,.65); background: rgba(173,79,49,.72); }
 .touch-button--dive { grid-column: 2; grid-row: 3; border-color: rgba(92,190,224,.62); background: rgba(42,102,132,.72); }
+.touch-button--drop { grid-column: 1; grid-row: 3; border-color: rgba(229,184,88,.62); color: #fff2bd; background: rgba(105,79,33,.74); }
 
 @media (max-width: 920px) {
   .landing__content { grid-template-columns: 1fr; align-items: start; padding-bottom: 140px; }
@@ -1389,6 +1437,7 @@ kbd {
   .hud-top-center { display: none; }
   .network-pill { display: none; }
   .inventory-workspace { grid-template-columns: 1fr; }
+  .chest-workspace { grid-template-columns: 1fr; }
   .crafting-panel .recipe-list { max-height: none; }
   .merchant-sell-workspace { grid-template-columns: 1fr; }
   .merchant-sell-tray { min-height: 130px; }
@@ -1439,7 +1488,8 @@ kbd {
   .hud-status { top: max(58px, calc(env(safe-area-inset-top) + 48px)); bottom: auto; left: max(10px, env(safe-area-inset-left)); width: 150px; padding: 8px; }
   .meter { grid-template-columns: 48px 1fr; gap: 5px; }
   .meter > span { font-size: .45rem; }
-  .held-item-label { bottom: max(64px, calc(env(safe-area-inset-bottom) + 56px)); font-size: .56rem; }
+  .held-item-label { bottom: max(97px, calc(env(safe-area-inset-bottom) + 89px)); font-size: .56rem; }
+  .locator-bar { bottom: max(66px, calc(env(safe-area-inset-bottom) + 58px)); grid-template-columns: 10px minmax(120px, 1fr) 21px 10px; width: min(280px, calc(100vw - 104px)); height: 25px; padding: 2px 6px; }
   .hotbar { right: max(8px, env(safe-area-inset-right)); bottom: max(8px, env(safe-area-inset-bottom)); left: max(8px, env(safe-area-inset-left)); z-index: 14; gap: 3px; padding: 5px; transform: none; overflow-x: auto; justify-content: flex-start; scrollbar-width: none; overscroll-behavior-x: contain; }
   .hotbar::-webkit-scrollbar { display: none; }
   .hotbar > button { flex: 0 0 43px; width: 43px; height: 43px; }

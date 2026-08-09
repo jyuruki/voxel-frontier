@@ -125,6 +125,10 @@ export enum BlockId {
   TimberShutter = 113,
   FlowerPot = 114,
   CarvedStone = 115,
+  DungeonGate = 116,
+  DungeonBrick = 117,
+  DungeonReturn = 118,
+  DungeonSeal = 119,
 }
 
 export type ItemId =
@@ -196,6 +200,8 @@ export interface MachineState {
   note?: number;
   tradeStock?: Record<string, number>;
   tradeRestockDay?: number;
+  storageSlots?: InventoryLayout;
+  link?: Vec3Data;
   storage: Inventory;
 }
 
@@ -225,6 +231,11 @@ export interface MobState {
   profession?: VillagerProfession;
   tradeStock?: Record<string, number>;
   tradeRestockDay?: number;
+  boss?: boolean;
+  bossName?: string;
+  maxHealth?: number;
+  dungeonId?: string;
+  lootPosition?: Vec3Data;
 }
 
 export type MutationTuple = [number, number, number, BlockId];
@@ -362,7 +373,20 @@ export interface HudState {
   timeLabel: string;
   dayCount: number;
   targetedMob: { name: string; health: number; maxHealth: number } | null;
+  locatorHeading: string;
+  locatorMarkers: LocatorMarker[];
+  workbenchActive: boolean;
   toast?: string;
+}
+
+export interface LocatorMarker {
+  id: string;
+  name: string;
+  color: string;
+  offset: number;
+  distance: number;
+  scale: number;
+  vertical: "above" | "level" | "below";
 }
 
 export interface RayHit {
@@ -384,6 +408,7 @@ export interface PlayerSnapshot {
   grounded?: boolean;
   swimming?: boolean;
   flying?: boolean;
+  crouching?: boolean;
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {

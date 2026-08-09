@@ -98,6 +98,7 @@ function sanitizePlayerMessage(message: GameMessage, playerId: string): GameMess
       grounded: Boolean(data.grounded),
       swimming: Boolean(data.swimming),
       flying: Boolean(data.flying),
+      crouching: Boolean(data.crouching),
     },
   };
 }
@@ -115,6 +116,23 @@ function validGuestIntent(message: GameMessage): boolean {
       && Boolean(message.state) && typeof message.state === "object";
   }
   if (message.type === "request-mob-hit") return typeof message.mobId === "string" && message.mobId.length <= 120;
+  if (message.type === "request-drop") {
+    return typeof message.item === "string" && message.item.length <= 80
+      && Number.isInteger(message.count) && typeof message.count === "number" && message.count > 0 && message.count <= 999;
+  }
+  if (message.type === "request-chest") {
+    return typeof message.key === "string" && /^-?\d+,-?\d+,-?\d+$/.test(message.key)
+      && (message.direction === "deposit" || message.direction === "withdraw")
+      && typeof message.item === "string" && message.item.length <= 80
+      && Number.isInteger(message.count) && typeof message.count === "number" && message.count > 0 && message.count <= 999;
+  }
+  if (message.type === "request-cache" || message.type === "request-dungeon") {
+    const origin = message.origin;
+    return Boolean(origin) && typeof origin === "object"
+      && finiteCoordinate((origin as Record<string, unknown>).x)
+      && finiteCoordinate((origin as Record<string, unknown>).y, 512)
+      && finiteCoordinate((origin as Record<string, unknown>).z);
+  }
   if (message.type === "request-rift") {
     const origin = message.origin;
     return Boolean(origin) && typeof origin === "object"

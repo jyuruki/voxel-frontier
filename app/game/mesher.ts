@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BLOCKS, isLeafBlock, tileUv } from "./blocks";
+import { BLOCKS, tileUv } from "./blocks";
 import { worldKey } from "./prng";
 import { BlockId, CHUNK_SIZE, WORLD_MAX_Y, WORLD_MIN_Y } from "./types";
 import { VoxelWorld } from "./world";
@@ -8,6 +8,7 @@ interface GeometryBuffers {
   positions: number[];
   normals: number[];
   uvs: number[];
+  colors: number[];
   indices: number[];
 }
 
@@ -29,7 +30,7 @@ const FACES = [
 type Point = [number, number, number];
 
 function emptyBuffers(): GeometryBuffers {
-  return { positions: [], normals: [], uvs: [], indices: [] };
+  return { positions: [], normals: [], uvs: [], colors: [], indices: [] };
 }
 
 function toGeometry(buffers: GeometryBuffers): THREE.BufferGeometry {
@@ -37,6 +38,7 @@ function toGeometry(buffers: GeometryBuffers): THREE.BufferGeometry {
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(buffers.positions, 3));
   geometry.setAttribute("normal", new THREE.Float32BufferAttribute(buffers.normals, 3));
   geometry.setAttribute("uv", new THREE.Float32BufferAttribute(buffers.uvs, 2));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(buffers.colors, 3));
   geometry.setIndex(buffers.indices);
   geometry.computeBoundingSphere();
   return geometry;
@@ -59,8 +61,27 @@ function targetBuffers(
 
 export function blockRenderLayer(id: BlockId): "solid" | "translucent" | "liquid" {
   if (BLOCKS[id].liquid) return "liquid";
-  if (isLeafBlock(id) || BLOCKS[id].opaque) return "solid";
-  return "translucent";
+  if ([BlockId.Glass, BlockId.GlassPane, BlockId.AshGlass, BlockId.Ice, BlockId.RiftGate, BlockId.DungeonGate, BlockId.DungeonReturn].includes(id)) return "translucent";
+  // Plants, doors, fences, leaves, and logic parts are alpha-tested cutouts.
+  // Keeping them in the depth-writing pass prevents foliage from drawing over
+  // the first-person hand and held blocks.
+  return "solid";
+}
+
+function faceBrightness(normal: Point): number {
+  if (normal[1] > 0) return 1;
+  if (normal[1] < 0) return 0.66;
+  if (normal[0] !== 0) return normal[0] > 0 ? 0.86 : 0.78;
+  return normal[2] > 0 ? 0.93 : 0.82;
+}
+
+function pushVertexColors(buffers: GeometryBuffers, vertices: [Point, Point, Point, Point], normal: Point): void {
+  const base = faceBrightness(normal);
+  for (const [index] of vertices.entries()) {
+    const gradient = normal[1] === 0 ? (index >= 2 ? 0.045 : -0.025) : 0;
+    const light = Math.max(0.55, Math.min(1, base + gradient));
+    buffers.colors.push(light, light, light);
+  }
 }
 
 function shouldRenderFace(id: BlockId, neighbor: BlockId): boolean {
@@ -82,6 +103,7 @@ function pushQuad(
     buffers.positions.push(...vertex);
     buffers.normals.push(...normal);
   }
+  pushVertexColors(buffers, vertices, normal);
   buffers.uvs.push(uv.u0, uv.v0, uv.u1, uv.v0, uv.u1, uv.v1, uv.u0, uv.v1);
   buffers.indices.push(baseIndex, baseIndex + 1, baseIndex + 2, baseIndex, baseIndex + 2, baseIndex + 3);
 }
@@ -170,6 +192,12 @@ function addFullCube(
       buffers.positions.push(lx + corner[0], y + localY, lz + corner[2]);
       buffers.normals.push(...face.normal);
     }
+    const vertices = face.corners.map((corner) => [
+      lx + corner[0],
+      y + (corner[1] === 1 ? liquidTop : 0),
+      lz + corner[2],
+    ] as Point) as unknown as [Point, Point, Point, Point];
+    pushVertexColors(buffers, vertices, [...face.normal] as Point);
     buffers.uvs.push(uv.u0, uv.v0, uv.u1, uv.v0, uv.u1, uv.v1, uv.u0, uv.v1);
     buffers.indices.push(baseIndex, baseIndex + 1, baseIndex + 2, baseIndex, baseIndex + 2, baseIndex + 3);
   }

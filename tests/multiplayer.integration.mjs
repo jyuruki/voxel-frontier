@@ -43,7 +43,7 @@ function trackedSocket(socket) {
 
 async function connect(miniflare, roomCode, role, playerId) {
   const response = await miniflare.dispatchFetch(
-    `http://localhost/room/${roomCode}?role=${role}&playerId=${playerId}&protocol=7`,
+    `http://localhost/room/${roomCode}?role=${role}&playerId=${playerId}&protocol=8`,
     { headers: { Upgrade: "websocket", Origin: ORIGIN } },
   );
   assert.equal(response.status, 101);
@@ -62,7 +62,7 @@ const miniflare = new Miniflare({
 try {
   const health = await miniflare.dispatchFetch("http://localhost/health");
   assert.equal(health.status, 200);
-  assert.equal((await health.json()).protocol, 7);
+  assert.equal((await health.json()).protocol, 8);
 
   const hostId = "traveler-host-12345678";
   const guestId = "traveler-guest-12345678";
@@ -108,6 +108,20 @@ try {
   guest.send({ kind: "game", message: { type: "request-block", x: 0, y: 70, z: 0, id: 0 } });
   const request = await host.next((packet) => packet.kind === "game" && packet.message?.type === "request-block", "guest block request");
   assert.equal(request.peerId, guestId);
+
+  guest.send({ kind: "game", message: { type: "request-drop", item: "part:coal", count: 2 } });
+  const dropRequest = await host.next((packet) => packet.kind === "game" && packet.message?.type === "request-drop", "guest item drop");
+  assert.equal(dropRequest.peerId, guestId);
+  assert.equal(dropRequest.message.count, 2);
+
+  guest.send({ kind: "game", message: { type: "request-chest", key: "1,70,1", direction: "deposit", item: "part:coal", count: 2 } });
+  const chestRequest = await host.next((packet) => packet.kind === "game" && packet.message?.type === "request-chest", "guest chest transfer");
+  assert.equal(chestRequest.peerId, guestId);
+  assert.equal(chestRequest.message.direction, "deposit");
+
+  guest.send({ kind: "game", message: { type: "request-dungeon", origin: { x: 0, y: 70, z: 0 } } });
+  const dungeonRequest = await host.next((packet) => packet.kind === "game" && packet.message?.type === "request-dungeon", "guest dungeon activation");
+  assert.equal(dungeonRequest.peerId, guestId);
 
   host.raw.close(1000, "integration host handoff");
   await guest.next((packet) => packet.kind === "peer-left" && packet.peerId === hostId, "host departure");

@@ -4,22 +4,24 @@ Voxel Frontier is an original, mobile-friendly procedural voxel survival, explor
 
 **Play:** [jyuruki.github.io/voxel-frontier](https://jyuruki.github.io/voxel-frontier/)
 
-> **Shared Horizons (Version 7)** replaces WebRTC peer negotiation and manual answer keys with a free Cloudflare Durable Object WebSocket server. It also rebalances natural terrain, keeps Y 320 as build space instead of a routine summit, creates varied multi-chunk villages, generates a fresh seed for every blank-seed world, and fixes leaves blending with water. See the [Version 7 release notes](docs/VERSION7_RELEASE.md) and [feature matrix](docs/FEATURE_MATRIX.md).
+> **Expedition Exchange (Version 8)** adds multiplayer item throwing and pickup, linked 27/54-slot shared chests, a crouch-aware party locator, procedural co-op guardian delves, Trail Torches and local light, contextual Tinker Bench crafting, nutrition-based exertion, broader villager stock, clearer glass, lighter Roughstone, and purpose-designed machinery textures. See the [Version 8 release notes](docs/VERSION8_RELEASE.md) and [feature matrix](docs/FEATURE_MATRIX.md).
 
 ## Highlights
 
 - Endless deterministic chunks across Y −64…319, with Generation 3 plains, rivers, rolling hills, rare bounded mountains, six climates, deep caves, aquifers, sparse ore veins, ruins, and the Emberdeep
 - Dynamic settlements using crossroads, courtyards, or lanes; 3–7 randomized farms, cottages, longhouses, forges, libraries, workshops, and towers; varied residents and profession mixes; paths, markets, furnishings, and biome-aware timber
-- 115 original block types with generated textures and eighteen mesh families, including alpha-tested foliage, glass panes, doors, fences, flora, thin wire, directional components, slabs, stairs, pistons, beds, and portals
+- 119 original block types with generated textures and eighteen mesh families, including alpha-tested foliage, clearer glass, doors, fences, flora, thin wire, directional components, torches, linked chests, slabs, stairs, pistons, beds, and portals
 - Survival with an empty starting inventory, physical drops, mining tiers, crafting, smelting, hunger, combat, beds, and trade; Creative with a searchable catalog, collision-aware flight, block picking, and exact one-click mining
-- A persistent 4×9 inventory with the bottom row as the hotbar, unique tool placement, drag-and-drop, tap moving, shift-click transfer, recipe search, craftable/all filters, and detailed tooltips
+- A persistent 4×9 inventory with the bottom row as the hotbar, unique tool placement, drag-and-drop, tap moving, shift-click transfer, item throwing, recipe search, craftable/all filters, contextual workbench recipes, and detailed tooltips
 - Smooth acceleration, partial-block collision, step-up motion, coyote time, jump buffering, ledge-safe crouching, mobile auto-jump, swimming drag, strokes, bobbing, buoyancy, diving, and shore assist
 - Directional 0–15 circuits with connected wire, sources, gates, four-delay repeaters, comparators, inverter torches, observers, targets, memory lamps, tone blocks, pistons, hoppers, conveyors, storage, drills, furnaces, and fabricators
 - Sheep, cows, pigs, chickens, villagers, and original creatures with procedural textures, articulated animation, recognizable synthesized voices, collision-safe water motion, combat, and loot
 - Day/night lighting, a clock and day counter, brighter readable nights, craftable beds, a seeded diatonic ambient score, procedural effects, and original animal-like calls
-- Universal villager sales priced by item value, Frontier Mark currency, daily limited profession stock, and drag/tap selling
+- Universal villager sales priced by item value, Frontier Mark currency, five daily limited offers per profession, and drag/tap selling
 - Local autosave plus compressed, checksummed, copyable world keys
 - Six-character online rooms with server-owned membership and routing policy, host-authoritative simulation, snapshots, 12-second checkpoints, reconnection backoff, multi-peer updates, and automatic host handoff
+- Shared 27-slot chests that link in pairs to 54 slots, synchronized physical item exchange, a forward-arc party locator, and grouped dungeon teleportation
+- Rare deterministic Expedition Gates leading to varied procedural Moss Crypt, Ember Foundry, and Moon Vault layouts with named guardians, shared physical loot, relic caches, and return beacons
 
 All code, names, textures, models, UI, and synthesized audio are original to this project.
 
@@ -32,14 +34,16 @@ The game needs a current browser with WebGL and WebSocket support. Chrome, Edge,
 | `W A S D` | Move; steer in water or flight |
 | Mouse | Look |
 | `Space` | Jump; ascend in water or flight |
-| `Shift` | Sprint or swim stroke |
-| `Ctrl` or `C` | Crouch; dive or descend |
+| `R` | Run or swim stroke while nutrition is above the exhaustion threshold |
+| `Shift` | Crouch; dive or descend |
+| `Ctrl` or `C` | Alternate crouch control |
 | `V` or double-tap `Space` | Toggle Creative flight |
 | Left mouse | Swing; mine or attack when aimed |
 | Middle mouse | Pick the aimed block in Creative |
 | Right mouse | Place or use the held item |
 | `F` | Interact or configure |
-| `R` | Rotate the targeted machine |
+| `Q` / `Shift` + `Q` | Drop one selected item / the full selected stack |
+| `X` | Rotate the targeted machine |
 | `E` | Open or close inventory and crafting |
 | `G` | Open the field guide |
 | `1`–`9` / wheel | Select a hotbar slot |
@@ -82,11 +86,11 @@ Full validation:
 npm test
 ```
 
-This runs linting, 42 deterministic simulation tests, Cloudflare Worker type-checking and bundling, a real two-client Miniflare room lifecycle test, and a production GitHub Pages export. The multiplayer integration opens a host and guest, transfers a snapshot and live world delta, verifies guest authority rejection and request routing, writes a checkpoint larger than one storage row, disconnects the host, and verifies promotion with recovered state.
+This runs linting, 47 deterministic simulation tests, Cloudflare Worker type-checking and bundling, a real two-client Miniflare room lifecycle test, and a production GitHub Pages export. The multiplayer integration opens a host and guest, transfers a snapshot and live world delta, verifies guest authority rejection plus item, chest, and dungeon intent routing, writes a checkpoint larger than one storage row, disconnects the host, and verifies promotion with recovered state.
 
 ## Free server deployment
 
-[GitHub Pages serves static files only](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages), so Version 7 keeps the game frontend there and deploys `server/` to a Cloudflare Durable Object. Cloudflare documents Durable Objects on its [Workers Free plan](https://developers.cloudflare.com/durable-objects/platform/pricing/) and recommends its [WebSocket Hibernation API](https://developers.cloudflare.com/durable-objects/best-practices/websockets/) for multiplayer rooms that sleep without disconnecting clients.
+[GitHub Pages serves static files only](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages), so Version 8 keeps the game frontend there and deploys `server/` to a Cloudflare Durable Object. Cloudflare documents Durable Objects on its [Workers Free plan](https://developers.cloudflare.com/durable-objects/platform/pricing/) and recommends its [WebSocket Hibernation API](https://developers.cloudflare.com/durable-objects/best-practices/websockets/) for multiplayer rooms that sleep without disconnecting clients.
 
 For a manual deployment:
 

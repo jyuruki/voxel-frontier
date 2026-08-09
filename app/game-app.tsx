@@ -10,7 +10,7 @@ import {
   useState,
 } from "react";
 import { ALL_ITEMS, BLOCKS, RECIPES, itemDescription, itemName } from "./game/blocks";
-import { GameEngine, MachinePanelData, TradePanelData } from "./game/engine";
+import { ChestPanelData, GameEngine, MachinePanelData, TradePanelData } from "./game/engine";
 import { itemSalePoints } from "./game/economy";
 import { HOTBAR_START, INVENTORY_SLOT_COUNT } from "./game/inventory";
 import { ItemArt } from "./item-art";
@@ -33,7 +33,7 @@ import {
   WorldSave,
 } from "./game/types";
 
-type Overlay = "none" | "pause" | "inventory" | "guide" | "options" | "save" | "network" | "machine" | "trade";
+type Overlay = "none" | "pause" | "inventory" | "guide" | "options" | "save" | "network" | "machine" | "chest" | "trade";
 
 const EMPTY_HUD: HudState = {
   health: 100,
@@ -57,6 +57,9 @@ const EMPTY_HUD: HudState = {
   timeLabel: "07:00 · Dawn",
   dayCount: 1,
   targetedMob: null,
+  locatorHeading: "N",
+  locatorMarkers: [],
+  workbenchActive: false,
 };
 
 function ItemIcon({ item, count, compact = false }: { item: ItemId; count?: number | string; compact?: boolean }) {
@@ -307,7 +310,10 @@ export default function GameApp() {
   const [recipeSearch, setRecipeSearch] = useState("");
   const [catalogSearch, setCatalogSearch] = useState("");
   const [machine, setMachine] = useState<MachinePanelData | null>(null);
+  const [chest, setChest] = useState<ChestPanelData | null>(null);
   const [trade, setTrade] = useState<TradePanelData | null>(null);
+  const [craftingStation, setCraftingStation] = useState<"hand" | "workbench">("hand");
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [networkMode, setNetworkMode] = useState<"host" | "join">("host");
   const [roomCode, setRoomCode] = useState("");
   const [roomCodeInput, setRoomCodeInput] = useState("");
@@ -339,6 +345,22 @@ export default function GameApp() {
     return () => window.cancelAnimationFrame(hydrationFrame);
   }, []);
 
+  useEffect(() => {
+    const updateFullscreen = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", updateFullscreen);
+    return () => document.removeEventListener("fullscreenchange", updateFullscreen);
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else if (document.fullscreenEnabled) await document.documentElement.requestFullscreen();
+      else showToast("Fullscreen is not available in this browser. Add the game to your home screen for an app-like view.");
+    } catch {
+      showToast("The browser blocked fullscreen. Try again after tapping directly inside the game.");
+    }
+  }, [showToast]);
+
   const openOverlay = useCallback((next: Overlay) => {
     engineRef.current?.pause();
     setOverlay(next);
@@ -349,12 +371,13 @@ export default function GameApp() {
     engineRef.current?.resume();
   }, []);
 
-  const toggleInventory = useCallback(() => {
+  const toggleInventory = useCallback((station: "hand" | "workbench" = "hand") => {
     setOverlay((current) => {
       if (current === "inventory") {
         engineRef.current?.resume();
         return "none";
       }
+      setCraftingStation(station);
       engineRef.current?.pause();
       return "inventory";
     });
@@ -374,12 +397,16 @@ export default function GameApp() {
         network,
         callbacks: {
           onHud: setHud,
-          onInventory: toggleInventory,
+          onInventory: (station) => toggleInventory(station ?? "hand"),
           onPause: () => openOverlay("pause"),
           onGuide: () => openOverlay("guide"),
           onMachine: (data) => {
             setMachine(data);
             openOverlay("machine");
+          },
+          onChest: (data) => {
+            setChest(data);
+            openOverlay("chest");
           },
           onTrade: (data) => {
             setTrade(data);
@@ -461,6 +488,12 @@ export default function GameApp() {
     if (latest) setMachine(latest);
   };
 
+  const refreshChest = () => {
+    if (!chest) return;
+    const latest = engineRef.current?.getChest(chest.keys[0]);
+    if (latest) setChest(latest);
+  };
+
   const copyText = async (value: string, label: string) => {
     try {
       await navigator.clipboard.writeText(value);
@@ -481,7 +514,7 @@ export default function GameApp() {
             <span className="brand__mark"><i /><i /><i /></span>
             <span><strong>VOXEL</strong><em>FRONTIER</em></span>
           </div>
-          <span className="build-tag">Shared Horizons · Version 7</span>
+          <span className="build-tag">Expedition Exchange · Version 8</span>
         </header>
 
         <section className="landing__content">
@@ -489,10 +522,10 @@ export default function GameApp() {
             <p className="eyebrow">Shape the wild. Let the world answer.</p>
             <h1>Build a world worth sharing.</h1>
             <p>
-              Cross rivers and rolling country, discover villages that grow from different plans, build anywhere from Y −64 to 319, or open a server-backed room with one six-character code.
+              Share resources, link double chests, follow your party locator, light richer caves, and gather friends for procedural guardian delves.
             </p>
             <div className="feature-chips">
-              <span>Reliable room server</span><span>Fresh seed by default</span><span>Dynamic villages</span><span>Balanced terrain</span>
+              <span>Shared chests</span><span>Player locator</span><span>Procedural delves</span><span>Living light</span>
             </div>
           </div>
 
@@ -550,7 +583,7 @@ export default function GameApp() {
 
         {overlay === "guide" && <GuideModal onClose={() => setOverlay("none")} />}
         {overlay === "options" && (
-          <OptionsModal settings={settings} update={updateSetting} onClose={() => setOverlay("none")} />
+          <OptionsModal settings={settings} update={updateSetting} isFullscreen={isFullscreen} onToggleFullscreen={toggleFullscreen} onClose={() => setOverlay("none")} />
         )}
         {toast && <div className="toast">{toast}</div>}
       </main>
@@ -558,7 +591,7 @@ export default function GameApp() {
   }
 
   return (
-    <main className="game-shell">
+    <main className="game-shell" onContextMenu={(event) => event.preventDefault()}>
       <canvas ref={canvasRef} className="game-canvas" aria-label="Voxel Frontier 3D world" />
       <div className="vignette" />
       {launchError && (
@@ -603,7 +636,6 @@ export default function GameApp() {
       <div className="hud-status">
         <Meter label="HEALTH" value={hud.health} tone="#ef725d" />
         <Meter label="NUTRITION" value={hud.hunger} tone="#e4b859" />
-        <Meter label="STAMINA" value={hud.stamina} tone="#57c9c5" />
       </div>
 
       <div className="network-pill"><span className={network.role === "offline" ? "" : "online"} />{hud.networkStatus}</div>
@@ -611,6 +643,31 @@ export default function GameApp() {
 
       <div className="held-item-label" aria-live="polite">
         {heldItem ? itemName(heldItem) : "Empty hand"}
+      </div>
+      <div className="locator-bar" aria-label={`Player locator, facing ${hud.locatorHeading}`}>
+        <span className="locator-bar__edge">‹</span>
+        <div className="locator-bar__track">
+          <i className="locator-bar__tick locator-bar__tick--left" />
+          <i className="locator-bar__tick locator-bar__tick--center" />
+          <i className="locator-bar__tick locator-bar__tick--right" />
+          {hud.locatorMarkers.map((marker) => (
+            <span
+              key={marker.id}
+              className={`locator-marker locator-marker--${marker.vertical}`}
+              style={{
+                "--marker-color": marker.color,
+                "--marker-left": `${50 + marker.offset * 47}%`,
+                "--marker-scale": marker.scale,
+              } as CSSProperties}
+              title={`${marker.name} · ${Math.round(marker.distance)} blocks · ${marker.vertical}`}
+            >
+              <i />
+              <small>{marker.vertical === "above" ? "▲" : marker.vertical === "below" ? "▼" : ""}</small>
+            </span>
+          ))}
+        </div>
+        <strong>{hud.locatorHeading}</strong>
+        <span className="locator-bar__edge">›</span>
       </div>
       <div className="hotbar" role="toolbar" aria-label="Hotbar">
         {Array.from({ length: 9 }, (_, index) => {
@@ -631,7 +688,7 @@ export default function GameApp() {
 
       {!isTouch && (
         <div className="desktop-hints">
-          <span><kbd>WASD</kbd> move / swim</span><span><kbd>SPACE</kbd> jump / ascend</span><span><kbd>CTRL</kbd> crouch / dive</span><span><kbd>V</kbd> creative flight</span><span><kbd>LMB</kbd> mine / attack</span><span><kbd>RMB</kbd> place / use</span><span><kbd>F</kbd> interact</span><span><kbd>E</kbd> inventory</span>
+          <span><kbd>WASD</kbd> move / swim</span><span><kbd>R</kbd> run</span><span><kbd>SHIFT</kbd> crouch / dive</span><span><kbd>SPACE</kbd> jump / ascend</span><span><kbd>Q</kbd> drop item</span><span><kbd>V</kbd> creative flight</span><span><kbd>LMB</kbd> mine / attack</span><span><kbd>RMB</kbd> place / use</span><span><kbd>F</kbd> interact</span><span><kbd>X</kbd> rotate machinery</span><span><kbd>E</kbd> inventory</span>
         </div>
       )}
 
@@ -656,6 +713,10 @@ export default function GameApp() {
             <HoldButton label="RUN" onChange={(pressed) => engineRef.current?.setAction("sprint", pressed)} />
             <HoldButton label="USE" onChange={(pressed) => engineRef.current?.setAction("interact", pressed)} />
             <HoldButton label="DIVE" className="touch-button--dive" onChange={(pressed) => engineRef.current?.setAction("crouch", pressed)} />
+            <button className="touch-button touch-button--drop" onPointerDown={(event) => {
+              event.preventDefault();
+              engineRef.current?.dropSelectedItem(false);
+            }}>DROP</button>
           </div>
         </div>
       )}
@@ -664,7 +725,7 @@ export default function GameApp() {
         <Modal title="Frontier paused" eyebrow={`${hud.gameMode} · ${hud.timeLabel} · Day ${hud.dayCount}`} onClose={closeOverlay}>
           <div className="menu-stack">
             <button className="primary-button" onClick={closeOverlay}>Resume expedition</button>
-            <button className="secondary-button" onClick={() => setOverlay("inventory")}>Inventory & crafting</button>
+            <button className="secondary-button" onClick={() => { setCraftingStation("hand"); setOverlay("inventory"); }}>Inventory & crafting</button>
             <button className="secondary-button" onClick={() => setOverlay("network")}>Online room</button>
             <button className="secondary-button" onClick={() => setOverlay("save")}>Save & world key</button>
             <button className="secondary-button" onClick={() => setOverlay("guide")}>Engineering guide</button>
@@ -692,6 +753,10 @@ export default function GameApp() {
                 onShift={(slot) => engineRef.current?.shiftInventorySlot(slot)}
               />
               <p className="inventory-help">The separated bottom row is your hotbar. On touch screens, tap one occupied slot and then its destination.</p>
+              <div className="inventory-actions">
+                <button className="secondary-button" disabled={!heldItem} onClick={() => engineRef.current?.dropSelectedItem(false)}>Drop one held item</button>
+                <button className="secondary-button" disabled={!heldItem} onClick={() => engineRef.current?.dropSelectedItem(true)}>Drop held stack</button>
+              </div>
               {hud.gameMode === "creative" && (
                 <details className="creative-catalog">
                   <summary>Creative catalog · all blocks and items</summary>
@@ -725,6 +790,7 @@ export default function GameApp() {
                 recipes={RECIPES}
                 inventory={hud.inventory}
                 creative={hud.gameMode === "creative"}
+                workbenchActive={craftingStation === "workbench"}
                 filter={recipeFilter}
                 search={recipeSearch}
                 onCraft={(id) => engineRef.current?.craft(id)}
@@ -735,7 +801,7 @@ export default function GameApp() {
       )}
 
       {overlay === "guide" && <GuideModal onClose={closeOverlay} />}
-      {overlay === "options" && <OptionsModal settings={settings} update={updateSetting} onClose={closeOverlay} />}
+      {overlay === "options" && <OptionsModal settings={settings} update={updateSetting} isFullscreen={isFullscreen} onToggleFullscreen={toggleFullscreen} onClose={closeOverlay} />}
 
       {overlay === "save" && (
         <Modal title="World key" eyebrow="Portable save state" onClose={closeOverlay} wide>
@@ -761,7 +827,7 @@ export default function GameApp() {
       )}
 
       {overlay === "network" && (
-        <Modal title="Online room" eyebrow="Server-backed multiplayer · Version 7" onClose={closeOverlay} wide>
+        <Modal title="Online room" eyebrow="Server-backed multiplayer · Version 8" onClose={closeOverlay} wide>
           <div className="network-callout">
             <strong>Share one six-character code. Both players connect to the same room server.</strong>
             <span>No SDP exchange, router negotiation, or manual answer key. The server routes authoritative world updates, preserves checkpoints, reconnects interrupted browsers, and promotes a guest if the host leaves.</span>
@@ -826,6 +892,24 @@ export default function GameApp() {
         />
       )}
 
+      {overlay === "chest" && chest && (
+        <ChestModal
+          chest={chest}
+          inventory={hud.inventory}
+          inventorySlots={hud.inventorySlots}
+          creative={hud.gameMode === "creative"}
+          onClose={closeOverlay}
+          onDeposit={(item, count) => {
+            engineRef.current?.depositToChest(chest.keys[0], item, count);
+            refreshChest();
+          }}
+          onWithdraw={(slot, count) => {
+            engineRef.current?.withdrawFromChest(chest.keys[0], slot, count);
+            refreshChest();
+          }}
+        />
+      )}
+
       {overlay === "trade" && trade && (
         <TradeModal
           trade={trade}
@@ -847,6 +931,7 @@ function RecipeList({
   recipes,
   inventory,
   creative,
+  workbenchActive,
   filter,
   search,
   onCraft,
@@ -854,6 +939,7 @@ function RecipeList({
   recipes: Recipe[];
   inventory: Record<string, number>;
   creative: boolean;
+  workbenchActive: boolean;
   filter: "craftable" | "all";
   search: string;
   onCraft: (id: string) => void;
@@ -861,7 +947,7 @@ function RecipeList({
   const query = search.trim().toLowerCase();
   const visible = recipes.filter((recipe) => {
     if (recipe.station === "fabricator") return false;
-    const directRecipe = recipe.station === "hand" || recipe.station === "workbench";
+    const directRecipe = recipe.station === "hand" || (recipe.station === "workbench" && workbenchActive);
     const canCraft = directRecipe && (creative || Object.entries(recipe.inputs).every(([item, count]) => (inventory[item] ?? 0) >= count));
     if (filter === "craftable" && !canCraft) return false;
     if (!query) return true;
@@ -873,7 +959,7 @@ function RecipeList({
     <div className="recipe-list">
       {visible.length === 0 && <div className="empty-inventory"><strong>No matching recipes.</strong><span>Switch to All recipes or try another search.</span></div>}
       {visible.map((recipe) => {
-        const directRecipe = recipe.station === "hand" || recipe.station === "workbench";
+        const directRecipe = recipe.station === "hand" || (recipe.station === "workbench" && workbenchActive);
         const canCraft = directRecipe && (creative || Object.entries(recipe.inputs).every(([item, count]) => (inventory[item] ?? 0) >= count));
         return (
           <article key={recipe.id}>
@@ -900,10 +986,14 @@ function RecipeList({
 function OptionsModal({
   settings,
   update,
+  isFullscreen,
+  onToggleFullscreen,
   onClose,
 }: {
   settings: GameSettings;
   update: <K extends keyof GameSettings>(key: K, value: GameSettings[K]) => void;
+  isFullscreen: boolean;
+  onToggleFullscreen: () => void;
   onClose: () => void;
 }) {
   return (
@@ -929,6 +1019,7 @@ function OptionsModal({
           <label className="switch-row"><input type="checkbox" checked={settings.leftHanded} onChange={(e) => update("leftHanded", e.target.checked)} /><span>Left-handed touch layout</span></label>
           <label className="switch-row"><input type="checkbox" checked={settings.autoJump} onChange={(e) => update("autoJump", e.target.checked)} /><span>Auto-jump one-block rises</span></label>
           <label className="switch-row"><input type="checkbox" checked={settings.showFps} onChange={(e) => update("showFps", e.target.checked)} /><span>Show frame rate</span></label>
+          <button className="secondary-button fullscreen-button" onClick={onToggleFullscreen}>{isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}</button>
         </section>
       </div>
     </Modal>
@@ -937,40 +1028,40 @@ function OptionsModal({
 
 function GuideModal({ onClose }: { onClose: () => void }) {
   return (
-    <Modal title="Frontier field guide" eyebrow="Shared Horizons · Version 7" onClose={onClose} wide>
+    <Modal title="Frontier field guide" eyebrow="Expedition Exchange · Version 8" onClose={onClose} wide>
       <div className="guide-grid">
         <article className="guide-card guide-card--accent">
-          <span>01</span><h3>Server-backed rooms</h3>
-          <p>Host a world and share one six-character code. Both browsers connect over WebSockets to the same room server, which enforces host authority, saves checkpoints, reconnects interruptions, and can promote a guest if the host leaves.</p>
+          <span>01</span><h3>Exchange & storage</h3>
+          <p>Throw one item with Q or a full stack with Shift+Q. Drops are shared online. Frontier Chests hold 27 item types, and two mutually adjacent chests link into a 54-slot shared store.</p>
         </article>
         <article className="guide-card">
-          <span>02</span><h3>Balanced horizons</h3>
-          <p>Generation 3 favors rivers, plains, and rolling country. Mountain ranges still exist, but natural terrain is capped far below the Y 320 build ceiling so the upper world belongs to ambitious builders.</p>
+          <span>02</span><h3>Party locator</h3>
+          <p>The compact bar above the hotbar shows visible party members in the forward arc. Dots shrink with distance, arrows show vertical separation, and crouching hides a player from everyone else&apos;s locator.</p>
         </article>
         <article className="guide-card">
-          <span>03</span><h3>Living settlements</h3>
-          <p>Villages now spread across multiple chunks with crossroads, courtyards, or lanes; 3–7 randomized cottages, farms, forges, libraries, workshops, halls, and towers; varied populations; paths; markets; and biome-aware materials.</p>
+          <span>03</span><h3>Guardian delves</h3>
+          <p>Rare surface gates lead to deterministic, procedurally arranged crypts, foundries, and moon vaults. Gather inside the staging ring, activate the gate, defeat its guardian, then open the shared relic cache.</p>
         </article>
         <article className="guide-card">
-          <span>04</span><h3>A fresh world by default</h3>
-          <p>Leave the seed field blank and every new world gets a new readable, high-entropy seed. Enter a phrase only when you deliberately want to replay the same terrain.</p>
+          <span>04</span><h3>Living illumination</h3>
+          <p>Craft Trail Torches from every native wood family. Directional surface shading, vertical gradients, filmic color mapping, and nearby point light give terrain shape without returning to pitch-black nights.</p>
         </article>
         <article className="guide-card">
-          <span>05</span><h3>Clean foliage</h3>
-          <p>Leaf textures now use alpha-tested depth rendering. Their small cutout gaps remain, but water behind a canopy no longer makes the entire tree look translucent.</p>
+          <span>05</span><h3>Practical survival</h3>
+          <p>Sprinting has no stamina meter and only pauses at low nutrition. Running, jumping, and natural healing consume food gradually. Dry-ground tree checks keep trunks out of rivers and the pickup reach is more forgiving.</p>
         </article>
         <article className="guide-card">
-          <span>06</span><h3>Everything from Version 6</h3>
-          <p>Finite water and dams, Creative flight, exact one-click mining, ledge-safe crouching, critical hits, universal village sales, four-delay repeaters, directional machinery, survival progression, and portable world keys remain intact.</p>
+          <span>06</span><h3>Readable craft</h3>
+          <p>Functional blocks carry deliberate panels, seams, ports, latches, and indicators. Roughstone is lighter, Clearglass is clearer, foliage respects held-item depth, and villagers carry broader profession stock.</p>
         </article>
       </div>
       <div className="controls-table">
         <h3>Desktop controls</h3>
-        <div><span><kbd>W A S D</kbd> Move / swim / fly</span><span><kbd>Shift</kbd> Sprint / stroke</span><span><kbd>Ctrl / C</kbd> Crouch / dive / descend</span><span><kbd>Space</kbd> Jump / ascend</span><span><kbd>V</kbd> Toggle Creative flight</span><span><kbd>Mouse</kbd> Look</span><span><kbd>LMB</kbd> Swing / mine / attack</span><span><kbd>MMB</kbd> Pick block in Creative</span><span><kbd>RMB</kbd> Place / use held item</span><span><kbd>F</kbd> Interact/configure</span><span><kbd>R</kbd> Rotate machine</span><span><kbd>E</kbd> Open / close inventory</span></div>
+        <div><span><kbd>W A S D</kbd> Move / swim / fly</span><span><kbd>R</kbd> Run / swim stroke</span><span><kbd>Shift</kbd> Crouch / dive / descend</span><span><kbd>Space</kbd> Jump / ascend</span><span><kbd>Q</kbd> Drop one</span><span><kbd>Shift + Q</kbd> Drop stack</span><span><kbd>V</kbd> Toggle Creative flight</span><span><kbd>Mouse</kbd> Look</span><span><kbd>LMB</kbd> Swing / mine / attack</span><span><kbd>MMB</kbd> Pick block in Creative</span><span><kbd>RMB</kbd> Place / use item</span><span><kbd>F</kbd> Interact</span><span><kbd>X</kbd> Rotate machinery</span><span><kbd>E</kbd> Open / close inventory</span></div>
       </div>
       <div className="scope-note">
         <strong>What this release contains</strong>
-        <p>Version 7 replaces WebRTC and manual answer keys with a stateful room server, six-character codes, checkpoint persistence, live world/machine deltas, reconnects, host handoff, and server-side authority rules. It also introduces Generation 3 terrain, randomized multi-chunk villages, fresh default seeds, corrected leaf/water depth, 42 deterministic simulation tests, and an end-to-end two-client multiplayer lifecycle test.</p>
+        <p>Version 8 expands shared-world play with authoritative item drops, linked containers, locator state, synchronized dungeon activation and loot, improved crafting context, richer lighting, new functional textures, Trail Torches, nutrition-based exertion, and broader villager inventories.</p>
       </div>
     </Modal>
   );
@@ -1076,6 +1167,103 @@ function TradeModal({
             </article>
           );
         })}
+      </div>
+    </Modal>
+  );
+}
+
+function ChestModal({
+  chest,
+  inventory,
+  inventorySlots,
+  creative,
+  onClose,
+  onDeposit,
+  onWithdraw,
+}: {
+  chest: ChestPanelData;
+  inventory: Record<string, number>;
+  inventorySlots: Array<ItemId | null>;
+  creative: boolean;
+  onClose: () => void;
+  onDeposit: (item: ItemId, count: number) => void;
+  onWithdraw: (slot: number, count: number) => void;
+}) {
+  const depositStack = (item: ItemId) => onDeposit(item, creative ? 1 : inventory[item] ?? 0);
+  const withdrawStack = (slot: number) => {
+    const item = chest.slots[slot];
+    if (item) onWithdraw(slot, chest.storage[item] ?? 1);
+  };
+  return (
+    <Modal title={chest.title} eyebrow={`${chest.rows} × 9 shared storage · ${chest.keys.length === 2 ? "linked pair" : "single chest"}`} onClose={onClose} wide>
+      <div className="network-callout">
+        <strong>Shared storage follows the host-authoritative world state.</strong>
+        <span>Tap a stack to move all of it, or drag between the two grids. Place exactly one chest beside another to form a double chest; longer chains stay unlinked so their ownership is unambiguous.</span>
+      </div>
+      <div className="chest-workspace">
+        <section
+          className="chest-panel"
+          onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }}
+          onDrop={(event) => {
+            event.preventDefault();
+            const item = event.dataTransfer.getData("application/x-voxel-inventory-item") as ItemId;
+            if (item && (creative || (inventory[item] ?? 0) > 0)) depositStack(item);
+          }}
+        >
+          <header className="workspace-heading"><div><p className="eyebrow">Container</p><h3>{chest.title}</h3></div><span>Tap to withdraw · accepts inventory drops</span></header>
+          <div className={`chest-grid chest-grid--${chest.rows}`} role="grid" aria-label={`${chest.rows} row chest storage`}>
+            {chest.slots.map((item, slot) => (
+              <button
+                type="button"
+                key={slot}
+                role="gridcell"
+                disabled={!item}
+                draggable={Boolean(item)}
+                title={item ? `${itemName(item)} — ${itemDescription(item)}` : "Empty chest slot"}
+                onClick={() => withdrawStack(slot)}
+                onDragStart={(event) => {
+                  if (!item) return;
+                  event.dataTransfer.setData("application/x-voxel-chest-slot", String(slot));
+                  event.dataTransfer.effectAllowed = "move";
+                }}
+              >
+                {item && <ItemIcon item={item} count={chest.storage[item] ?? 0} compact />}
+              </button>
+            ))}
+          </div>
+        </section>
+        <section
+          className="chest-panel"
+          onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }}
+          onDrop={(event) => {
+            event.preventDefault();
+            const slot = Number(event.dataTransfer.getData("application/x-voxel-chest-slot"));
+            if (Number.isInteger(slot)) withdrawStack(slot);
+          }}
+        >
+          <header className="workspace-heading"><div><p className="eyebrow">Traveler</p><h3>Your inventory</h3></div><span>Tap to deposit · accepts chest drops</span></header>
+          <div className="chest-grid chest-grid--4" role="grid" aria-label="Player inventory">
+            {inventorySlots.map((item, slot) => (
+              <button
+                type="button"
+                key={slot}
+                role="gridcell"
+                disabled={!item}
+                draggable={Boolean(item)}
+                className={slot >= HOTBAR_START ? "chest-grid__hotbar" : ""}
+                title={item ? `${itemName(item)} — ${itemDescription(item)}` : "Empty inventory slot"}
+                onClick={() => item && depositStack(item)}
+                onDragStart={(event) => {
+                  if (!item) return;
+                  event.dataTransfer.setData("application/x-voxel-inventory-item", item);
+                  event.dataTransfer.effectAllowed = "move";
+                }}
+              >
+                {item && <ItemIcon item={item} count={creative ? "∞" : inventory[item] ?? 0} compact />}
+              </button>
+            ))}
+          </div>
+        </section>
       </div>
     </Modal>
   );

@@ -21,6 +21,8 @@ import {
   valueNoise3,
   worldKey,
 } from "./prng";
+import { isDungeonEntranceChunk } from "./dungeons";
+import { SINGLE_CHEST_SLOTS } from "./storage";
 
 export interface ChunkData {
   cx: number;
@@ -164,6 +166,7 @@ function defaultMachineState(id: BlockId): MachineState {
     pulseTicks: 0,
     extended: false,
     lastInput: 0,
+    storageSlots: id === BlockId.Crate ? Array(SINGLE_CHEST_SLOTS).fill(null) : undefined,
     storage: {},
   };
 }
@@ -416,9 +419,13 @@ export class VoxelWorld {
         if (height >= WORLD_MAX_Y - 7) continue;
         const biome = this.getBiome(x, z);
         const featureRoll = hash3(x, 0, z, this.seed ^ 0x9e3779b9) % 1000;
+        const dryTreeSite = height > SEA_LEVEL + 1
+          && [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].every(([dx, dz]) => this.getHeight(x + dx, z + dz) > SEA_LEVEL);
         if (
+          dryTreeSite && (
           (biome === "Emberwood Wilds" && featureRoll < 35) ||
           (biome === "Starbloom Meadow" && featureRoll < 9)
+          )
         ) {
           const trunkHeight = 3 + (hash3(x, 1, z, this.seed) % 3);
           for (let dy = 1; dy <= trunkHeight; dy += 1) {
@@ -434,7 +441,7 @@ export class VoxelWorld {
               }
             }
           }
-        } else if (biome === "Frostcap Expanse" && featureRoll < 24) {
+        } else if (dryTreeSite && biome === "Frostcap Expanse" && featureRoll < 24) {
           const trunkHeight = 4 + (hash3(x, 3, z, this.seed) % 3);
           for (let dy = 1; dy <= trunkHeight; dy += 1) {
             this.setChunkLocal(chunk, lx, height + dy, lz, BlockId.FrostpineLog);
@@ -467,7 +474,8 @@ export class VoxelWorld {
     const villagePlans = this.villagePlansForChunk(chunk.cx, chunk.cz);
     if (villagePlans.length > 0) {
       for (const plan of villagePlans) this.addVillageLandmark(chunk, plan);
-    } else this.addRuinLandmark(chunk);
+    } else if (isDungeonEntranceChunk(chunk.cx, chunk.cz, this.seed)) this.addDungeonEntrance(chunk);
+    else this.addRuinLandmark(chunk);
   }
 
   private addEmberdeepFeatures(chunk: ChunkData): void {
@@ -837,6 +845,45 @@ export class VoxelWorld {
     this.forceChunkLocal(chunk, centerX - 1, baseY + 1, centerZ + 1, BlockId.MoonshardBlock);
   }
 
+  private addDungeonEntrance(chunk: ChunkData): void {
+    const roll = hash3(chunk.cx, 877, chunk.cz, this.seed ^ 0x3c6ef372);
+    const centerX = 7;
+    const centerZ = 7;
+    const worldX = chunk.cx * CHUNK_SIZE + centerX;
+    const worldZ = chunk.cz * CHUNK_SIZE + centerZ;
+    const heights: number[] = [];
+    for (let dx = -3; dx <= 3; dx += 1) {
+      for (let dz = -3; dz <= 3; dz += 1) heights.push(this.getHeight(worldX + dx, worldZ + dz));
+    }
+    const baseY = Math.max(...heights);
+    const biome = this.getBiome(worldX, worldZ);
+    if (
+      baseY <= SEA_LEVEL + 2
+      || baseY >= 128
+      || Math.max(...heights) - Math.min(...heights) > 10
+      || ["Skybreak Peaks", "Sunscar Dunes"].includes(biome)
+    ) return;
+
+    for (let dx = -3; dx <= 3; dx += 1) {
+      for (let dz = -3; dz <= 3; dz += 1) {
+        const terrainY = this.getHeight(worldX + dx, worldZ + dz);
+        for (let y = terrainY + 1; y <= baseY; y += 1) this.forceChunkLocal(chunk, centerX + dx, y, centerZ + dz, BlockId.DungeonBrick);
+        const edge = Math.abs(dx) === 3 || Math.abs(dz) === 3;
+        this.forceChunkLocal(chunk, centerX + dx, baseY, centerZ + dz, edge ? BlockId.DungeonBrick : (dx + dz + roll) % 5 === 0 ? BlockId.CarvedStone : BlockId.PolishedStone);
+        for (let y = baseY + 1; y <= baseY + 4; y += 1) this.forceChunkLocal(chunk, centerX + dx, y, centerZ + dz, BlockId.Air);
+      }
+    }
+    for (const [dx, dz] of [[-3, -3], [3, -3], [-3, 3], [3, 3]]) {
+      for (let dy = 1; dy <= 2; dy += 1) this.forceChunkLocal(chunk, centerX + dx, baseY + dy, centerZ + dz, BlockId.DungeonBrick);
+      this.forceChunkLocal(chunk, centerX + dx, baseY + 3, centerZ + dz, BlockId.DeepLantern);
+    }
+    for (const dx of [-1, 0, 1]) {
+      this.forceChunkLocal(chunk, centerX + dx, baseY + 1, centerZ - 2, dx === 0 ? BlockId.DungeonGate : BlockId.DungeonBrick);
+      if (dx !== 0) this.forceChunkLocal(chunk, centerX + dx, baseY + 2, centerZ - 2, BlockId.DungeonBrick);
+    }
+    this.forceChunkLocal(chunk, centerX, baseY + 2, centerZ - 2, BlockId.DungeonBrick);
+  }
+
   private forceChunkLocal(chunk: ChunkData, lx: number, y: number, lz: number, id: BlockId): void {
     if (lx < 0 || lz < 0 || lx >= CHUNK_SIZE || lz >= CHUNK_SIZE || y < WORLD_MIN_Y || y >= WORLD_MAX_Y) return;
     chunk.blocks[chunkIndex(lx, y, lz)] = id;
@@ -1013,6 +1060,11 @@ export class VoxelWorld {
       if (wasWater) this.rebuildFlowAfterBlock(flowing, record);
       if (id === BlockId.Air) this.flowWaterInto(bx, by, bz, record);
     }
+  }
+
+  /** Places a generated structure voxel without invoking fluid propagation for every cell. */
+  setStructureBlock(x: number, y: number, z: number, id: BlockId): void {
+    this.writeBlock(Math.floor(x), Math.floor(y), Math.floor(z), id, true);
   }
 
   getWaterLevel(x: number, y: number, z: number): number {

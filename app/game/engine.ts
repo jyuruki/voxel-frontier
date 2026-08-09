@@ -34,6 +34,15 @@ import { hashString, parseWorldKey, seededRandom, worldKey } from "./prng";
 import { voxelRaycast } from "./raycast";
 import { encodeWorldKey, saveLocally } from "./save";
 import { FirstPersonViewModel } from "./viewmodel";
+import { createDungeonPlan, DungeonPlan, isDungeonCoordinate } from "./dungeons";
+import { buildLocatorMarkers, compassHeading } from "./locator";
+import {
+  clearStorageItem,
+  placeStorageItem,
+  reconcileStorageSlots,
+  SINGLE_CHEST_SLOTS,
+  storageCanAccept,
+} from "./storage";
 import {
   BlockId,
   CHUNK_SIZE,
@@ -65,6 +74,14 @@ export interface MachinePanelData {
   inputs: number;
 }
 
+export interface ChestPanelData {
+  keys: string[];
+  title: string;
+  rows: 3 | 6;
+  slots: InventoryLayout;
+  storage: Inventory;
+}
+
 export interface TradeOffer {
   id: string;
   name: string;
@@ -86,10 +103,11 @@ export interface TradePanelData {
 
 export interface GameEngineCallbacks {
   onHud: (state: HudState) => void;
-  onInventory: () => void;
+  onInventory: (station?: "hand" | "workbench") => void;
   onPause: () => void;
   onGuide: () => void;
   onMachine: (data: MachinePanelData) => void;
+  onChest: (data: ChestPanelData) => void;
   onTrade: (data: TradePanelData) => void;
   onToast: (message: string) => void;
 }
@@ -115,6 +133,15 @@ const NETWORK_CHECKPOINT_SECONDS = 12;
 
 function cloneInventory(inventory: Inventory): Inventory {
   return { ...inventory };
+}
+
+function cloneMachineState(state: MachineState): MachineState {
+  return {
+    ...state,
+    storage: cloneInventory(state.storage),
+    storageSlots: state.storageSlots ? [...state.storageSlots] : undefined,
+    link: state.link ? { ...state.link } : undefined,
+  };
 }
 
 function creativeInventory(): Inventory {
@@ -260,26 +287,36 @@ const TRADE_CATALOG: Record<TradeProfession, TradeTemplate[]> = {
     { id: "farmer-sells-fiber", name: "Fleece Bale", cost: { item: "currency:frontier-mark", count: 5 }, reward: { item: "part:soft-fiber", count: 4 }, note: "Buy prepared fiber for a bed or woven block.", maxStock: 4 },
     { id: "farmer-sells-food", name: "Travel Rations", cost: { item: "currency:frontier-mark", count: 3 }, reward: { item: "food:starfruit", count: 5 }, note: "A small ration for long cave trips.", maxStock: 4 },
     { id: "farmer-sells-feathers", name: "Fletcher Bundle", cost: { item: "currency:frontier-mark", count: 4 }, reward: { item: "part:feather", count: 6 }, note: "Clean feathers for arrows and decorations.", maxStock: 4 },
+    { id: "farmer-sells-wool", name: "Woven Wool", cost: { item: "currency:frontier-mark", count: 7 }, reward: { item: itemForBlock(BlockId.WovenWool), count: 3 }, note: "Finished fabric for warm interiors and colorful builds.", maxStock: 3 },
+    { id: "farmer-sells-pork", name: "Butcher's Parcel", cost: { item: "currency:frontier-mark", count: 4 }, reward: { item: "food:pork", count: 4 }, note: "A compact provision bundle for a hungry expedition.", maxStock: 3 },
   ],
   blacksmith: [
     { id: "smith-sells-iron", name: "Iron Pair", cost: { item: "currency:frontier-mark", count: 7 }, reward: { item: "part:iron-ingot", count: 2 }, note: "Buy two furnace-ready iron ingots.", maxStock: 4 },
     { id: "smith-sells-pick", name: "Iron Pick", cost: { item: "currency:frontier-mark", count: 18 }, reward: { item: "tool:iron-pick", count: 1 }, note: "A finished deep-mining tool, limited to one per restock.", maxStock: 1 },
     { id: "smith-sells-coal", name: "Forge Fuel", cost: { item: "currency:frontier-mark", count: 3 }, reward: { item: "part:coal", count: 6 }, note: "A compact reserve of furnace fuel.", maxStock: 4 },
+    { id: "smith-sells-copper", name: "Copper Stock", cost: { item: "currency:frontier-mark", count: 6 }, reward: { item: "part:copper-ingot", count: 3 }, note: "Conductive metal for early tools and machinery.", maxStock: 4 },
+    { id: "smith-sells-bars", name: "Forged Bars", cost: { item: "currency:frontier-mark", count: 7 }, reward: { item: itemForBlock(BlockId.IronBars), count: 6 }, note: "Strong fitted bars for windows, gates, and workshops.", maxStock: 3 },
   ],
   builder: [
     { id: "builder-sells-panes", name: "Window Crate", cost: { item: "currency:frontier-mark", count: 5 }, reward: { item: "block:112", count: 8 }, note: "Slim Clearglass Panes for a finished home.", maxStock: 5 },
     { id: "builder-sells-door", name: "Door & Shutter Set", cost: { item: "currency:frontier-mark", count: 6 }, reward: { item: "block:97", count: 1 }, note: "A fitted timber door for a cottage or workshop.", maxStock: 4 },
     { id: "builder-sells-roof", name: "Roofing Lot", cost: { item: "currency:frontier-mark", count: 7 }, reward: { item: "block:103", count: 6 }, note: "Weatherproof fired-clay roof tiles.", maxStock: 4 },
+    { id: "builder-sells-carving", name: "Carved Masonry", cost: { item: "currency:frontier-mark", count: 8 }, reward: { item: itemForBlock(BlockId.CarvedStone), count: 6 }, note: "Symmetrical dressed stone for foundations and halls.", maxStock: 4 },
+    { id: "builder-sells-chest", name: "Frontier Chest", cost: { item: "currency:frontier-mark", count: 9 }, reward: { item: itemForBlock(BlockId.Crate), count: 1 }, note: "A ready-built 27-slot container for a new outpost.", maxStock: 2 },
   ],
   riftwright: [
     { id: "rift-sells-flux", name: "Fluxstone Packet", cost: { item: "currency:frontier-mark", count: 6 }, reward: { item: "part:flux-dust", count: 4 }, note: "Signal dust for advanced logic circuits.", maxStock: 4 },
     { id: "rift-sells-diamond", name: "Cut Diamond", cost: { item: "currency:frontier-mark", count: 20 }, reward: { item: "part:diamond", count: 1 }, note: "A scarce cut crystal from a distant mine.", maxStock: 2 },
     { id: "rift-sells-core", name: "Rift Core", cost: { item: "currency:frontier-mark", count: 40 }, reward: { item: "part:rift-core", count: 1 }, note: "The stabilizer required for a Rift Gate.", maxStock: 1 },
+    { id: "rift-sells-shards", name: "Moonshard Pair", cost: { item: "currency:frontier-mark", count: 9 }, reward: { item: "part:moonshard", count: 2 }, note: "Cut crystals for Aether equipment and luminous work.", maxStock: 3 },
+    { id: "rift-sells-lantern", name: "Deep Lantern", cost: { item: "currency:frontier-mark", count: 12 }, reward: { item: itemForBlock(BlockId.DeepLantern), count: 1 }, note: "A caged expedition light for the deepest routes.", maxStock: 2 },
   ],
   market: [
     { id: "market-sells-coal", name: "Emergency Fuel", cost: { item: "currency:frontier-mark", count: 3 }, reward: { item: "part:coal", count: 6 }, note: "A small fuel reserve for stranded travelers.", maxStock: 3 },
     { id: "market-sells-tonic", name: "Mender Tonic", cost: { item: "currency:frontier-mark", count: 8 }, reward: { item: "consumable:mender-tonic", count: 1 }, note: "A restorative tonic for dangerous expeditions.", maxStock: 3 },
     { id: "market-sells-bolts", name: "Aether Bolts", cost: { item: "currency:frontier-mark", count: 5 }, reward: { item: "ammo:aether-bolt", count: 8 }, note: "A bundle of ammunition for an Aether Repeater.", maxStock: 4 },
+    { id: "market-sells-bed", name: "Traveler Bed", cost: { item: "currency:frontier-mark", count: 10 }, reward: { item: itemForBlock(BlockId.FrontierBed), count: 1 }, note: "A portable bed for skipping dangerous nights.", maxStock: 2 },
+    { id: "market-sells-torches", name: "Torch Bundle", cost: { item: "currency:frontier-mark", count: 4 }, reward: { item: itemForBlock(BlockId.GlowRod), count: 8 }, note: "Warm Trail Torches for a cave or roadside camp.", maxStock: 5 },
   ],
 };
 
@@ -441,6 +478,7 @@ export class GameEngine {
   private mobNetworkTimer = 0;
   private worldNetworkTimer = 0;
   private checkpointTimer = 0;
+  private localLightTimer = 0;
   private chunkTimer = 0;
   private mobTimer = 0;
   private mobSpawnTimer = 4;
@@ -449,6 +487,7 @@ export class GameEngine {
   private riftCooldown = 0;
   private hazardCooldown = 0;
   private interactLatch = false;
+  private jumpNutritionLatch = false;
   private creativeMineLatch = false;
   private creativeFlying = false;
   private lastCreativeJumpTap = 0;
@@ -458,6 +497,8 @@ export class GameEngine {
   private mineSoundTimer = 0;
   private stepSoundTimer = 0;
   private inventoryFullToastTimer = 0;
+  private activeWorkbenchKey: string | null = null;
+  private activeChestKey: string | null = null;
   private objective = "Gather Emberwood by hand and prepare for nightfall.";
   private dayCount = 1;
   private nightAnnouncementDay = 0;
@@ -472,6 +513,7 @@ export class GameEngine {
   private readonly sun: THREE.DirectionalLight;
   private readonly hemisphere: THREE.HemisphereLight;
   private readonly ambient: THREE.AmbientLight;
+  private readonly localLights: THREE.PointLight[] = [];
   private readonly starField: THREE.Points;
   private readonly moonDisc: THREE.Mesh;
   private readonly sunDisc: THREE.Mesh;
@@ -489,6 +531,7 @@ export class GameEngine {
     this.addLook(event.movementX, event.movementY);
   };
   private readonly onMouseDown = (event: MouseEvent) => {
+    if (event.button === 2) event.preventDefault();
     if (event.button === 0) {
       this.input.mine = true;
       this.viewModel.swing("attack");
@@ -513,7 +556,7 @@ export class GameEngine {
   private readonly onKeyDown = (event: KeyboardEvent) => {
     const target = event.target as HTMLElement | null;
     if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
-    if (event.repeat && ["KeyE", "KeyF", "KeyG", "KeyV", "Escape"].includes(event.code)) return;
+    if (event.repeat && ["KeyE", "KeyF", "KeyG", "KeyQ", "KeyV", "KeyX", "Escape"].includes(event.code)) return;
     if (event.code === "KeyW") this.input.forward = 1;
     if (event.code === "KeyS") this.input.forward = -1;
     if (event.code === "KeyA") this.input.strafe = -1;
@@ -526,15 +569,20 @@ export class GameEngine {
       }
       this.input.jump = true;
     }
-    if (event.code === "ShiftLeft") this.input.sprint = true;
-    if (event.code === "ControlLeft" || event.code === "KeyC") this.input.crouch = true;
+    if (event.code === "KeyR") this.input.sprint = true;
+    if (event.code === "ShiftLeft" || event.code === "ShiftRight" || event.code === "ControlLeft" || event.code === "KeyC") this.input.crouch = true;
     if (event.code === "KeyF") this.tapInteract();
     if (event.code === "KeyE") {
       event.preventDefault();
+      this.activeWorkbenchKey = null;
       this.callbacks.onInventory();
     }
+    if (event.code === "KeyQ") {
+      event.preventDefault();
+      this.dropSelectedItem(event.shiftKey);
+    }
     if (event.code === "KeyG") this.callbacks.onGuide();
-    if (event.code === "KeyR") this.rotateTargetedMachine();
+    if (event.code === "KeyX") this.rotateTargetedMachine();
     if (event.code === "KeyV") this.toggleCreativeFlight();
     if (event.code === "Escape") this.callbacks.onPause();
     if (/^Digit[1-9]$/.test(event.code)) this.setSelectedSlot(Number(event.code.slice(5)) - 1);
@@ -545,8 +593,8 @@ export class GameEngine {
     if (event.code === "KeyA" && this.input.strafe < 0) this.input.strafe = 0;
     if (event.code === "KeyD" && this.input.strafe > 0) this.input.strafe = 0;
     if (event.code === "Space") this.input.jump = false;
-    if (event.code === "ShiftLeft") this.input.sprint = false;
-    if (event.code === "ControlLeft" || event.code === "KeyC") this.input.crouch = false;
+    if (event.code === "KeyR") this.input.sprint = false;
+    if (event.code === "ShiftLeft" || event.code === "ShiftRight" || event.code === "ControlLeft" || event.code === "KeyC") this.input.crouch = false;
   };
   private readonly onVisibility = () => {
     if (document.hidden && this.network.role !== "guest") this.saveNow();
@@ -566,7 +614,7 @@ export class GameEngine {
       this.world.loadMutations(loaded.mutations);
       this.world.loadWaterLevels(loaded.waterLevels);
       for (const [key, state] of loaded.machines) {
-        this.world.machines.set(key, { ...state, storage: cloneInventory(state.storage) });
+        this.world.machines.set(key, cloneMachineState(state));
       }
       this.world.drops.push(...loaded.drops.map((drop) => ({ ...drop, position: { ...drop.position }, velocity: { ...drop.velocity } })));
       this.world.mobs.push(...loaded.mobs.map((mob) => ({ ...mob, position: { ...mob.position }, velocity: { ...mob.velocity } })));
@@ -603,6 +651,8 @@ export class GameEngine {
       powerPreference: "high-performance",
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.08;
     this.renderer.shadowMap.enabled = this.settings.graphics === "high";
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.camera = new THREE.PerspectiveCamera(this.settings.fov, 1, 0.06, 420);
@@ -622,6 +672,12 @@ export class GameEngine {
     this.sun.shadow.camera.top = 32;
     this.sun.shadow.camera.bottom = -32;
     this.scene.add(this.hemisphere, this.ambient, this.sun, this.sun.target);
+    for (let index = 0; index < 8; index += 1) {
+      const light = new THREE.PointLight(0xffbd73, 0, 12, 1.65);
+      light.visible = false;
+      this.localLights.push(light);
+      this.scene.add(light);
+    }
 
     this.starField = createStarField(this.world.seed);
     this.moonDisc = new THREE.Mesh(
@@ -635,14 +691,15 @@ export class GameEngine {
     this.scene.add(this.starField, this.moonDisc, this.sunDisc);
 
     this.atlas = createOriginalTextureAtlas();
-    this.solidMaterial = new THREE.MeshLambertMaterial({ map: this.atlas, alphaTest: 0.1 });
+    this.solidMaterial = new THREE.MeshLambertMaterial({ map: this.atlas, alphaTest: 0.1, vertexColors: true });
     this.translucentMaterial = new THREE.MeshLambertMaterial({
       map: this.atlas,
       alphaTest: 0.08,
       transparent: true,
-      opacity: 0.82,
+      opacity: 0.5,
       side: THREE.DoubleSide,
       depthWrite: false,
+      vertexColors: true,
     });
     this.liquidMaterial = new THREE.MeshLambertMaterial({
       map: this.atlas,
@@ -650,6 +707,7 @@ export class GameEngine {
       opacity: 0.58,
       depthWrite: false,
       side: THREE.DoubleSide,
+      vertexColors: true,
     });
     this.viewModel = new FirstPersonViewModel(this.camera, this.atlas);
     this.viewModel.setItem(this.hotbar[this.selectedSlot]);
@@ -730,7 +788,13 @@ export class GameEngine {
     this.riftCooldown = Math.max(0, this.riftCooldown - dt);
     this.hazardCooldown = Math.max(0, this.hazardCooldown - dt);
 
-    const sprinting = this.input.sprint && (this.mode === "creative" || (this.stamina > 1 && this.hunger > 4));
+    const jumpStarted = this.mode === "survival"
+      && this.input.jump
+      && !this.jumpNutritionLatch
+      && this.physics.grounded
+      && !this.physics.swimming;
+    this.jumpNutritionLatch = this.input.jump;
+    const sprinting = this.input.sprint && (this.mode === "creative" || this.hunger > 10);
     const physicsInput = { ...this.input, sprint: sprinting };
     this.physics.update(dt, physicsInput, this.world, (fallDistance) => {
       const damage = Math.max(0, (fallDistance - 3.2) * 6.5);
@@ -750,14 +814,15 @@ export class GameEngine {
       this.stamina = 100;
     } else {
       if (sprinting && Math.abs(this.input.forward) + Math.abs(this.input.strafe) > 0.2) {
-        this.stamina = Math.max(0, this.stamina - dt * 14);
-        this.hunger = Math.max(0, this.hunger - dt * 0.055);
-      } else this.stamina = Math.min(100, this.stamina + dt * (this.hunger > 20 ? 18 : 7));
-      this.hunger = Math.max(0, this.hunger - dt * 0.012);
+        this.hunger = Math.max(0, this.hunger - dt * 0.03);
+      }
+      if (jumpStarted) this.hunger = Math.max(0, this.hunger - 0.12);
+      this.stamina = 100;
+      this.hunger = Math.max(0, this.hunger - dt * 0.006);
       if (this.hunger <= 0) this.health = Math.max(1, this.health - dt * 1.4);
       else if (this.hunger > 75 && this.health < 100) {
-        this.health = Math.min(100, this.health + dt * 0.5);
-        this.hunger = Math.max(0, this.hunger - dt * 0.035);
+        this.health = Math.min(100, this.health + dt * 0.55);
+        this.hunger = Math.max(0, this.hunger - dt * 0.07);
       }
     }
 
@@ -800,6 +865,11 @@ export class GameEngine {
       }
       this.updateIndicators();
     }
+    this.localLightTimer -= dt;
+    if (this.localLightTimer <= 0) {
+      this.localLightTimer = 0.36;
+      this.updateLocalLights();
+    }
 
     this.mobTimer += dt;
     if (this.mobTimer >= 0.08) {
@@ -840,7 +910,7 @@ export class GameEngine {
         mutations,
         machines: Array.from(this.world.machines, ([key, state]) => [
           key,
-          { ...state, storage: cloneInventory(state.storage) },
+          cloneMachineState(state),
         ]),
         ...(mutations.length > 0 ? { waterLevels: this.world.serializeWaterLevels() } : {}),
       });
@@ -1114,7 +1184,13 @@ export class GameEngine {
     return true;
   }
 
-  private spawnDrop(item: ItemId, count: number, position: MobState["position"]): void {
+  private spawnDrop(
+    item: ItemId,
+    count: number,
+    position: MobState["position"],
+    velocity?: Vec3Data,
+    pickupDelay = 0.32,
+  ): void {
     this.dropSerial += 1;
     const angle = this.wildlifeRandom() * Math.PI * 2;
     this.world.drops.push({
@@ -1122,13 +1198,45 @@ export class GameEngine {
       item,
       count,
       position: { x: position.x, y: position.y + 0.65, z: position.z },
-      velocity: {
+      velocity: velocity ?? {
         x: Math.cos(angle) * (0.5 + this.wildlifeRandom()),
         y: 2.2 + this.wildlifeRandom(),
         z: Math.sin(angle) * (0.5 + this.wildlifeRandom()),
       },
-      pickupDelay: 0.32,
+      pickupDelay,
     });
+  }
+
+  dropSelectedItem(fullStack = false): boolean {
+    const item = this.hotbar[this.selectedSlot];
+    if (!item) {
+      this.callbacks.onToast("The selected hotbar slot is empty.");
+      return false;
+    }
+    const available = this.mode === "creative" ? 1 : this.inventory[item] ?? 0;
+    const count = this.mode === "creative" ? 1 : fullStack ? available : Math.min(1, available);
+    if (count <= 0) return false;
+    const direction = {
+      x: -Math.sin(this.physics.yaw) * 4.4,
+      y: 1.25 + Math.sin(this.physics.pitch) * 1.1,
+      z: -Math.cos(this.physics.yaw) * 4.4,
+    };
+    const position = {
+      x: this.physics.position.x - Math.sin(this.physics.yaw) * 0.75,
+      y: this.physics.position.y + 0.72,
+      z: this.physics.position.z - Math.cos(this.physics.yaw) * 0.75,
+    };
+    if (this.mode === "survival") {
+      changeItem(this.inventory, item, -count);
+      this.clearDepletedHotbar();
+    }
+    if (this.network.role === "guest") {
+      this.network.send({ type: "request-drop", item, count });
+    } else this.spawnDrop(item, count, position, direction, 1.15);
+    this.audio.play("click");
+    this.callbacks.onToast(`Dropped ${count} × ${itemName(item)}${fullStack ? " stack" : ""}.`);
+    this.emitHud();
+    return true;
   }
 
   private attackTargetedMob(): void {
@@ -1190,13 +1298,22 @@ export class GameEngine {
       const amount = loot.min + Math.floor(this.wildlifeRandom() * (loot.max - loot.min + 1));
       if (amount > 0) this.spawnDrop(loot.item, amount, mob.position);
     }
+    if (mob.boss) {
+      this.spawnDrop("currency:frontier-mark", 10 + Math.floor(this.wildlifeRandom() * 7), mob.position);
+      this.spawnDrop("part:gold-ingot", 2 + Math.floor(this.wildlifeRandom() * 3), mob.position);
+      this.spawnDrop("part:diamond", 1 + Math.floor(this.wildlifeRandom() * 2), mob.position);
+      this.spawnDrop("consumable:mender-tonic", 2, mob.position);
+      if (mob.lootPosition) this.applyBlockChange(mob.lootPosition.x, mob.lootPosition.y, mob.lootPosition.z, BlockId.RelicCache);
+    }
     const index = this.world.mobs.findIndex((candidate) => candidate.id === mob.id);
     if (index >= 0) this.world.mobs.splice(index, 1);
     if (this.targetedMob?.id === mob.id) this.targetedMob = null;
-    this.objective = definition.passive
+    this.objective = mob.boss
+      ? "Guardian defeated. Collect the shared drops and open the unsealed expedition cache."
+      : definition.passive
       ? "Explore farther—the old Wayfarer ruins hide advanced materials."
       : "Night threat cleared. Search ruins for a Relic Cache and Moonshard seams.";
-    const message = `${definition.name} defeated · loot dropped.`;
+    const message = `${mob.bossName ?? definition.name} defeated · shared loot dropped${mob.boss ? " and cache unsealed" : ""}.`;
     if (attackerPeerId) this.network.send({ type: "toast", text: message }, attackerPeerId);
     else this.callbacks.onToast(message);
   }
@@ -1322,7 +1439,17 @@ export class GameEngine {
       return;
     }
     if (id === BlockId.Workbench) {
-      this.callbacks.onInventory();
+      this.activeWorkbenchKey = key;
+      this.callbacks.onInventory("workbench");
+      return;
+    }
+    if (id === BlockId.Crate) {
+      const chest = this.getChest(key);
+      if (chest) {
+        this.activeChestKey = key;
+        this.callbacks.onChest(chest);
+        this.audio.play("click");
+      }
       return;
     }
     if (id === BlockId.FrontierBed) {
@@ -1333,28 +1460,25 @@ export class GameEngine {
       this.travelThroughRift({ x, y, z });
       return;
     }
+    if (id === BlockId.DungeonGate || id === BlockId.DungeonReturn) {
+      this.useDungeonPortal({ x, y, z });
+      return;
+    }
     if (id === BlockId.TradePost) {
       const panel = this.buildTradePanel(`post:${key}`);
       if (panel) this.callbacks.onTrade(panel);
       return;
     }
     if (id === BlockId.RelicCache) {
-      const moonshards = 2 + Math.floor(this.wildlifeRandom() * 3);
-      const bolts = 4 + Math.floor(this.wildlifeRandom() * 5);
-      this.applyBlockChange(x, y, z, BlockId.Air);
-      this.collectItem("part:moonshard", moonshards);
-      this.collectItem("ammo:aether-bolt", bolts);
-      this.collectItem("part:copper-ingot", 1 + Math.floor(this.wildlifeRandom() * 2));
-      if (this.wildlifeRandom() > 0.6) this.collectItem("consumable:mender-tonic", 1);
-      this.viewModel.swing("use");
-      this.audio.play("craft");
-      this.objective = "Relic recovered. Build an Aether Repeater—or automate the frontier.";
-      this.callbacks.onToast(`Relic Cache opened · ${moonshards} Moonshards · ${bolts} Aether Bolts.`);
+      if (this.network.role === "guest") {
+        this.network.send({ type: "request-cache", origin: { x, y, z } });
+        this.callbacks.onToast("The host is opening the shared cache…");
+      } else this.openRelicCache({ x, y, z });
       return;
     }
     const inspection = this.automation.inspect(this.world, key);
     if (inspection) {
-      this.callbacks.onMachine({ key, ...inspection, state: { ...inspection.state, storage: cloneInventory(inspection.state.storage) } });
+      this.callbacks.onMachine({ key, ...inspection, state: cloneMachineState(inspection.state) });
     }
   }
 
@@ -1420,14 +1544,178 @@ export class GameEngine {
     this.callbacks.onToast(entering ? "The Rift Gate opens into the Emberdeep." : "You return to the living frontier.");
   }
 
+  private openRelicCache(origin: Vec3Data, requesterPeerId?: string): void {
+    const { x, y, z } = origin;
+    if (this.world.getBlock(x, y, z) !== BlockId.RelicCache) return;
+    this.applyBlockChange(x, y, z, BlockId.Air);
+    const moonshards = 2 + Math.floor(this.wildlifeRandom() * 3);
+    const bolts = 4 + Math.floor(this.wildlifeRandom() * 5);
+    const copper = 1 + Math.floor(this.wildlifeRandom() * 2);
+    this.spawnDrop("part:moonshard", moonshards, { x: x + 0.5, y, z: z + 0.5 });
+    this.spawnDrop("ammo:aether-bolt", bolts, { x: x + 0.5, y, z: z + 0.5 });
+    this.spawnDrop("part:copper-ingot", copper, { x: x + 0.5, y, z: z + 0.5 });
+    if (this.wildlifeRandom() > 0.55) this.spawnDrop("consumable:mender-tonic", 1, { x: x + 0.5, y, z: z + 0.5 });
+    if (isDungeonCoordinate(z)) {
+      this.spawnDrop("currency:frontier-mark", 4 + Math.floor(this.wildlifeRandom() * 5), { x: x + 0.5, y, z: z + 0.5 });
+      if (this.wildlifeRandom() > 0.45) this.spawnDrop("part:diamond", 1, { x: x + 0.5, y, z: z + 0.5 });
+    }
+    this.viewModel.swing("use");
+    this.audio.play("craft");
+    this.objective = "Relic recovered. Divide the physical loot—or carry it home together.";
+    const message = `Shared cache opened · ${moonshards} Moonshards · ${bolts} Aether Bolts dropped.`;
+    if (requesterPeerId) this.network.send({ type: "toast", text: message }, requesterPeerId);
+    this.callbacks.onToast(message);
+  }
+
+  private buildDungeon(plan: DungeonPlan): void {
+    const sealKey = worldKey(plan.sealPosition.x, plan.sealPosition.y, plan.sealPosition.z);
+    const preservedSeal = this.world.mutations.get(sealKey);
+    const place = (x: number, y: number, z: number, id: BlockId) => this.world.setStructureBlock(x, y, z, id);
+    const buildCell = (x: number, z: number, radius: number, room: boolean) => {
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        for (let dz = -radius; dz <= radius; dz += 1) {
+          const edge = Math.abs(dx) === radius || Math.abs(dz) === radius;
+          place(x + dx, plan.baseY, z + dz, edge && room ? BlockId.DungeonBrick : plan.floor);
+          for (let dy = 1; dy <= 4; dy += 1) place(x + dx, plan.baseY + dy, z + dz, edge ? BlockId.DungeonBrick : BlockId.Air);
+          place(x + dx, plan.baseY + 5, z + dz, (dx + dz) % 5 === 0 ? plan.accent : BlockId.DungeonBrick);
+        }
+      }
+    };
+    for (const [index, room] of plan.rooms.entries()) {
+      buildCell(room.x, room.z, room.radius, true);
+      for (const [dx, dz] of [[-room.radius + 1, -room.radius + 1], [room.radius - 1, -room.radius + 1], [-room.radius + 1, room.radius - 1], [room.radius - 1, room.radius - 1]]) {
+        for (let dy = 1; dy <= 3; dy += 1) place(room.x + dx, plan.baseY + dy, room.z + dz, plan.accent);
+        place(room.x + dx, plan.baseY + 4, room.z + dz, index === plan.rooms.length - 1 ? BlockId.DeepLantern : BlockId.GlowRod);
+      }
+      if (index > 0) {
+        const previous = plan.rooms[index - 1];
+        let cursorX = previous.x;
+        let cursorZ = previous.z;
+        while (cursorX !== room.x) {
+          cursorX += Math.sign(room.x - cursorX);
+          buildCell(cursorX, cursorZ, 2, false);
+        }
+        while (cursorZ !== room.z) {
+          cursorZ += Math.sign(room.z - cursorZ);
+          buildCell(cursorX, cursorZ, 2, false);
+        }
+      }
+    }
+    place(plan.returnPosition.x, plan.returnPosition.y, plan.returnPosition.z, BlockId.DungeonReturn);
+    const returnState = this.world.machines.get(worldKey(plan.returnPosition.x, plan.returnPosition.y, plan.returnPosition.z));
+    if (returnState) returnState.link = { x: plan.origin.x + 0.5, y: plan.origin.y + 0.05, z: plan.origin.z + 2.5 };
+    place(
+      plan.sealPosition.x,
+      plan.sealPosition.y,
+      plan.sealPosition.z,
+      preservedSeal === undefined ? BlockId.DungeonSeal : preservedSeal,
+    );
+
+    const seal = this.world.getBlock(plan.sealPosition.x, plan.sealPosition.y, plan.sealPosition.z);
+    const bossId = `${plan.id}-guardian`;
+    if (seal === BlockId.DungeonSeal && !this.world.mobs.some((mob) => mob.id === bossId)) {
+      const bossNames: Record<DungeonPlan["theme"], string> = {
+        "moss crypt": "The Rootbound Warden",
+        "ember foundry": "The Cinder Forgemaster",
+        "moon vault": "The Moonvault Sentinel",
+      };
+      this.world.mobs.push({
+        id: bossId,
+        kind: plan.theme === "ember foundry" ? "cinderling" : plan.theme === "moon vault" ? "nightwisp" : "thornback",
+        position: { ...plan.bossPosition },
+        velocity: { x: 0, y: 0, z: 0 },
+        health: 145,
+        maxHealth: 145,
+        yaw: 0,
+        targetTimer: 0.5,
+        attackTimer: 1.4,
+        hurtTimer: 0,
+        boss: true,
+        bossName: bossNames[plan.theme],
+        dungeonId: plan.id,
+        lootPosition: { ...plan.sealPosition },
+      });
+    }
+  }
+
+  private flushWorldState(): void {
+    if (this.network.role !== "host" || this.network.connectedPeers <= 0) return;
+    const mutations = this.world.drainNetworkMutations();
+    this.network.send({
+      type: "world-state",
+      mutations,
+      machines: Array.from(this.world.machines, ([key, state]) => [key, cloneMachineState(state)]),
+      waterLevels: this.world.serializeWaterLevels(),
+    });
+  }
+
+  private activateDungeon(origin: Vec3Data): void {
+    const plan = createDungeonPlan(origin, this.world.seed);
+    this.buildDungeon(plan);
+    this.flushWorldState();
+    const inStagingArea = (position: Vec3Data) => Math.hypot(position.x - (origin.x + 0.5), position.z - (origin.z + 0.5)) <= 7
+      && Math.abs(position.y - origin.y) <= 6;
+    let travelers = 0;
+    if (inStagingArea(this.physics.position)) {
+      this.physics.position.set(plan.destination.x, plan.destination.y, plan.destination.z);
+      this.physics.velocity.set(0, 0, 0);
+      this.queueNearbyChunks(true);
+      travelers += 1;
+    }
+    for (const [peerId, player] of this.remotePeerPlayers) {
+      if (!inStagingArea(player.position)) continue;
+      this.network.send({
+        type: "teleport",
+        position: plan.destination,
+        text: `${plan.theme} expedition started · stay together and defeat the guardian.`,
+      }, peerId);
+      travelers += 1;
+    }
+    this.audio.play("rift");
+    this.objective = `${plan.theme}: clear the generated chambers, defeat the guardian, and share the cache.`;
+    this.callbacks.onToast(`${travelers} traveler${travelers === 1 ? "" : "s"} entered the ${plan.theme}.`);
+  }
+
+  private returnFromDungeon(origin: Vec3Data, requesterPeerId?: string): void {
+    const state = this.world.machines.get(worldKey(origin.x, origin.y, origin.z));
+    if (!state?.link) return;
+    const text = "Returned safely to the expedition staging ring.";
+    if (requesterPeerId) this.network.send({ type: "teleport", position: state.link, text }, requesterPeerId);
+    else {
+      this.physics.position.set(state.link.x, state.link.y, state.link.z);
+      this.physics.velocity.set(0, 0, 0);
+      this.queueNearbyChunks(true);
+      this.audio.play("rift");
+      this.objective = `Day ${this.dayCount}: returned from a frontier delve.`;
+      this.callbacks.onToast(text);
+    }
+  }
+
+  private useDungeonPortal(origin: Vec3Data): void {
+    if (this.riftCooldown > 0) return;
+    this.riftCooldown = 2;
+    if (this.network.role === "guest") {
+      this.network.send({ type: "request-dungeon", origin });
+      this.callbacks.onToast("The host is assembling the expedition…");
+      return;
+    }
+    if (this.world.getBlock(origin.x, origin.y, origin.z) === BlockId.DungeonReturn) this.returnFromDungeon(origin);
+    else this.activateDungeon(origin);
+  }
+
   private rotateTargetedMachine(): void {
     if (!this.currentHit) return;
     const { x, y, z } = this.currentHit.block;
     const key = worldKey(x, y, z);
+    const blockId = this.world.getBlock(x, y, z);
     const state = this.world.machines.get(key);
     if (!state) return;
+    if (BLOCKS[blockId].automation === "storage") {
+      this.callbacks.onToast("Storage blocks keep a fixed facing so shared contents stay authoritative.");
+      return;
+    }
     state.orientation = ((state.orientation + 1) % 4) as 0 | 1 | 2 | 3;
-    this.world.setBlock(x, y, z, this.world.getBlock(x, y, z));
+    this.world.setBlock(x, y, z, blockId);
     this.broadcastMachine(key, state);
     this.callbacks.onToast("Machine rotated clockwise.");
   }
@@ -1436,7 +1724,7 @@ export class GameEngine {
     const message = {
       type: this.network.role === "guest" ? "request-machine" : "machine",
       key,
-      state: { ...state, storage: cloneInventory(state.storage) },
+      state: cloneMachineState(state),
     } as NetworkMessage;
     this.network.send(message);
   }
@@ -1549,6 +1837,45 @@ export class GameEngine {
     }
   }
 
+  private updateLocalLights(): void {
+    const originX = Math.floor(this.physics.position.x);
+    const originY = Math.floor(this.physics.position.y + 1);
+    const originZ = Math.floor(this.physics.position.z);
+    const candidates: Array<{ x: number; y: number; z: number; id: BlockId; distance: number }> = [];
+    for (let x = originX - 12; x <= originX + 12; x += 1) {
+      for (let y = originY - 7; y <= originY + 8; y += 1) {
+        for (let z = originZ - 12; z <= originZ + 12; z += 1) {
+          const id = this.world.peekBlock(x, y, z);
+          const emissive = BLOCKS[id].emissive ?? 0;
+          if (emissive < 0.48) continue;
+          if ([BlockId.FluxLamp, BlockId.LatchLamp].includes(id)) {
+            const state = this.world.machines.get(worldKey(x, y, z));
+            if (!state || state.signal <= 0) continue;
+          }
+          const distance = Math.hypot(x + 0.5 - this.physics.position.x, y + 0.5 - originY, z + 0.5 - this.physics.position.z);
+          if (distance <= 15) candidates.push({ x, y, z, id, distance });
+        }
+      }
+    }
+    candidates.sort((a, b) => a.distance - b.distance);
+    for (let index = 0; index < this.localLights.length; index += 1) {
+      const light = this.localLights[index];
+      const candidate = candidates[index];
+      if (!candidate) {
+        light.visible = false;
+        light.intensity = 0;
+        continue;
+      }
+      const definition = BLOCKS[candidate.id];
+      const warmth = new THREE.Color(definition.color).lerp(new THREE.Color(0xffc277), 0.45);
+      light.color.copy(warmth);
+      light.position.set(candidate.x + 0.5, candidate.y + 0.65, candidate.z + 0.5);
+      light.intensity = 0.8 + (definition.emissive ?? 0.5) * 1.9;
+      light.distance = candidate.id === BlockId.DeepLantern ? 15 : 11.5;
+      light.visible = true;
+    }
+  }
+
   private updateDrops(dt: number): void {
     for (let index = this.world.drops.length - 1; index >= 0; index -= 1) {
       const drop = this.world.drops[index];
@@ -1561,9 +1888,12 @@ export class GameEngine {
         y: drop.position.y + drop.velocity.y * dt,
         z: drop.position.z + drop.velocity.z * dt,
       };
-      if (this.world.isSolid(next.x, next.y - 0.12, next.z)) {
-        drop.velocity.y = Math.max(0, -drop.velocity.y * 0.15);
-        next.y = Math.floor(next.y) + 0.18;
+      const supportY = Math.floor(next.y - 0.12);
+      const collisionHeight = this.world.getCollisionHeight(next.x, supportY, next.z);
+      const supportTop = supportY + collisionHeight;
+      if (collisionHeight > 0 && next.y <= supportTop + 0.14 && drop.velocity.y <= 0) {
+        next.y = supportTop + 0.14;
+        drop.velocity.y = drop.velocity.y < -2.1 ? -drop.velocity.y * 0.1 : 0;
       }
       drop.position = next;
       const localDistance = Math.hypot(
@@ -1571,7 +1901,7 @@ export class GameEngine {
         drop.position.y - (this.physics.position.y + 0.8),
         drop.position.z - this.physics.position.z,
       );
-      if (localDistance < 1.25 && (drop.pickupDelay ?? 0) <= 0) {
+      if (localDistance < 2.25 && (drop.pickupDelay ?? 0) <= 0) {
         if (!this.collectItem(drop.item, drop.count)) {
           drop.pickupDelay = 0.7;
           if (this.inventoryFullToastTimer <= 0) {
@@ -1590,7 +1920,7 @@ export class GameEngine {
           drop.position.y - (player.position.y + 0.8),
           drop.position.z - player.position.z,
         );
-        if (distance >= 1.25 || (drop.pickupDelay ?? 0) > 0) continue;
+        if (distance >= 2.25 || (drop.pickupDelay ?? 0) > 0) continue;
         this.network.send({ type: "give-item", item: drop.item, count: drop.count }, peerId);
         this.world.drops.splice(index, 1);
         break;
@@ -1684,6 +2014,8 @@ export class GameEngine {
     root.userData.gait = this.wildlifeRandom() * Math.PI * 2;
     root.userData.voiceTimer = 2 + this.wildlifeRandom() * 7;
     root.userData.stepTimer = 0;
+    root.userData.baseScale = mob.boss ? 1.48 : 1;
+    root.scale.setScalar(root.userData.baseScale);
     const visual = new THREE.Group();
     visual.name = "visual";
     root.add(visual);
@@ -1887,7 +2219,7 @@ export class GameEngine {
       }
       const dx = targetPosition.x - mob.position.x;
       const dz = targetPosition.z - mob.position.z;
-      const hostile = !definition.passive && (night || mob.kind === "cinderling" || isEmberdeepCoordinate(mob.position.x));
+      const hostile = !definition.passive && (mob.boss || night || mob.kind === "cinderling" || isEmberdeepCoordinate(mob.position.x));
       mob.targetTimer -= dt;
       mob.attackTimer = Math.max(0, (mob.attackTimer ?? 0) - dt);
       mob.hurtTimer = Math.max(0, (mob.hurtTimer ?? 0) - dt);
@@ -1953,8 +2285,9 @@ export class GameEngine {
         mob.attackTimer = 1.45 + this.wildlifeRandom() * 0.55;
         const source = `${definition.name} attack`;
         if (!targetPeerId) this.audio.playCreature(mob.kind, "attack", distance);
-        if (targetPeerId) this.network.send({ type: "damage", amount: definition.damage, source }, targetPeerId);
-        else this.damage(definition.damage, source);
+        const damage = definition.damage * (mob.boss ? 1.38 : 1);
+        if (targetPeerId) this.network.send({ type: "damage", amount: damage, source }, targetPeerId);
+        else this.damage(damage, source);
       }
     }
   }
@@ -1975,7 +2308,8 @@ export class GameEngine {
       mesh.position.lerp(targetPosition, 1 - Math.exp(-15 * dt));
       const yawDelta = Math.atan2(Math.sin(mob.yaw - mesh.rotation.y), Math.cos(mob.yaw - mesh.rotation.y));
       mesh.rotation.y += yawDelta * (1 - Math.exp(-11 * dt));
-      const targetScale = (mob.hurtTimer ?? 0) > 0 ? 1.06 : 1;
+      const baseScale = Number(mesh.userData.baseScale ?? 1);
+      const targetScale = baseScale * ((mob.hurtTimer ?? 0) > 0 ? 1.06 : 1);
       mesh.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 1 - Math.exp(-18 * dt));
       mesh.userData.gait = Number(mesh.userData.gait ?? 0) + dt * (2.7 + Math.min(3.8, motion * 2.7));
       mesh.userData.voiceTimer = Number(mesh.userData.voiceTimer ?? 4) - dt;
@@ -2055,9 +2389,9 @@ export class GameEngine {
         this.dropMeshes.set(drop.id, mesh);
         this.entityRoot.add(mesh);
       }
-      const hover = Math.sin(performance.now() / 310 + drop.id.length) * 0.035;
+      const hover = Math.sin(performance.now() / 720 + drop.id.length) * 0.012;
       mesh.position.set(drop.position.x, drop.position.y + hover, drop.position.z);
-      mesh.rotation.y += 0.035;
+      mesh.rotation.y += dt * 1.35;
     }
     for (const [id, mesh] of this.dropMeshes) {
       if (!dropIds.has(id)) {
@@ -2172,7 +2506,7 @@ export class GameEngine {
     const solarHeight = Math.sin(angle);
     const daylight = THREE.MathUtils.smoothstep(solarHeight, -0.2, 0.16);
     const dayColor = new THREE.Color(0x8fc8d8);
-    const nightColor = new THREE.Color(0x263957);
+    const nightColor = new THREE.Color(0x354d6c);
     const twilightColor = new THREE.Color(0xc17774);
     const sky = nightColor.clone().lerp(dayColor, daylight);
     const twilight = Math.max(0, 1 - Math.abs(solarHeight) / 0.34) * 0.46;
@@ -2182,10 +2516,10 @@ export class GameEngine {
     if (this.scene.fog) this.scene.fog.color.copy(sky);
     this.hemisphere.color.setHex(inEmberdeep ? 0xffa06c : daylight > 0.28 ? 0xbce9ff : 0x8299c9);
     this.hemisphere.groundColor.setHex(inEmberdeep ? 0x351a23 : daylight > 0.28 ? 0x5a4a36 : 0x343b52);
-    this.hemisphere.intensity = inEmberdeep ? 0.94 : 0.56 + daylight * 0.86;
+    this.hemisphere.intensity = inEmberdeep ? 1.02 : 0.72 + daylight * 0.78;
     this.ambient.color.setHex(inEmberdeep ? 0xff8a62 : 0x91a9c9);
-    this.ambient.intensity = inEmberdeep ? 0.42 : 0.26 + daylight * 0.16;
-    this.sun.intensity = inEmberdeep ? 0.24 : 0.12 + daylight * 1.7;
+    this.ambient.intensity = inEmberdeep ? 0.46 : 0.34 + daylight * 0.17;
+    this.sun.intensity = inEmberdeep ? 0.28 : 0.16 + daylight * 1.62;
     const orbitRadius = 145;
     const orbitX = Math.cos(angle) * orbitRadius;
     const orbitY = solarHeight * orbitRadius;
@@ -2240,6 +2574,7 @@ export class GameEngine {
       grounded: this.physics.grounded,
       swimming: this.physics.swimming,
       flying: this.creativeFlying,
+      crouching: this.input.crouch,
     };
   }
 
@@ -2296,8 +2631,9 @@ export class GameEngine {
         player.position.y + 1 - (y + 0.5),
         player.position.z - (z + 0.5),
       ) <= 9;
-      if (!existing || !withinReach || !BLOCKS[blockId].automation) return;
-      const state = { ...message.state, storage: cloneInventory(message.state.storage) };
+      const hostManagedStorage = [BlockId.Crate, BlockId.TradePost, BlockId.RelicCache, BlockId.DungeonReturn].includes(blockId);
+      if (!existing || !withinReach || !BLOCKS[blockId].automation || hostManagedStorage) return;
+      const state = cloneMachineState(message.state);
       state.orientation = Math.max(0, Math.min(3, Math.floor(state.orientation))) as 0 | 1 | 2 | 3;
       state.signal = Math.max(0, Math.min(15, Number.isFinite(state.signal) ? state.signal : 0));
       state.energy = Math.max(0, Math.min(100_000, Number.isFinite(state.energy) ? state.energy : 0));
@@ -2305,14 +2641,22 @@ export class GameEngine {
       this.world.setBlock(x, y, z, this.world.getBlock(x, y, z), false);
       this.network.send({ type: "machine", key: message.key, state });
     } else if (message.type === "machine") {
-      this.world.machines.set(message.key, { ...message.state, storage: cloneInventory(message.state.storage) });
+      this.world.machines.set(message.key, cloneMachineState(message.state));
       const [x, y, z] = parseWorldKey(message.key);
       if ([x, y, z].every(Number.isInteger)) this.world.setBlock(x, y, z, this.world.getBlock(x, y, z), false);
+      if (this.activeChestKey) {
+        const chest = this.getChest(this.activeChestKey);
+        if (chest) this.callbacks.onChest(chest);
+      }
     } else if (message.type === "world-state" && this.network.role === "guest") {
       this.world.applyAuthoritativeMutations(message.mutations);
       if (message.waterLevels) this.world.loadWaterLevels(message.waterLevels);
       for (const [key, state] of message.machines) {
-        this.world.machines.set(key, { ...state, storage: cloneInventory(state.storage) });
+        this.world.machines.set(key, cloneMachineState(state));
+      }
+      if (this.activeChestKey) {
+        const chest = this.getChest(this.activeChestKey);
+        if (chest) this.callbacks.onChest(chest);
       }
     } else if (message.type === "request-mob-hit" && this.network.role === "host") {
       const player = this.remotePeerPlayers.get(peerId);
@@ -2365,7 +2709,54 @@ export class GameEngine {
       if (this.collectItem(message.item, message.count)) {
         this.audio.play("click");
         this.callbacks.onToast(`Collected ${message.count} × ${itemName(message.item)}.`);
-      } else this.callbacks.onToast(`Inventory full · could not collect ${itemName(message.item)}.`);
+      } else {
+        this.network.send({ type: "request-drop", item: message.item, count: message.count });
+        this.callbacks.onToast(`Inventory full · ${itemName(message.item)} was returned to the ground.`);
+      }
+    } else if (message.type === "request-drop" && this.network.role === "host") {
+      const player = this.remotePeerPlayers.get(peerId);
+      if (!player || !ALL_ITEMS.includes(message.item) || message.count < 1 || message.count > 999) return;
+      const position = {
+        x: player.position.x - Math.sin(player.yaw) * 0.75,
+        y: player.position.y + 0.72,
+        z: player.position.z - Math.cos(player.yaw) * 0.75,
+      };
+      this.spawnDrop(message.item, message.count, position, {
+        x: -Math.sin(player.yaw) * 4.4,
+        y: 1.25 + Math.sin(player.pitch) * 1.1,
+        z: -Math.cos(player.yaw) * 4.4,
+      }, 1.15);
+    } else if (message.type === "request-chest" && this.network.role === "host") {
+      const player = this.remotePeerPlayers.get(peerId);
+      if (!player || !ALL_ITEMS.includes(message.item) || !this.chestInRange(message.key, player)) return;
+      if (message.direction === "deposit") {
+        if (!this.addToChest(message.key, message.item, Math.min(999, message.count))) {
+          this.network.send({ type: "toast", text: "That chest has no open slots; the deposit was rejected." }, peerId);
+          this.network.send({ type: "give-item", item: message.item, count: Math.min(999, message.count) }, peerId);
+        }
+      } else {
+        const taken = this.takeFromChest(message.key, message.item, Math.min(999, message.count));
+        if (taken > 0) this.network.send({ type: "give-item", item: message.item, count: taken }, peerId);
+      }
+    } else if (message.type === "request-cache" && this.network.role === "host") {
+      const player = this.remotePeerPlayers.get(peerId);
+      const closeEnough = player && Math.hypot(
+        player.position.x - (message.origin.x + 0.5),
+        player.position.y + 0.8 - (message.origin.y + 0.5),
+        player.position.z - (message.origin.z + 0.5),
+      ) <= 7;
+      if (closeEnough) this.openRelicCache(message.origin, peerId);
+    } else if (message.type === "request-dungeon" && this.network.role === "host") {
+      const player = this.remotePeerPlayers.get(peerId);
+      const id = this.world.getBlock(message.origin.x, message.origin.y, message.origin.z);
+      const closeEnough = player && Math.hypot(
+        player.position.x - (message.origin.x + 0.5),
+        player.position.y + 0.8 - (message.origin.y + 0.5),
+        player.position.z - (message.origin.z + 0.5),
+      ) <= 7;
+      if (!closeEnough || (id !== BlockId.DungeonGate && id !== BlockId.DungeonReturn)) return;
+      if (id === BlockId.DungeonReturn) this.returnFromDungeon(message.origin, peerId);
+      else this.activateDungeon(message.origin);
     } else if (message.type === "request-sleep" && this.network.role === "host") {
       const night = this.timeOfDay < 0.22 || this.timeOfDay > 0.78;
       if (!night) {
@@ -2402,7 +2793,9 @@ export class GameEngine {
       this.physics.velocity.set(0, 0, 0);
       this.queueNearbyChunks(true);
       this.audio.play("rift");
-      this.objective = isEmberdeepCoordinate(message.position.x)
+      this.objective = isDungeonCoordinate(message.position.z)
+        ? "Expedition active: clear the generated chambers, defeat the guardian, and share the loot."
+        : isEmberdeepCoordinate(message.position.x)
         ? "The Emberdeep: gather Riftwood, rare ores, and Ember Glowstone—avoid the molten currents."
         : `Day ${this.dayCount}: returned from the Emberdeep.`;
       this.callbacks.onToast(message.text);
@@ -2430,7 +2823,7 @@ export class GameEngine {
     this.world.loadMutations(save.mutations);
     this.world.loadWaterLevels(save.waterLevels);
     for (const [key, state] of save.machines) {
-      this.world.machines.set(key, { ...state, storage: cloneInventory(state.storage) });
+      this.world.machines.set(key, cloneMachineState(state));
     }
     this.world.drops.push(...save.drops.map((drop) => ({ ...drop, position: { ...drop.position }, velocity: { ...drop.velocity } })));
     this.world.mobs.push(...save.mobs.map((mob) => ({ ...mob, position: { ...mob.position }, velocity: { ...mob.velocity } })));
@@ -2464,6 +2857,7 @@ export class GameEngine {
   private emitHud(networkStatus?: string): void {
     this.clearDepletedHotbar();
     const mobDefinition = this.targetedMob ? MOB_DEFINITIONS[this.targetedMob.kind] : null;
+    const locatorMarkers = buildLocatorMarkers(this.physics.position, this.physics.yaw, this.remotePlayers.values());
     this.callbacks.onHud({
       health: this.health,
       hunger: this.hunger,
@@ -2490,26 +2884,29 @@ export class GameEngine {
       timeLabel: formatFrontierTime(this.timeOfDay),
       dayCount: this.dayCount,
       targetedMob: this.targetedMob && mobDefinition
-        ? { name: mobDefinition.name, health: Math.max(0, this.targetedMob.health), maxHealth: mobDefinition.maxHealth }
+        ? {
+            name: this.targetedMob.bossName ?? mobDefinition.name,
+            health: Math.max(0, this.targetedMob.health),
+            maxHealth: this.targetedMob.maxHealth ?? mobDefinition.maxHealth,
+          }
         : null,
+      locatorHeading: compassHeading(this.physics.yaw),
+      locatorMarkers,
+      workbenchActive: this.stationAvailable("workbench"),
     });
   }
 
   private stationAvailable(station: Recipe["station"]): boolean {
     if (station === "hand") return true;
     if (station === "furnace" || station === "fabricator") return false;
-    if (itemAvailable(this.inventory, itemForBlock(BlockId.Workbench))) return true;
-    const px = Math.floor(this.physics.position.x);
-    const py = Math.floor(this.physics.position.y);
-    const pz = Math.floor(this.physics.position.z);
-    for (let x = px - 4; x <= px + 4; x += 1) {
-      for (let y = py - 3; y <= py + 3; y += 1) {
-        for (let z = pz - 4; z <= pz + 4; z += 1) {
-          if (this.world.getBlock(x, y, z) === BlockId.Workbench) return true;
-        }
-      }
-    }
-    return false;
+    if (!this.activeWorkbenchKey) return false;
+    const [x, y, z] = parseWorldKey(this.activeWorkbenchKey);
+    return this.world.getBlock(x, y, z) === BlockId.Workbench
+      && Math.hypot(
+        this.physics.position.x - (x + 0.5),
+        this.physics.position.y + 0.8 - (y + 0.5),
+        this.physics.position.z - (z + 0.5),
+      ) <= 6.5;
   }
 
   getRecipes(): Recipe[] {
@@ -2520,7 +2917,7 @@ export class GameEngine {
     const recipe = RECIPES.find((candidate) => candidate.id === recipeId);
     if (!recipe) return false;
     if (!this.stationAvailable(recipe.station)) {
-      this.callbacks.onToast(recipe.station === "workbench" ? "Place or carry a Tinker Bench first." : "That recipe runs inside a machine.");
+      this.callbacks.onToast(recipe.station === "workbench" ? "Interact with a placed Tinker Bench to use that recipe." : "That recipe runs inside a machine.");
       return false;
     }
     if (this.mode === "survival" && !Object.entries(recipe.inputs).every(([item, count]) => (this.inventory[item] ?? 0) >= count)) {
@@ -2548,7 +2945,140 @@ export class GameEngine {
   getMachine(key: string): MachinePanelData | null {
     const inspection = this.automation.inspect(this.world, key);
     if (!inspection) return null;
-    return { key, ...inspection, state: { ...inspection.state, storage: cloneInventory(inspection.state.storage) } };
+    return { key, ...inspection, state: cloneMachineState(inspection.state) };
+  }
+
+  private adjacentChestKeys(key: string): string[] {
+    const [x, y, z] = parseWorldKey(key);
+    if (this.world.getBlock(x, y, z) !== BlockId.Crate) return [];
+    return [[1, 0], [-1, 0], [0, 1], [0, -1]]
+      .map(([dx, dz]) => worldKey(x + dx, y, z + dz))
+      .filter((candidate) => {
+        const [cx, cy, cz] = parseWorldKey(candidate);
+        return this.world.getBlock(cx, cy, cz) === BlockId.Crate;
+      })
+      .sort((a, b) => {
+        const [ax, , az] = parseWorldKey(a);
+        const [bx, , bz] = parseWorldKey(b);
+        return ax - bx || az - bz;
+      });
+  }
+
+  private chestKeys(key: string): string[] {
+    if (this.world.getBlock(...parseWorldKey(key)) !== BlockId.Crate) return [];
+    const partner = this.adjacentChestKeys(key)[0];
+    if (!partner || this.adjacentChestKeys(partner)[0] !== key) return [key];
+    return [key, partner].sort((a, b) => {
+      const [ax, , az] = parseWorldKey(a);
+      const [bx, , bz] = parseWorldKey(b);
+      return ax - bx || az - bz;
+    });
+  }
+
+  private ensureChestState(key: string): MachineState | null {
+    const state = this.world.machines.get(key);
+    if (!state) return null;
+    state.storageSlots = reconcileStorageSlots(state.storageSlots, state.storage, SINGLE_CHEST_SLOTS);
+    return state;
+  }
+
+  getChest(key: string): ChestPanelData | null {
+    const keys = this.chestKeys(key);
+    if (keys.length === 0) return null;
+    const slots: InventoryLayout = [];
+    const storage: Inventory = {};
+    for (const chestKey of keys) {
+      const state = this.ensureChestState(chestKey);
+      if (!state) return null;
+      slots.push(...(state.storageSlots ?? []));
+      for (const [item, count] of Object.entries(state.storage)) storage[item] = (storage[item] ?? 0) + count;
+    }
+    return {
+      keys,
+      title: keys.length === 2 ? "Double Frontier Chest" : "Frontier Chest",
+      rows: keys.length === 2 ? 6 : 3,
+      slots,
+      storage,
+    };
+  }
+
+  private chestInRange(key: string, peer?: PlayerSnapshot): boolean {
+    const [x, y, z] = parseWorldKey(key);
+    const position = peer?.position ?? this.physics.position;
+    return this.world.getBlock(x, y, z) === BlockId.Crate
+      && Math.hypot(position.x - (x + 0.5), position.y + 0.8 - (y + 0.5), position.z - (z + 0.5)) <= 7.5;
+  }
+
+  private addToChest(key: string, item: ItemId, count: number): boolean {
+    const keys = this.chestKeys(key);
+    const states = keys.map((chestKey) => ({ key: chestKey, state: this.ensureChestState(chestKey)! }));
+    const destination = states.find(({ state }) => (state.storage[item] ?? 0) > 0)
+      ?? states.find(({ state }) => storageCanAccept(state.storageSlots ?? [], item));
+    if (!destination || count <= 0) return false;
+    destination.state.storageSlots = placeStorageItem(destination.state.storageSlots ?? [], item);
+    changeItem(destination.state.storage, item, count);
+    this.broadcastMachine(destination.key, destination.state);
+    return true;
+  }
+
+  private takeFromChest(key: string, item: ItemId, count: number): number {
+    let remaining = Math.max(0, Math.floor(count));
+    let taken = 0;
+    for (const chestKey of this.chestKeys(key)) {
+      const state = this.ensureChestState(chestKey);
+      if (!state || remaining <= 0) break;
+      const available = state.storage[item] ?? 0;
+      const amount = Math.min(available, remaining);
+      if (amount <= 0) continue;
+      changeItem(state.storage, item, -amount);
+      if ((state.storage[item] ?? 0) <= 0) state.storageSlots = clearStorageItem(state.storageSlots ?? [], item);
+      remaining -= amount;
+      taken += amount;
+      this.broadcastMachine(chestKey, state);
+    }
+    return taken;
+  }
+
+  depositToChest(key: string, item: ItemId, requestedCount?: number): boolean {
+    if (!this.chestInRange(key)) return false;
+    const available = this.mode === "creative" ? 1 : this.inventory[item] ?? 0;
+    const count = Math.max(0, Math.min(available, Math.floor(requestedCount ?? available)));
+    if (count <= 0) return false;
+    const panel = this.getChest(key);
+    if (!panel || (!panel.slots.includes(item) && !panel.slots.includes(null))) {
+      this.callbacks.onToast("That chest has no open slots.");
+      return false;
+    }
+    if (this.mode === "survival") {
+      changeItem(this.inventory, item, -count);
+      this.clearDepletedHotbar();
+    }
+    if (this.network.role === "guest") this.network.send({ type: "request-chest", key, direction: "deposit", item, count });
+    else this.addToChest(key, item, count);
+    this.audio.play("click");
+    this.emitHud();
+    return true;
+  }
+
+  withdrawFromChest(key: string, slot: number, requestedCount?: number): boolean {
+    if (!this.chestInRange(key)) return false;
+    const panel = this.getChest(key);
+    const item = panel?.slots[slot] ?? null;
+    if (!panel || !item) return false;
+    const count = Math.max(1, Math.min(panel.storage[item] ?? 0, Math.floor(requestedCount ?? (panel.storage[item] ?? 0))));
+    if (!this.canStoreItem(item)) {
+      this.callbacks.onToast("Make room in your inventory before withdrawing that item type.");
+      return false;
+    }
+    if (this.network.role === "guest") {
+      this.network.send({ type: "request-chest", key, direction: "withdraw", item, count });
+      return true;
+    }
+    const taken = this.takeFromChest(key, item, count);
+    if (taken <= 0 || !this.collectItem(item, taken)) return false;
+    this.audio.play("click");
+    this.emitHud();
+    return true;
   }
 
   transferToMachine(key: string, item: ItemId, count = 1): boolean {
@@ -2756,7 +3286,7 @@ export class GameEngine {
     }
     this.creativeFlying = !this.creativeFlying;
     this.physics.velocity.y = 0;
-    this.callbacks.onToast(this.creativeFlying ? "Creative flight enabled · Space rises, Ctrl descends." : "Creative flight disabled.");
+    this.callbacks.onToast(this.creativeFlying ? "Creative flight enabled · Space rises, Shift descends." : "Creative flight disabled.");
     this.emitHud();
   }
 
@@ -2794,6 +3324,8 @@ export class GameEngine {
 
   resume(): void {
     this.paused = false;
+    this.activeWorkbenchKey = null;
+    this.activeChestKey = null;
     this.previousFrame = performance.now();
     void this.audio.unlock();
   }
@@ -2827,7 +3359,7 @@ export class GameEngine {
       mutations: this.world.serializeMutations(),
       machines: Array.from(this.world.machines, ([key, state]) => [
         key,
-        { ...state, storage: cloneInventory(state.storage) },
+        cloneMachineState(state),
       ]),
       drops: this.world.drops.map((drop) => ({ ...drop, position: { ...drop.position }, velocity: { ...drop.velocity } })),
       mobs: this.world.mobs.map((mob) => ({ ...mob, position: { ...mob.position }, velocity: { ...mob.velocity } })),

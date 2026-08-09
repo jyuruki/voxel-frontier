@@ -5,6 +5,7 @@ import { AutomationSystem } from "../app/game/automation";
 import { ALL_ITEMS, BLOCKS, RECIPES, isLeafBlock, itemForBlock } from "../app/game/blocks";
 import { CRITICAL_DAMAGE_MULTIPLIER, isCriticalHit, weaponStats } from "../app/game/combat";
 import { itemSalePoints } from "../app/game/economy";
+import { createDungeonPlan, isDungeonCoordinate, isDungeonEntranceChunk } from "../app/game/dungeons";
 import {
   HOTBAR_START,
   INVENTORY_SLOT_COUNT,
@@ -15,14 +16,16 @@ import {
 } from "../app/game/inventory";
 import { MOB_DEFINITIONS, mobIntersectsSolid, mobWaterImmersion, moveMobWithCollision, resolveMobPenetration } from "../app/game/mobs";
 import { blockRenderLayer } from "../app/game/mesher";
+import { buildLocatorMarkers, compassHeading } from "../app/game/locator";
 import { configuredMultiplayerServer, generateRoomCode, normalizeRoomCode } from "../app/game/network";
 import { PlayerPhysics } from "../app/game/physics";
 import { createRandomWorldSeed } from "../app/game/prng";
 import { voxelRaycast } from "../app/game/raycast";
 import { decodeWorldKey, encodeWorldKey } from "../app/game/save";
-import { BlockId, CHUNK_SIZE, InputFrame, MobState, SAVE_VERSION, WORLD_GENERATION_VERSION, WORLD_MAX_Y, WORLD_MIN_Y, WorldSave } from "../app/game/types";
+import { DOUBLE_CHEST_SLOTS, SINGLE_CHEST_SLOTS, clearStorageItem, placeStorageItem, reconcileStorageSlots, storageCanAccept } from "../app/game/storage";
+import { BlockId, CHUNK_SIZE, InputFrame, MobState, PlayerSnapshot, SAVE_VERSION, SEA_LEVEL, WORLD_GENERATION_VERSION, WORLD_MAX_Y, WORLD_MIN_Y, WorldSave } from "../app/game/types";
 import { EMBERDEEP_OFFSET, createVillagePlan, isVillageChunk, VoxelWorld } from "../app/game/world";
-import { isValidRoomCode, routeGameMessage } from "../shared/room-protocol";
+import { NETWORK_PROTOCOL_VERSION, isValidRoomCode, routeGameMessage } from "../shared/room-protocol";
 
 function prepareArena(
   world: VoxelWorld,
@@ -367,8 +370,12 @@ test("server multiplayer uses normalized six-character room codes", () => {
 });
 
 test("room server policy preserves host authority and upgrades secure endpoints", () => {
+  assert.equal(NETWORK_PROTOCOL_VERSION, 8);
   assert.equal(routeGameMessage("guest", "request-block"), "host");
   assert.equal(routeGameMessage("guest", "request-machine"), "host");
+  assert.equal(routeGameMessage("guest", "request-drop"), "host");
+  assert.equal(routeGameMessage("guest", "request-chest"), "host");
+  assert.equal(routeGameMessage("guest", "request-dungeon"), "host");
   assert.equal(routeGameMessage("guest", "block"), "reject");
   assert.equal(routeGameMessage("guest", "player"), "broadcast");
   assert.equal(routeGameMessage("host", "snapshot"), "snapshot");
@@ -389,6 +396,110 @@ test("leaf cutouts write depth instead of blending with water behind them", () =
   }
   assert.equal(blockRenderLayer(BlockId.Water), "liquid");
   assert.equal(blockRenderLayer(BlockId.Glass), "translucent");
+  assert.equal(blockRenderLayer(BlockId.GlassPane), "translucent");
+  assert.equal(blockRenderLayer(BlockId.StarBloom), "solid");
+  assert.equal(blockRenderLayer(BlockId.Thornvine), "solid");
+});
+
+test("single and double chest layouts preserve unique item slots", () => {
+  assert.equal(SINGLE_CHEST_SLOTS, 27);
+  assert.equal(DOUBLE_CHEST_SLOTS, 54);
+  const storage = { "part:coal": 18, "part:iron-ingot": 3 };
+  let slots = reconcileStorageSlots(["part:coal", "part:coal"], storage);
+  assert.equal(slots.length, SINGLE_CHEST_SLOTS);
+  assert.equal(slots.filter((item) => item === "part:coal").length, 1);
+  assert.equal(slots.filter((item) => item === "part:iron-ingot").length, 1);
+  assert.equal(storageCanAccept(slots, "part:diamond"), true);
+  slots = placeStorageItem(slots, "part:diamond");
+  assert.equal(slots.filter((item) => item === "part:diamond").length, 1);
+  slots = clearStorageItem(slots, "part:coal");
+  assert.equal(slots.includes("part:coal"), false);
+  const chestWorld = new VoxelWorld("chest state bench");
+  chestWorld.setBlock(0, 80, 0, BlockId.Crate);
+  assert.equal(chestWorld.machines.get("0,80,0")?.storageSlots?.length, SINGLE_CHEST_SLOTS);
+});
+
+test("party locator uses a forward arc, distance scale, height cues, and crouch privacy", () => {
+  const players: PlayerSnapshot[] = [
+    { id: "near", name: "Near", color: "#ff7755", position: { x: 0, y: 72, z: -10 }, yaw: 0, pitch: 0 },
+    { id: "high", name: "High", color: "#55ddff", position: { x: -7, y: 84, z: -18 }, yaw: 0, pitch: 0 },
+    { id: "behind", name: "Behind", color: "#ffffff", position: { x: 0, y: 72, z: 20 }, yaw: 0, pitch: 0 },
+    { id: "hidden", name: "Hidden", color: "#ffffff", position: { x: 2, y: 72, z: -8 }, yaw: 0, pitch: 0, crouching: true },
+    { id: "far", name: "Far", color: "#bb88ff", position: { x: 0, y: 60, z: -250 }, yaw: 0, pitch: 0 },
+  ];
+  const markers = buildLocatorMarkers({ x: 0, y: 72, z: 0 }, 0, players);
+  assert.deepEqual(markers.map((marker) => marker.id).toSorted(), ["far", "high", "near"]);
+  assert.equal(markers.find((marker) => marker.id === "high")?.vertical, "above");
+  assert.equal(markers.find((marker) => marker.id === "far")?.vertical, "below");
+  assert.ok(markers.find((marker) => marker.id === "near")!.scale > markers.find((marker) => marker.id === "far")!.scale);
+  assert.equal(compassHeading(0), "N");
+  assert.equal(compassHeading(Math.PI / 2), "E");
+});
+
+test("all native timber crafts core utility blocks and torches cast light", () => {
+  for (const [wood, suffix] of [
+    [BlockId.EmberwoodPlanks, ""],
+    [BlockId.FrostpinePlanks, "-frostpine"],
+    [BlockId.RiftwoodPlanks, "-riftwood"],
+  ] as const) {
+    const bench = RECIPES.find((recipe) => recipe.id === `workbench${suffix}`);
+    const chest = RECIPES.find((recipe) => recipe.id === `chest${suffix}`);
+    const torch = RECIPES.find((recipe) => recipe.id === `trail-torch${suffix}`);
+    assert.ok(bench?.inputs[itemForBlock(wood)], `missing Tinker Bench recipe for ${BLOCKS[wood].name}`);
+    assert.ok(chest?.inputs[itemForBlock(wood)], `missing chest recipe for ${BLOCKS[wood].name}`);
+    assert.ok(torch?.inputs[itemForBlock(wood)], `missing torch recipe for ${BLOCKS[wood].name}`);
+  }
+  assert.equal(BLOCKS[BlockId.GlowRod].shape, "torch");
+  assert.ok((BLOCKS[BlockId.GlowRod].emissive ?? 0) >= 0.9);
+  assert.equal(BLOCKS[BlockId.Stone].color, "#a3a8a8");
+});
+
+test("surface trees require a dry shoreline buffer", () => {
+  const world = new VoxelWorld("dry forest survey");
+  let treeBases = 0;
+  for (let cx = -3; cx <= 3; cx += 1) {
+    for (let cz = -3; cz <= 3; cz += 1) {
+      world.getChunk(cx, cz);
+      for (let lx = 0; lx < CHUNK_SIZE; lx += 1) {
+        for (let lz = 0; lz < CHUNK_SIZE; lz += 1) {
+          const x = cx * CHUNK_SIZE + lx;
+          const z = cz * CHUNK_SIZE + lz;
+          const height = world.getHeight(x, z);
+          const id = world.getBlock(x, height + 1, z);
+          if (id !== BlockId.EmberwoodLog && id !== BlockId.FrostpineLog) continue;
+          treeBases += 1;
+          assert.ok(height > SEA_LEVEL + 1);
+          for (const [dx, dz] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            assert.ok(world.getHeight(x + dx, z + dz) > SEA_LEVEL, `tree at ${x},${z} touched water`);
+          }
+        }
+      }
+    }
+  }
+  assert.ok(treeBases > 0, "dry-site survey should include at least one tree");
+});
+
+test("dungeon entrances are sparse and instance plans are deterministic but varied", () => {
+  const world = new VoxelWorld("dungeon plan survey");
+  let entrances = 0;
+  for (let cx = -44; cx <= 44; cx += 1) {
+    for (let cz = -44; cz <= 44; cz += 1) {
+      if (isDungeonEntranceChunk(cx, cz, world.seed)) entrances += 1;
+    }
+  }
+  assert.ok(entrances >= 8 && entrances <= 35, `unexpected entrance density: ${entrances}`);
+  const origins = [
+    { x: 10, y: 72, z: 10 },
+    { x: -240, y: 68, z: 380 },
+    { x: 900, y: 81, z: -710 },
+    { x: 42, y: 65, z: 1200 },
+  ];
+  const plans = origins.map((origin) => createDungeonPlan(origin, world.seed));
+  assert.deepEqual(createDungeonPlan(origins[0], world.seed), plans[0]);
+  assert.ok(new Set(plans.map((plan) => plan.id)).size === plans.length);
+  assert.ok(new Set(plans.map((plan) => plan.theme)).size >= 2);
+  assert.ok(plans.every((plan) => plan.rooms.length >= 3 && plan.rooms.length <= 5));
+  assert.ok(plans.every((plan) => isDungeonCoordinate(plan.destination.z)));
 });
 
 test("Wayfarer ruins generate deterministically with an interactable Relic Cache", () => {

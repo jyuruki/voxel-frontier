@@ -1,4 +1,4 @@
-export const NETWORK_PROTOCOL_VERSION = 7;
+export const NETWORK_PROTOCOL_VERSION = 8;
 export const ROOM_CODE_LENGTH = 6;
 export const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -34,6 +34,10 @@ const GUEST_REQUESTS = new Set([
   "request-mob-hit",
   "request-sleep",
   "request-rift",
+  "request-drop",
+  "request-chest",
+  "request-cache",
+  "request-dungeon",
 ]);
 
 export type MessageRoute = "broadcast" | "host" | "snapshot" | "reject";

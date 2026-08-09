@@ -41,7 +41,7 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
     hardness: 0.55,
     tool: "spade",
   }),
-  [BlockId.Stone]: block(BlockId.Stone, "Roughstone", "#777b7d", "Common structural stone.", {
+  [BlockId.Stone]: block(BlockId.Stone, "Roughstone", "#a3a8a8", "Common light-gray structural stone.", {
     hardness: 1.8,
   }),
   [BlockId.Sand]: block(BlockId.Sand, "Sun Sand", "#d8bd74", "Fine desert sediment.", {
@@ -174,16 +174,16 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
     shape: "hopper",
     automation: "machine",
   }),
-  [BlockId.Crate]: block(BlockId.Crate, "Cargo Crate", "#8d603b", "Stores resources for automation networks.", {
+  [BlockId.Crate]: block(BlockId.Crate, "Frontier Chest", "#9a6538", "A 9 × 3 shared storage chest; place two side by side for 9 × 6 storage.", {
     hardness: 1.2,
     tool: "axe",
     automation: "storage",
   }),
-  [BlockId.GlowRod]: block(BlockId.GlowRod, "Glow Rod", "#f0a94b", "A steady handmade light source.", {
+  [BlockId.GlowRod]: block(BlockId.GlowRod, "Trail Torch", "#e79a45", "A warm handmade torch that casts local light.", {
     solid: false,
     hardness: 0.15,
-    shape: "rod",
-    emissive: 0.8,
+    shape: "torch",
+    emissive: 0.95,
   }),
   [BlockId.Basalt]: block(BlockId.Basalt, "Night Basalt", "#393b44", "Dense volcanic rock.", { hardness: 2.6 }),
   [BlockId.Ice]: block(BlockId.Ice, "Glacier Ice", "#82c5da", "Slippery ancient ice.", {
@@ -397,6 +397,16 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
     solid: false, opaque: false, hardness: 0.35, shape: "column", collisionHeight: 0.42,
   }),
   [BlockId.CarvedStone]: block(BlockId.CarvedStone, "Carved Roughstone", "#858989", "Decorative masonry cut with a simple frontier knot.", { hardness: 2.1 }),
+  [BlockId.DungeonGate]: block(BlockId.DungeonGate, "Expedition Gate", "#4e7f78", "Gather within the marked staging ring and interact to enter a shared procedural delve.", {
+    solid: false, opaque: false, hardness: 999, collectible: false, shape: "portal", emissive: 0.72,
+  }),
+  [BlockId.DungeonBrick]: block(BlockId.DungeonBrick, "Vaultstone", "#687475", "Symmetrical ancient masonry found in shifting frontier delves.", { hardness: 3.1 }),
+  [BlockId.DungeonReturn]: block(BlockId.DungeonReturn, "Return Beacon", "#d48c55", "Returns an explorer to the entrance of the current delve.", {
+    solid: false, opaque: false, hardness: 999, collectible: false, shape: "portal", automation: "machine", emissive: 0.78,
+  }),
+  [BlockId.DungeonSeal]: block(BlockId.DungeonSeal, "Guardian Seal", "#8f4f68", "A sealed loot plinth bound to the dungeon guardian.", {
+    solid: false, opaque: false, hardness: 999, collectible: false, shape: "plate", emissive: 0.65,
+  }),
 };
 
 const LEAF_BLOCKS = new Set<BlockId>([
@@ -523,6 +533,14 @@ export const RECIPES: Recipe[] = [
   { id: "planks", name: "Cut Planks", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodLog)]: 1 }, output: { item: itemForBlock(BlockId.EmberwoodPlanks), count: 4 }, description: "Shape one log into four building planks." },
   { id: "stone-spear", name: "Roughstone Spear", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2, [itemForBlock(BlockId.Stone)]: 1 }, output: { item: "tool:stone-spear", count: 1 }, description: "An early reach weapon for surviving the first night." },
   { id: "workbench", name: "Tinker Bench", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 4 }, output: { item: itemForBlock(BlockId.Workbench), count: 1 }, description: "Required for engineered components." },
+  { id: "workbench-frostpine", name: "Frostpine Tinker Bench", station: "hand", inputs: { [itemForBlock(BlockId.FrostpinePlanks)]: 4 }, output: { item: itemForBlock(BlockId.Workbench), count: 1 }, description: "Build the same full Tinker Bench from pale Frostpine boards." },
+  { id: "workbench-riftwood", name: "Riftwood Tinker Bench", station: "hand", inputs: { [itemForBlock(BlockId.RiftwoodPlanks)]: 4 }, output: { item: itemForBlock(BlockId.Workbench), count: 1 }, description: "Build the same full Tinker Bench from Riftwood boards." },
+  { id: "chest", name: "Frontier Chest", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 8 }, output: { item: itemForBlock(BlockId.Crate), count: 1 }, description: "Stores 27 item types and joins one neighboring chest for 54 slots." },
+  { id: "chest-frostpine", name: "Frostpine Frontier Chest", station: "hand", inputs: { [itemForBlock(BlockId.FrostpinePlanks)]: 8 }, output: { item: itemForBlock(BlockId.Crate), count: 1 }, description: "A pale-timber chest with the same 27-slot capacity." },
+  { id: "chest-riftwood", name: "Riftwood Frontier Chest", station: "hand", inputs: { [itemForBlock(BlockId.RiftwoodPlanks)]: 8 }, output: { item: itemForBlock(BlockId.Crate), count: 1 }, description: "A Riftwood chest with the same 27-slot capacity." },
+  { id: "trail-torch", name: "Trail Torches", station: "hand", inputs: { "part:coal": 1, [itemForBlock(BlockId.EmberwoodPlanks)]: 1 }, output: { item: itemForBlock(BlockId.GlowRod), count: 4 }, description: "Four warm lights for homes, caves, and expedition routes." },
+  { id: "trail-torch-frostpine", name: "Frostpine Trail Torches", station: "hand", inputs: { "part:coal": 1, [itemForBlock(BlockId.FrostpinePlanks)]: 1 }, output: { item: itemForBlock(BlockId.GlowRod), count: 4 }, description: "Make four torches with Frostpine handles." },
+  { id: "trail-torch-riftwood", name: "Riftwood Trail Torches", station: "hand", inputs: { "part:coal": 1, [itemForBlock(BlockId.RiftwoodPlanks)]: 1 }, output: { item: itemForBlock(BlockId.GlowRod), count: 4 }, description: "Make four torches with Riftwood handles." },
   { id: "wood-pick", name: "Emberwood Pick", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 3 }, output: { item: "tool:wood-pick", count: 1 }, description: "The first mining tool; harvests roughstone, coal, limestone, and slate." },
   { id: "wood-hatchet", name: "Emberwood Hand Axe", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 3 }, output: { item: "tool:wood-hatchet", count: 1 }, description: "A simple timber tool for faster logging." },
   { id: "wood-spade", name: "Emberwood Spade", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, output: { item: "tool:wood-spade", count: 1 }, description: "An early tool for soil, clay, snow, and sand." },
@@ -616,6 +634,14 @@ export const TOOL_POWER: Record<string, number> = {
 
 const TILE_SIZE = 16;
 const ATLAS_COLS = 8;
+
+const DESIGNED_TEXTURES = new Set<BlockId>([
+  BlockId.Workbench, BlockId.Crate, BlockId.FluxLamp, BlockId.ThermalGenerator,
+  BlockId.FluxCell, BlockId.BoreDrill, BlockId.Conveyor, BlockId.ArcFurnace,
+  BlockId.Fabricator, BlockId.Ram, BlockId.Hopper, BlockId.Observer,
+  BlockId.HearthFurnace, BlockId.TradePost, BlockId.RelicCache,
+  BlockId.DungeonGate, BlockId.DungeonBrick, BlockId.DungeonReturn, BlockId.DungeonSeal,
+]);
 
 function textureDetail(blockId: BlockId, x: number, y: number): number {
   const oreSpark = hash3(x * 3, y * 5, blockId, 719) % 23 === 0;
@@ -735,6 +761,10 @@ function textureDetail(blockId: BlockId, x: number, y: number): number {
     case BlockId.TimberShutter: return x % 4 === 1 || y === 2 || y === 13 ? -0.14 : 0.08;
     case BlockId.FlowerPot: return y === 4 || y === 11 || x === 3 || x === 12 ? -0.15 : 0.05;
     case BlockId.CarvedStone: return Math.abs(x - 7.5) + Math.abs(y - 7.5) < 5 || x === y || x + y === 15 ? -0.14 : 0.05;
+    case BlockId.DungeonGate:
+    case BlockId.DungeonReturn: return Math.abs(x - 7.5) < 2 || Math.abs(y - 7.5) < 2 ? 0.24 : -0.08;
+    case BlockId.DungeonBrick: return x === 1 || x === 14 || y === 1 || y === 14 || x === y || x + y === 15 ? -0.12 : 0.035;
+    case BlockId.DungeonSeal: return Math.abs(x - 7.5) + Math.abs(y - 7.5) < 5 ? 0.26 : -0.1;
     default: return 0;
   }
 }
@@ -769,9 +799,10 @@ function paintTile(
   const row = Math.floor(tile / ATLAS_COLS);
   const base = new THREE.Color(hex);
   const image = context.createImageData(TILE_SIZE, TILE_SIZE);
+  const designed = DESIGNED_TEXTURES.has(blockId) || Boolean(BLOCKS[blockId].automation);
   for (let y = 0; y < TILE_SIZE; y += 1) {
     for (let x = 0; x < TILE_SIZE; x += 1) {
-      const noise = ((hash3(x, y, blockId, 3919) % 21) - 10) / 100;
+      const noise = ((hash3(x, y, blockId, 3919) % 21) - 10) / (designed ? 420 : 150);
       const offset = noise + textureDetail(blockId, x, y);
       const index = (y * TILE_SIZE + x) * 4;
       image.data[index] = Math.max(0, Math.min(255, (base.r + offset) * 255));
@@ -779,10 +810,131 @@ function paintTile(
       image.data[index + 2] = Math.max(0, Math.min(255, (base.b + offset) * 255));
       const cutoutLeaves = isLeafBlock(blockId) && hash3(x, y, blockId, 17) % 9 === 0;
       const cutoutPlant = BLOCKS[blockId].shape === "cross" && !plantPixel(blockId, x, y);
-      image.data[index + 3] = cutoutLeaves || cutoutPlant ? 0 : 255;
+      const glass = [BlockId.Glass, BlockId.GlassPane, BlockId.AshGlass, BlockId.Ice].includes(blockId);
+      const glassBorder = x <= 1 || x >= 14 || y <= 1 || y >= 14 || (x === 4 && y === 4) || (x === 11 && y === 11);
+      image.data[index + 3] = cutoutLeaves || cutoutPlant ? 0 : glass ? (glassBorder ? 220 : 112) : 255;
     }
   }
   context.putImageData(image, column * TILE_SIZE, row * TILE_SIZE);
+  paintDesignedTexture(context, column * TILE_SIZE, row * TILE_SIZE, blockId);
+}
+
+function paintDesignedTexture(context: CanvasRenderingContext2D, ox: number, oy: number, blockId: BlockId): void {
+  context.save();
+  context.translate(ox, oy);
+  context.imageSmoothingEnabled = false;
+  const frame = (color = "rgba(24,32,34,.72)") => {
+    context.strokeStyle = color;
+    context.lineWidth = 1;
+    context.strokeRect(1.5, 1.5, 13, 13);
+  };
+  if (blockId === BlockId.Workbench) {
+    frame("#4a2d21");
+    context.fillStyle = "#d9a05d";
+    context.fillRect(3, 3, 10, 2);
+    context.fillStyle = "#563329";
+    for (const x of [4, 8, 12]) context.fillRect(x, 6, 1, 7);
+    context.fillRect(3, 9, 10, 1);
+    context.fillStyle = "#d8c08e";
+    context.fillRect(6, 6, 4, 1);
+  } else if (blockId === BlockId.Crate) {
+    frame("#4a2b1e");
+    context.fillStyle = "#533324";
+    context.fillRect(1, 5, 14, 2);
+    context.fillRect(1, 12, 14, 2);
+    context.fillStyle = "#e0b25d";
+    context.fillRect(6, 6, 4, 4);
+    context.fillStyle = "#5d4528";
+    context.fillRect(7, 7, 2, 2);
+  } else if ([BlockId.ThermalGenerator, BlockId.ArcFurnace, BlockId.HearthFurnace].includes(blockId)) {
+    frame();
+    context.fillStyle = "#222b2d";
+    context.fillRect(3, 7, 10, 7);
+    context.fillStyle = "#f0703f";
+    context.fillRect(5, 9, 6, 3);
+    context.fillStyle = "#ffd06b";
+    context.fillRect(7, 8, 2, 3);
+    context.fillStyle = "#8fa2a0";
+    context.fillRect(4, 3, 8, 2);
+  } else if (blockId === BlockId.FluxCell) {
+    frame();
+    context.fillStyle = "#182c31";
+    context.fillRect(4, 3, 8, 11);
+    context.fillStyle = "#73e8dd";
+    context.fillRect(6, 5, 4, 7);
+    context.fillStyle = "#eac35d";
+    context.fillRect(7, 1, 2, 3);
+  } else if (blockId === BlockId.BoreDrill) {
+    frame();
+    context.fillStyle = "#d2dbda";
+    for (let y = 3; y < 13; y += 1) {
+      const width = Math.max(2, 10 - Math.abs(y - 8));
+      context.fillRect(8 - Math.floor(width / 2), y, width, 1);
+    }
+    context.fillStyle = "#344347";
+    context.fillRect(7, 4, 2, 8);
+  } else if (blockId === BlockId.Conveyor) {
+    frame();
+    context.strokeStyle = "#86e9df";
+    context.lineWidth = 2;
+    for (const y of [5, 10]) {
+      context.beginPath(); context.moveTo(3, y); context.lineTo(11, y); context.lineTo(9, y - 2); context.moveTo(11, y); context.lineTo(9, y + 2); context.stroke();
+    }
+  } else if (blockId === BlockId.Fabricator) {
+    frame();
+    context.fillStyle = "#e4b75c";
+    context.fillRect(5, 3, 6, 10);
+    context.fillRect(3, 5, 10, 6);
+    context.fillStyle = "#283b3e";
+    context.fillRect(6, 6, 4, 4);
+  } else if ([BlockId.Ram, BlockId.AdhesiveRam].includes(blockId)) {
+    frame();
+    context.fillStyle = blockId === BlockId.AdhesiveRam ? "#8ac968" : "#d2c5a7";
+    context.fillRect(2, 5, 9, 6);
+    context.fillStyle = "#344145";
+    context.fillRect(5, 7, 9, 2);
+  } else if (blockId === BlockId.Hopper) {
+    frame();
+    context.fillStyle = "#c0c9c7";
+    context.beginPath(); context.moveTo(2, 3); context.lineTo(14, 3); context.lineTo(10, 9); context.lineTo(10, 13); context.lineTo(6, 13); context.lineTo(6, 9); context.closePath(); context.fill();
+    context.fillStyle = "#55cfc5";
+    context.fillRect(10, 11, 4, 2);
+  } else if (blockId === BlockId.Observer) {
+    frame();
+    context.fillStyle = "#e0ebe9";
+    context.fillRect(3, 4, 10, 8);
+    context.fillStyle = "#283b40";
+    context.fillRect(5, 6, 6, 4);
+    context.fillStyle = "#6ef1e5";
+    context.fillRect(7, 7, 2, 2);
+  } else if ([BlockId.DungeonGate, BlockId.DungeonReturn].includes(blockId)) {
+    frame(blockId === BlockId.DungeonReturn ? "#ffb06c" : "#72e7d6");
+    context.fillStyle = blockId === BlockId.DungeonReturn ? "#f6b267" : "#78e6d8";
+    context.fillRect(7, 3, 2, 10);
+    context.fillRect(3, 7, 10, 2);
+    context.fillStyle = "rgba(240,255,247,.8)";
+    context.fillRect(6, 6, 4, 4);
+  } else if (blockId === BlockId.DungeonBrick) {
+    frame("#2e3b3d");
+    context.strokeStyle = "#a8bebc";
+    context.beginPath(); context.moveTo(3, 8); context.lineTo(8, 3); context.lineTo(13, 8); context.lineTo(8, 13); context.closePath(); context.stroke();
+    context.fillStyle = "#34494a";
+    context.fillRect(7, 7, 2, 2);
+  } else if (blockId === BlockId.DungeonSeal) {
+    frame("#e6a1bd");
+    context.fillStyle = "#ffd17b";
+    context.beginPath(); context.moveTo(8, 2); context.lineTo(13, 8); context.lineTo(8, 14); context.lineTo(3, 8); context.closePath(); context.fill();
+    context.fillStyle = "#6f334f";
+    context.fillRect(7, 5, 2, 6);
+  } else if (DESIGNED_TEXTURES.has(blockId) || BLOCKS[blockId].automation) {
+    frame();
+    context.fillStyle = "rgba(219,255,248,.75)";
+    context.fillRect(3, 3, 3, 3);
+    context.fillRect(10, 3, 3, 3);
+    context.fillStyle = "rgba(244,139,96,.82)";
+    context.fillRect(6, 9, 4, 3);
+  }
+  context.restore();
 }
 
 function paintAutomationItemIcon(
@@ -891,6 +1043,8 @@ function paintAutomationItemIcon(
       line(blockId === BlockId.AdhesiveRam ? "#9ee37a" : "#d7d9d4",5); context.beginPath(); context.moveTo(10,23); context.lineTo(33,23); context.stroke(); context.fillStyle=blockId === BlockId.AdhesiveRam ? "#75b65a" : "#b9a37d"; context.fillRect(31,14,7,18); break;
     case BlockId.Hopper:
       context.fillStyle="#b6c0bf"; context.beginPath(); context.moveTo(10,12); context.lineTo(38,12); context.lineTo(29,27); context.lineTo(29,37); context.lineTo(20,37); context.lineTo(20,27); context.closePath(); context.fill(); line("#26363a",2); context.stroke(); context.fillStyle="#75e0d5"; context.beginPath(); context.moveTo(29,32); context.lineTo(39,32); context.lineTo(35,28); context.moveTo(39,32); context.lineTo(35,36); context.stroke(); break;
+    case BlockId.Crate:
+      context.fillStyle="#a66a39"; context.fillRect(9,10,30,27); line("#40281d",3); context.strokeRect(9,10,30,27); context.beginPath(); context.moveTo(9,20); context.lineTo(39,20); context.stroke(); context.fillStyle="#e2b75f"; context.fillRect(20,18,9,10); context.fillStyle="#4b3825"; context.fillRect(23,21,3,4); break;
     case BlockId.Observer:
       context.fillStyle="#d8e6e4"; context.beginPath(); context.ellipse(24,21,12,8,0,0,Math.PI*2); context.fill(); node(24,21,"#26363d",5); node(24,21,"#79f3e5",2); line("#ff795e",3); context.beginPath(); context.moveTo(12,34); context.lineTo(35,34); context.lineTo(30,29); context.moveTo(35,34); context.lineTo(30,39); context.stroke(); break;
     case BlockId.PulseRepeater:
