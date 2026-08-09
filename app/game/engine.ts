@@ -14,6 +14,7 @@ import {
 } from "./blocks";
 import { AutomationSystem } from "./automation";
 import { FrontierAudio } from "./audio";
+import { canPlaceBoat, safeBoatDismount, updateBoatPhysics } from "./boats";
 import {
   HOTBAR_SIZE,
   HOTBAR_START,
@@ -36,7 +37,9 @@ import { voxelRaycast } from "./raycast";
 import { encodeWorldKey, saveLocally } from "./save";
 import { FirstPersonViewModel } from "./viewmodel";
 import { createDungeonPlan, DungeonPlan, isDungeonCoordinate } from "./dungeons";
+import { damageIndicatorAngle, mobCanMeleeHit, mobCanShootPlayer } from "./encounters";
 import { buildLocatorMarkers, compassHeading } from "./locator";
+import { localRealmCoordinates, realmForPosition, realmLabel } from "./realms";
 import {
   NATURAL_DESPAWN_DISTANCE,
   chooseNaturalMobKind,
@@ -64,6 +67,7 @@ import {
 } from "./storage";
 import {
   BlockId,
+  BoatState,
   ChatEntry,
   CHUNK_SIZE,
   GameMode,
@@ -76,6 +80,7 @@ import {
   MachineState,
   MobState,
   PlayerSnapshot,
+  PlayerSaveState,
   Recipe,
   SAVE_VERSION,
   Vec3Data,
@@ -97,7 +102,7 @@ export interface MachinePanelData {
 export interface ChestPanelData {
   keys: string[];
   title: string;
-  rows: 3 | 6;
+  rows: 1 | 3 | 6;
   slots: InventoryLayout;
   storage: Inventory;
 }
@@ -152,6 +157,7 @@ interface ChunkMeshSet {
 
 const AUTOSAVE_SECONDS = 18;
 const NETWORK_CHECKPOINT_SECONDS = 12;
+const MAX_SAVED_PLAYER_PROFILES = 32;
 
 function cloneInventory(inventory: Inventory): Inventory {
   return { ...inventory };
@@ -163,6 +169,70 @@ function cloneMachineState(state: MachineState): MachineState {
     storage: cloneInventory(state.storage),
     storageSlots: state.storageSlots ? [...state.storageSlots] : undefined,
     link: state.link ? { ...state.link } : undefined,
+  };
+}
+
+function clonePlayerSaveState(state: PlayerSaveState): PlayerSaveState {
+  return {
+    ...state,
+    position: { ...state.position },
+    inventory: cloneInventory(state.inventory),
+    hotbar: [...state.hotbar],
+    inventorySlots: state.inventorySlots ? [...state.inventorySlots] : undefined,
+    spawnPoint: state.spawnPoint ? { ...state.spawnPoint } : undefined,
+  };
+}
+
+function knownItem(value: unknown): value is ItemId {
+  return typeof value === "string" && ALL_ITEMS.includes(value as ItemId);
+}
+
+function safeProfilePoint(value: unknown): Vec3Data | null {
+  if (!value || typeof value !== "object") return null;
+  const point = value as Partial<Vec3Data>;
+  if (![point.x, point.y, point.z].every((coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate))) return null;
+  if (Math.abs(point.x!) > 1_000_000 || point.y! < WORLD_MIN_Y - 32 || point.y! > WORLD_MAX_Y + 32 || Math.abs(point.z!) > 1_000_000) return null;
+  return { x: point.x!, y: point.y!, z: point.z! };
+}
+
+function boundedProfileNumber(value: unknown, fallback: number, minimum: number, maximum: number): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? THREE.MathUtils.clamp(value, minimum, maximum)
+    : fallback;
+}
+
+function sanitizeRemotePlayerProfile(
+  profile: PlayerSaveState,
+  position: Vec3Data,
+  skinSeed: number,
+): PlayerSaveState {
+  const inventory: Inventory = {};
+  if (profile.inventory && typeof profile.inventory === "object" && !Array.isArray(profile.inventory)) {
+    for (const [item, count] of Object.entries(profile.inventory).slice(0, 256)) {
+      if (!knownItem(item) || !Number.isFinite(count) || count < 0) continue;
+      inventory[item] = Math.min(1_000_000_000, Math.floor(count));
+    }
+  }
+  const hotbar = Array.from({ length: HOTBAR_SIZE }, (_, index) => knownItem(profile.hotbar?.[index]) ? profile.hotbar[index] : null);
+  const inventorySlots = Array.isArray(profile.inventorySlots)
+    ? Array.from({ length: INVENTORY_SLOT_COUNT }, (_, index) => knownItem(profile.inventorySlots?.[index]) ? profile.inventorySlots![index] : null)
+    : undefined;
+  const spawnPoint = safeProfilePoint(profile.spawnPoint);
+  return {
+    position: { ...position },
+    yaw: boundedProfileNumber(profile.yaw, 0, -10_000_000, 10_000_000),
+    pitch: boundedProfileNumber(profile.pitch, 0, -1.55, 1.55),
+    health: boundedProfileNumber(profile.health, 100, 0, 100),
+    hunger: boundedProfileNumber(profile.hunger, 100, 0, 100),
+    stamina: boundedProfileNumber(profile.stamina, 100, 0, 100),
+    inventory,
+    hotbar,
+    inventorySlots,
+    selectedSlot: Math.floor(boundedProfileNumber(profile.selectedSlot, 0, 0, HOTBAR_SIZE - 1)),
+    tradeCredit: Math.floor(boundedProfileNumber(profile.tradeCredit, 0, 0, 1_000_000_000)),
+    spawnPoint: spawnPoint ?? undefined,
+    realm: realmForPosition(position),
+    skinSeed: skinSeed >>> 0,
   };
 }
 
@@ -380,6 +450,7 @@ const CREATURE_PALETTES: Record<MobState["kind"], { base: string; accent: string
   cinderling: { base: "#713c38", accent: "#f48a45", mark: "#2b2428", eye: 0xffe073 },
   thornback: { base: "#3e5038", accent: "#9db45c", mark: "#293628", eye: 0xffc85e },
   nightwisp: { base: "#343e5c", accent: "#829dff", mark: "#202943", eye: 0xd5eeff },
+  shardcaster: { base: "#493c66", accent: "#b568a5", mark: "#241f38", eye: 0xff9ee8 },
   wayfarer: { base: "#69526c", accent: "#c99177", mark: "#3c344c", eye: 0xf2d39f },
 };
 
@@ -466,9 +537,13 @@ export class GameEngine {
   private readonly queuedChunks = new Set<string>();
   private readonly mobMeshes = new Map<string, THREE.Group>();
   private readonly dropMeshes = new Map<string, THREE.Mesh>();
+  private readonly projectileMeshes = new Map<string, THREE.Mesh>();
+  private readonly boatMeshes = new Map<string, THREE.Group>();
   private readonly remotePlayers = new Map<string, PlayerSnapshot>();
   private readonly remotePeerPlayers = new Map<string, PlayerSnapshot>();
   private readonly remotePlayerMeshes = new Map<string, THREE.Group>();
+  private readonly playerProfiles = new Map<string, PlayerSaveState>();
+  private readonly boatInputs = new Map<string, { forward: number; turn: number }>();
   private readonly indicatorMeshes = new Map<string, THREE.Mesh>();
   private readonly automation = new AutomationSystem();
   private readonly callbacks: GameEngineCallbacks;
@@ -485,6 +560,9 @@ export class GameEngine {
   private hunger = 100;
   private stamina = 100;
   private tradeCredit = 0;
+  private spawnPoint: Vec3Data | undefined;
+  private skinSeed = 0;
+  private ridingBoatId: string | null = null;
   private timeOfDay = 0.29;
   private paused = false;
   private destroyed = false;
@@ -497,6 +575,7 @@ export class GameEngine {
   private autosaveTimer = 0;
   private automationTimer = 0;
   private networkTimer = 0;
+  private profileTimer = 0;
   private mobNetworkTimer = 0;
   private worldNetworkTimer = 0;
   private checkpointTimer = 0;
@@ -515,6 +594,13 @@ export class GameEngine {
   private creativeFlying = false;
   private lastCreativeJumpTap = 0;
   private criticalFlash = 0;
+  private damageFlash = 0;
+  private damageDirection = 0;
+  private hitMarker = 0;
+  private damageShake = 0;
+  private damageImmunity = 0;
+  private rideCrouchLatch = false;
+  private projectileSerial = 0;
   private miningKey = "";
   private miningProgress = 0;
   private mineSoundTimer = 0;
@@ -631,7 +717,9 @@ export class GameEngine {
     if (event.code === "ShiftLeft" || event.code === "ShiftRight" || event.code === "ControlLeft" || event.code === "KeyC") this.input.crouch = false;
   };
   private readonly onVisibility = () => {
-    if (document.hidden && this.network.role !== "guest") this.saveNow();
+    if (!document.hidden) return;
+    if (this.network.role === "guest") this.network.send({ type: "player-profile", profile: this.playerSaveState() });
+    else this.saveNow();
   };
 
   constructor(options: GameEngineOptions) {
@@ -645,6 +733,10 @@ export class GameEngine {
     this.world = new VoxelWorld(loaded?.seed ?? options.seed, loaded?.generation ?? WORLD_GENERATION_VERSION);
     this.wildlifeRandom = seededRandom(hashString(`wildlife:${this.world.seedText}`));
     if (loaded) {
+      for (const [playerId, profile] of Object.entries(loaded.playerProfiles ?? {}).slice(-MAX_SAVED_PLAYER_PROFILES)) {
+        this.playerProfiles.set(playerId, clonePlayerSaveState(profile));
+      }
+      const playerState = loaded.playerProfiles?.[this.network.playerId] ?? loaded.player;
       this.world.loadMutations(loaded.mutations);
       this.world.loadWaterLevels(loaded.waterLevels);
       for (const [key, state] of loaded.machines) {
@@ -658,25 +750,36 @@ export class GameEngine {
         position: { ...mob.position },
         velocity: { ...mob.velocity },
       })));
-      this.inventory = cloneInventory(loaded.player.inventory);
-      this.inventorySlots = createInventoryLayout(this.inventory, loaded.player.inventorySlots, loaded.player.hotbar);
+      this.world.boats.push(...(loaded.boats ?? []).map((boat) => ({
+        ...boat,
+        position: { ...boat.position },
+        velocity: { ...boat.velocity },
+        riderId: undefined,
+        realm: boat.realm ?? realmForPosition(boat.position),
+      })));
+      this.inventory = cloneInventory(playerState.inventory);
+      this.inventorySlots = createInventoryLayout(this.inventory, playerState.inventorySlots, playerState.hotbar);
       this.hotbar = hotbarFromLayout(this.inventorySlots);
-      this.selectedSlot = Math.max(0, Math.min(HOTBAR_SIZE - 1, loaded.player.selectedSlot));
-      this.health = loaded.player.health;
-      this.hunger = loaded.player.hunger;
-      this.stamina = loaded.player.stamina;
-      this.tradeCredit = loaded.player.tradeCredit ?? 0;
+      this.selectedSlot = Math.max(0, Math.min(HOTBAR_SIZE - 1, playerState.selectedSlot));
+      this.health = playerState.health;
+      this.hunger = playerState.hunger;
+      this.stamina = playerState.stamina;
+      this.tradeCredit = playerState.tradeCredit ?? 0;
+      this.spawnPoint = playerState.spawnPoint ? { ...playerState.spawnPoint } : undefined;
+      this.skinSeed = playerState.skinSeed ?? hashString(`skin:${this.network.playerId}`);
       this.timeOfDay = loaded.timeOfDay;
       this.dayCount = loaded.dayCount ?? 1;
-      this.physics = new PlayerPhysics(loaded.player.position);
-      this.physics.yaw = loaded.player.yaw;
-      this.physics.pitch = loaded.player.pitch;
+      this.physics = new PlayerPhysics(playerState.position);
+      this.physics.yaw = playerState.yaw;
+      this.physics.pitch = playerState.pitch;
+      this.rememberPlayerProfile(this.network.playerId, playerState);
     } else {
       this.inventory = this.mode === "creative" ? creativeInventory() : {};
       this.hotbar = defaultHotbar(this.mode);
       this.inventorySlots = createInventoryLayout(this.inventory, undefined, this.hotbar);
       this.hotbar = hotbarFromLayout(this.inventorySlots);
       this.physics = new PlayerPhysics(this.world.findSpawn());
+      this.skinSeed = hashString(`skin:${this.network.playerId}`);
       this.spawnInitialMobs();
     }
     this.objective = this.mode === "creative"
@@ -824,11 +927,31 @@ export class GameEngine {
     this.input.lookY = 0;
     this.attackCooldown = Math.max(0, this.attackCooldown - dt);
     this.criticalFlash = Math.max(0, this.criticalFlash - dt);
+    this.damageFlash = Math.max(0, this.damageFlash - dt * 1.9);
+    this.hitMarker = Math.max(0, this.hitMarker - dt * 4.2);
+    this.damageShake = Math.max(0, this.damageShake - dt * 3.4);
+    this.damageImmunity = Math.max(0, this.damageImmunity - dt);
     this.inventoryFullToastTimer = Math.max(0, this.inventoryFullToastTimer - dt);
     this.riftCooldown = Math.max(0, this.riftCooldown - dt);
     this.hazardCooldown = Math.max(0, this.hazardCooldown - dt);
 
-    const jumpStarted = this.mode === "survival"
+    this.updateBoats(dt);
+    let ridingBoat = this.ridingBoatId
+      ? this.world.boats.find((boat) => boat.id === this.ridingBoatId)
+      : undefined;
+    if (ridingBoat && ridingBoat.riderId !== this.network.playerId) {
+      this.ridingBoatId = null;
+      ridingBoat = undefined;
+    }
+    if (ridingBoat) {
+      this.physics.position.set(ridingBoat.position.x, ridingBoat.position.y + 0.28, ridingBoat.position.z);
+      this.physics.velocity.set(ridingBoat.velocity.x, ridingBoat.velocity.y, ridingBoat.velocity.z);
+      this.physics.yaw = ridingBoat.yaw;
+      if (this.input.crouch && !this.rideCrouchLatch) this.leaveBoat(ridingBoat);
+      this.rideCrouchLatch = this.input.crouch;
+    } else this.rideCrouchLatch = false;
+
+    const jumpStarted = !ridingBoat && this.mode === "survival"
       && this.input.jump
       && !this.jumpNutritionLatch
       && this.physics.grounded
@@ -836,12 +959,13 @@ export class GameEngine {
     this.jumpNutritionLatch = this.input.jump;
     const sprinting = this.input.sprint && (this.mode === "creative" || this.hunger > 10);
     const physicsInput = { ...this.input, sprint: sprinting };
-    this.physics.update(dt, physicsInput, this.world, (fallDistance) => {
+    if (!ridingBoat) this.physics.update(dt, physicsInput, this.world, (fallDistance) => {
       const damage = Math.max(0, (fallDistance - 3.2) * 6.5);
       if (damage > 0) this.damage(damage, "Hard landing");
     }, this.settings.autoJump, this.mode === "creative" && this.creativeFlying);
     if (
       this.mode === "survival" &&
+      !ridingBoat &&
       this.world.getBlock(this.physics.position.x, this.physics.position.y + 0.12, this.physics.position.z) === BlockId.Emberflow &&
       this.hazardCooldown <= 0
     ) {
@@ -866,15 +990,27 @@ export class GameEngine {
       }
     }
 
+    const shakeStrength = this.damageShake * this.damageShake;
+    const shakeTime = performance.now() * 0.045;
     this.camera.position.set(
       this.physics.position.x,
       this.physics.position.y + this.physics.eyeHeight,
       this.physics.position.z,
     );
-    this.camera.rotation.set(this.physics.pitch, this.physics.yaw, 0);
+    if (shakeStrength > 0) {
+      this.camera.position.x += Math.sin(shakeTime * 1.17) * 0.075 * shakeStrength;
+      this.camera.position.y += Math.sin(shakeTime * 1.91) * 0.055 * shakeStrength;
+      this.camera.position.z += Math.cos(shakeTime * 1.43) * 0.075 * shakeStrength;
+    }
+    this.camera.rotation.set(
+      this.physics.pitch + Math.sin(shakeTime * 1.31) * 0.018 * shakeStrength,
+      this.physics.yaw + Math.cos(shakeTime * 1.07) * 0.022 * shakeStrength,
+      Math.sin(shakeTime * 1.73) * 0.026 * shakeStrength,
+    );
     this.updateTargeting(dt);
     this.updateActions(dt);
     if (this.network.role !== "guest") this.updateDrops(dt);
+    this.updateProjectiles(dt, this.network.role !== "guest");
     this.viewModel.setItem(this.hotbar[this.selectedSlot]);
     this.viewModel.update(dt, Math.hypot(this.physics.velocity.x, this.physics.velocity.z));
     this.stepSoundTimer = Math.max(0, this.stepSoundTimer - dt);
@@ -922,13 +1058,26 @@ export class GameEngine {
       if (this.network.role !== "guest") this.spawnNaturalMob();
     }
     this.syncEntityMeshes(dt);
-    this.updateRemotePlayerMeshes();
+    this.updateRemotePlayerMeshes(dt);
     this.updateDayNight(dt);
 
     this.networkTimer += dt;
     if (this.networkTimer >= 0.1 && this.network.role !== "offline") {
       this.networkTimer = 0;
       this.network.send({ type: "player", player: this.playerSnapshot() });
+      if (this.network.role === "guest" && this.ridingBoatId) {
+        this.network.send({
+          type: "boat-input",
+          boatId: this.ridingBoatId,
+          forward: this.input.forward,
+          turn: this.input.strafe,
+        });
+      }
+    }
+    this.profileTimer += dt;
+    if (this.profileTimer >= 4 && this.network.role === "guest") {
+      this.profileTimer = 0;
+      this.network.send({ type: "player-profile", profile: this.playerSaveState() });
     }
     this.mobNetworkTimer += dt;
     if (this.mobNetworkTimer >= 0.2 && this.network.role === "host") {
@@ -937,6 +1086,8 @@ export class GameEngine {
         type: "mob-state",
         mobs: this.world.mobs.map((mob) => ({ ...mob, position: { ...mob.position }, velocity: { ...mob.velocity } })),
         drops: this.world.drops.map((drop) => ({ ...drop, position: { ...drop.position }, velocity: { ...drop.velocity } })),
+        boats: this.world.boats.map((boat) => ({ ...boat, position: { ...boat.position }, velocity: { ...boat.velocity } })),
+        projectiles: this.world.projectiles.map((projectile) => ({ ...projectile, position: { ...projectile.position }, velocity: { ...projectile.velocity } })),
         timeOfDay: this.timeOfDay,
         dayCount: this.dayCount,
       });
@@ -1143,6 +1294,37 @@ export class GameEngine {
   }
 
   private placeSelected(): void {
+    const interactiveBlocks = [
+      BlockId.Toggle,
+      BlockId.PulseButton,
+      BlockId.TargetBlock,
+      BlockId.PulseRepeater,
+      BlockId.FluxComparator,
+      BlockId.ProximitySensor,
+      BlockId.Workbench,
+      BlockId.Crate,
+      BlockId.Dispenser,
+      BlockId.Dropper,
+      BlockId.FrontierBed,
+      BlockId.RiftGate,
+      BlockId.DungeonGate,
+      BlockId.DungeonReturn,
+      BlockId.TradePost,
+      BlockId.RelicCache,
+      BlockId.HearthFurnace,
+      BlockId.ThermalGenerator,
+      BlockId.ArcFurnace,
+      BlockId.Fabricator,
+    ];
+    const shouldUseTarget = !this.input.crouch && (
+      this.targetedMob?.kind === "wayfarer"
+      || (!this.ridingBoatId && Boolean(this.nearbyBoat()))
+      || (this.currentHit && interactiveBlocks.includes(this.currentHit.id))
+    );
+    if (shouldUseTarget) {
+      this.interactTarget();
+      return;
+    }
     const item = this.hotbar[this.selectedSlot];
     if (!item) {
       this.interactTarget();
@@ -1176,6 +1358,7 @@ export class GameEngine {
   }
 
   private useSelectedItem(item: ItemId): boolean {
+    if (item === "vehicle:boat") return this.placeBoat();
     let used = false;
     if (item === "food:starfruit" && (this.hunger < 100 || this.health < 100)) {
       this.hunger = Math.min(100, this.hunger + 18);
@@ -1300,6 +1483,7 @@ export class GameEngine {
     this.attackCooldown = stats.cooldown;
     this.viewModel.swing("attack");
     this.audio.play(selected === "tool:aether-repeater" ? "shoot" : "attack");
+    if (selected === "tool:aether-repeater") this.spawnAetherTracer(mob, this.network.playerId);
     if (this.network.role === "guest") {
       this.network.send({ type: "request-mob-hit", mobId: mob.id, item: selected });
       return;
@@ -1319,9 +1503,10 @@ export class GameEngine {
     origin: { x: number; y: number; z: number },
     attackerPeerId?: string,
     critical = false,
+    confirmHit = true,
   ): void {
     mob.health -= stats.damage * (critical ? CRITICAL_DAMAGE_MULTIPLIER : 1);
-    mob.hurtTimer = 0.24;
+    mob.hurtTimer = 0.38;
     const dx = mob.position.x - origin.x;
     const dz = mob.position.z - origin.z;
     const distance = Math.max(0.001, Math.hypot(dx, dz));
@@ -1331,9 +1516,12 @@ export class GameEngine {
     mob.velocity.y = Math.max(mob.velocity.y, knockback * (critical ? 0.48 : 0.34));
     mob.yaw = Math.atan2(dx, dz);
     this.audio.playCreature(mob.kind, "hurt", distance);
-    if (critical) {
-      if (attackerPeerId) this.network.send({ type: "critical-hit", mobId: mob.id }, attackerPeerId);
-      else this.showCriticalHit();
+    if (confirmHit) {
+      if (attackerPeerId) this.network.send({ type: "hit-confirm", mobId: mob.id, critical }, attackerPeerId);
+      else {
+        this.hitMarker = 1;
+        if (critical) this.showCriticalHit();
+      }
     }
     if (mob.health > 0) return;
 
@@ -1360,6 +1548,40 @@ export class GameEngine {
     const message = `${mob.bossName ?? definition.name} defeated · shared loot dropped${mob.boss ? " and cache unsealed" : ""}.`;
     if (attackerPeerId) this.network.send({ type: "toast", text: message }, attackerPeerId);
     else this.callbacks.onToast(message);
+  }
+
+  private spawnAetherTracer(mob: MobState, ownerId: string, shooter?: PlayerSnapshot): void {
+    const definition = MOB_DEFINITIONS[mob.kind];
+    const start = shooter
+      ? {
+          x: shooter.position.x - Math.sin(shooter.yaw) * 0.42,
+          y: shooter.position.y + 1.42,
+          z: shooter.position.z - Math.cos(shooter.yaw) * 0.42,
+        }
+      : {
+          x: this.camera.position.x - Math.sin(this.physics.yaw) * 0.42,
+          y: this.camera.position.y - 0.14,
+          z: this.camera.position.z - Math.cos(this.physics.yaw) * 0.42,
+        };
+    const target = {
+      x: mob.position.x,
+      y: mob.position.y + definition.height * 0.56,
+      z: mob.position.z,
+    };
+    const dx = target.x - start.x;
+    const dy = target.y - start.y;
+    const dz = target.z - start.z;
+    const distance = Math.max(0.001, Math.hypot(dx, dy, dz));
+    this.world.projectiles.push({
+      id: `aether-${ownerId}-${(this.projectileSerial += 1).toString(36)}`,
+      kind: "aether-bolt",
+      position: start,
+      velocity: { x: dx / distance * 31, y: dy / distance * 31, z: dz / distance * 31 },
+      damage: 0,
+      life: Math.min(0.55, distance / 31 + 0.08),
+      ownerId,
+      realm: realmForPosition(start),
+    });
   }
 
   private applyBlockChange(x: number, y: number, z: number, id: BlockId, fromNetwork = false): void {
@@ -1432,6 +1654,13 @@ export class GameEngine {
   }
 
   private interactTarget(): void {
+    if (!this.ridingBoatId) {
+      const boat = this.nearbyBoat();
+      if (boat) {
+        this.boardBoat(boat);
+        return;
+      }
+    }
     if (this.targetedMob?.kind === "wayfarer") {
       this.audio.playCreature("wayfarer", "idle", Math.hypot(
         this.targetedMob.position.x - this.physics.position.x,
@@ -1487,7 +1716,7 @@ export class GameEngine {
       this.callbacks.onInventory("workbench");
       return;
     }
-    if (id === BlockId.Crate) {
+    if (id === BlockId.Crate || id === BlockId.Dispenser || id === BlockId.Dropper) {
       const chest = this.getChest(key);
       if (chest) {
         this.activeChestKey = key;
@@ -1497,7 +1726,7 @@ export class GameEngine {
       return;
     }
     if (id === BlockId.FrontierBed) {
-      this.sleepThroughNight();
+      this.useBed({ x, y, z });
       return;
     }
     if (id === BlockId.RiftGate) {
@@ -1532,15 +1761,17 @@ export class GameEngine {
     }
   }
 
-  private sleepThroughNight(): void {
+  private useBed(origin: Vec3Data): void {
+    this.spawnPoint = { x: origin.x + 0.5, y: origin.y + 0.51, z: origin.z + 0.5 };
     const night = this.timeOfDay < 0.22 || this.timeOfDay > 0.78;
     if (!night) {
-      this.callbacks.onToast("The Frontier Bed can be used after nightfall.");
+      this.audio.play("click");
+      this.callbacks.onToast("Spawn set at this bed. Return after nightfall to sleep until dawn.");
       return;
     }
     if (this.network.role === "guest") {
       this.network.send({ type: "request-sleep" });
-      this.callbacks.onToast("Sleep request sent to the host.");
+      this.callbacks.onToast("Spawn set · sleep request sent to the host.");
       return;
     }
     this.timeOfDay = 0.255;
@@ -1549,7 +1780,7 @@ export class GameEngine {
     this.health = Math.min(100, this.health + 12);
     this.objective = `Day ${this.dayCount}: morning has returned. Explore, trade, and build.`;
     this.audio.play("craft");
-    this.callbacks.onToast(`You slept through the night. Dawn begins Day ${this.dayCount}.`);
+    this.callbacks.onToast(`Spawn set · you slept through the night. Dawn begins Day ${this.dayCount}.`);
   }
 
   private buildRiftArrival(x: number, z: number): Vec3Data {
@@ -1606,7 +1837,7 @@ export class GameEngine {
     this.spawnDrop("ammo:aether-bolt", bolts, { x: x + 0.5, y, z: z + 0.5 });
     this.spawnDrop("part:copper-ingot", copper, { x: x + 0.5, y, z: z + 0.5 });
     if (this.wildlifeRandom() > 0.55) this.spawnDrop("consumable:mender-tonic", 1, { x: x + 0.5, y, z: z + 0.5 });
-    if (isDungeonCoordinate(z)) {
+    if (isDungeonCoordinate(x, z)) {
       this.spawnDrop("currency:frontier-mark", 4 + Math.floor(this.wildlifeRandom() * 5), { x: x + 0.5, y, z: z + 0.5 });
       if (this.wildlifeRandom() > 0.45) this.spawnDrop("part:diamond", 1, { x: x + 0.5, y, z: z + 0.5 });
     }
@@ -1622,36 +1853,109 @@ export class GameEngine {
     const sealKey = worldKey(plan.sealPosition.x, plan.sealPosition.y, plan.sealPosition.z);
     const preservedSeal = this.world.mutations.get(sealKey);
     const place = (x: number, y: number, z: number, id: BlockId) => this.world.setStructureBlock(x, y, z, id);
-    const buildCell = (x: number, z: number, radius: number, room: boolean) => {
-      for (let dx = -radius; dx <= radius; dx += 1) {
-        for (let dz = -radius; dz <= radius; dz += 1) {
-          const edge = Math.abs(dx) === radius || Math.abs(dz) === radius;
-          place(x + dx, plan.baseY, z + dz, edge && room ? BlockId.DungeonBrick : plan.floor);
-          for (let dy = 1; dy <= 4; dy += 1) place(x + dx, plan.baseY + dy, z + dz, edge ? BlockId.DungeonBrick : BlockId.Air);
-          place(x + dx, plan.baseY + 5, z + dz, (dx + dz) % 5 === 0 ? plan.accent : BlockId.DungeonBrick);
-        }
-      }
-    };
+    const windowBlock = plan.theme === "ember foundry" ? BlockId.AshGlass : BlockId.GlassPane;
     for (const [index, room] of plan.rooms.entries()) {
-      buildCell(room.x, room.z, room.radius, true);
-      for (const [dx, dz] of [[-room.radius + 1, -room.radius + 1], [room.radius - 1, -room.radius + 1], [-room.radius + 1, room.radius - 1], [room.radius - 1, room.radius - 1]]) {
-        for (let dy = 1; dy <= 3; dy += 1) place(room.x + dx, plan.baseY + dy, room.z + dz, plan.accent);
-        place(room.x + dx, plan.baseY + 4, room.z + dz, index === plan.rooms.length - 1 ? BlockId.DeepLantern : BlockId.GlowRod);
-      }
-      if (index > 0) {
-        const previous = plan.rooms[index - 1];
-        let cursorX = previous.x;
-        let cursorZ = previous.z;
-        while (cursorX !== room.x) {
-          cursorX += Math.sign(room.x - cursorX);
-          buildCell(cursorX, cursorZ, 2, false);
+      const innerRadius = room.radius - 1.35;
+      for (let dx = -room.radius; dx <= room.radius; dx += 1) {
+        for (let dz = -room.radius; dz <= room.radius; dz += 1) {
+          const radial = Math.hypot(dx, dz);
+          if (radial > room.radius + 0.15) continue;
+          const floorPattern = hashString(`${plan.id}:floor:${index}:${dx},${dz}`) % 17;
+          place(room.x + dx, plan.baseY, room.z + dz, floorPattern === 0 ? plan.accent : plan.floor);
+          const edge = radial >= innerRadius;
+          if (edge) {
+            for (let dy = 1; dy <= room.height; dy += 1) {
+              const archedWindow = dy >= 3 && dy <= Math.min(6, room.height - 2)
+                && hashString(`${plan.id}:window:${index}:${Math.round(Math.atan2(dz, dx) * 8)}`) % 3 === 0;
+              place(
+                room.x + dx,
+                plan.baseY + dy,
+                room.z + dz,
+                archedWindow && dy < 6 ? windowBlock : (dy + dx + dz) % 7 === 0 ? plan.accent : BlockId.DungeonBrick,
+              );
+            }
+          }
+          const domeRise = Math.max(0, Math.round((1 - radial / Math.max(1, room.radius)) * 3));
+          const ceilingY = plan.baseY + room.height + domeRise;
+          place(room.x + dx, ceilingY, room.z + dz, (dx * 3 + dz * 5 + index) % 11 === 0 ? plan.accent : BlockId.DungeonBrick);
         }
-        while (cursorZ !== room.z) {
-          cursorZ += Math.sign(room.z - cursorZ);
-          buildCell(cursorX, cursorZ, 2, false);
+      }
+
+      const pillarDistance = Math.max(4, room.radius - 3);
+      for (const [px, pz] of [[pillarDistance, 0], [-pillarDistance, 0], [0, pillarDistance], [0, -pillarDistance]]) {
+        for (let dy = 1; dy < room.height; dy += 1) {
+          place(room.x + px, plan.baseY + dy, room.z + pz, dy % 5 === 0 ? plan.accent : BlockId.CarvedStone);
+        }
+        place(room.x + px, plan.baseY + room.height - 1, room.z + pz, BlockId.DeepLantern);
+      }
+
+      if (room.kind === "garden") {
+        for (let dx = -3; dx <= 3; dx += 1) for (let dz = -3; dz <= 3; dz += 1) {
+          if (Math.hypot(dx, dz) <= 3.2) place(room.x + dx, plan.baseY + 1, room.z + dz, Math.hypot(dx, dz) > 2.35 ? BlockId.Mossstone : BlockId.Water);
+        }
+        place(room.x, plan.baseY + 1, room.z, BlockId.CarvedStone);
+        place(room.x, plan.baseY + 2, room.z, BlockId.GlowMushroom);
+      } else if (room.kind === "gallery") {
+        for (const offset of [-5, 5]) {
+          for (let dy = 1; dy <= 3; dy += 1) place(room.x + offset, plan.baseY + dy, room.z, dy === 3 ? plan.accent : BlockId.CarvedStone);
+          for (let dy = 1; dy <= 3; dy += 1) place(room.x, plan.baseY + dy, room.z + offset, dy === 3 ? plan.accent : BlockId.CarvedStone);
+        }
+      } else if (room.kind === "atrium") {
+        for (let dy = 1; dy <= 5; dy += 1) place(room.x, plan.baseY + dy, room.z, dy === 5 ? BlockId.DeepLantern : plan.accent);
+      } else if (room.kind === "sanctum" || room.kind === "vault") {
+        for (const [dx, dz] of [[-4, -4], [4, -4], [-4, 4], [4, 4]]) {
+          place(room.x + dx, plan.baseY + 1, room.z + dz, BlockId.GoldTrim);
+          place(room.x + dx, plan.baseY + 2, room.z + dz, BlockId.DeepLantern);
+        }
+      }
+
+      if (room.kind !== "arrival" && room.kind !== "vault") {
+        for (let decoration = 0; decoration < 14; decoration += 1) {
+          const dx = (hashString(`${plan.id}:flora-x:${index}:${decoration}`) % (room.radius * 2 - 5)) - room.radius + 3;
+          const dz = (hashString(`${plan.id}:flora-z:${index}:${decoration}`) % (room.radius * 2 - 5)) - room.radius + 3;
+          if (Math.hypot(dx, dz) > room.radius - 3 || Math.hypot(dx, dz) < 3.8) continue;
+          place(room.x + dx, plan.baseY + 1, room.z + dz, plan.flora[decoration % plan.flora.length]);
+        }
+      }
+      if (plan.theme === "sunken archive" && room.kind !== "arrival") {
+        for (const side of [-1, 1]) for (let offset = -5; offset <= 5; offset += 2) {
+          place(room.x + side * (room.radius - 2), plan.baseY + 1, room.z + offset, BlockId.Bookshelf);
+          place(room.x + side * (room.radius - 2), plan.baseY + 2, room.z + offset, BlockId.Bookshelf);
         }
       }
     }
+
+    for (const [linkIndex, [fromIndex, toIndex]] of plan.links.entries()) {
+      const from = plan.rooms[fromIndex];
+      const to = plan.rooms[toIndex];
+      const dx = to.x - from.x;
+      const dz = to.z - from.z;
+      const distance = Math.max(1, Math.ceil(Math.hypot(dx, dz)));
+      const normalX = -dz / distance;
+      const normalZ = dx / distance;
+      for (let step = 0; step <= distance; step += 1) {
+        const insideRoom = step <= from.radius - 1 || step >= distance - to.radius + 1;
+        const centerX = Math.round(from.x + dx * step / distance);
+        const centerZ = Math.round(from.z + dz * step / distance);
+        for (let lateral = -3; lateral <= 3; lateral += 1) {
+          const x = Math.round(centerX + normalX * lateral);
+          const z = Math.round(centerZ + normalZ * lateral);
+          place(x, plan.baseY, z, (step + lateral + linkIndex) % 9 === 0 ? plan.accent : plan.floor);
+          for (let dy = 1; dy <= 6; dy += 1) {
+            place(x, plan.baseY + dy, z, !insideRoom && Math.abs(lateral) === 3 ? BlockId.DungeonBrick : BlockId.Air);
+          }
+          if (!insideRoom) place(x, plan.baseY + 7, z, (step + lateral) % 7 === 0 ? plan.accent : BlockId.DungeonBrick);
+        }
+        if (!insideRoom && step % 7 === 0) {
+          for (const lateral of [-3, 3]) {
+            const x = Math.round(centerX + normalX * lateral);
+            const z = Math.round(centerZ + normalZ * lateral);
+            for (let dy = 1; dy <= 6; dy += 1) place(x, plan.baseY + dy, z, plan.accent);
+          }
+        }
+      }
+    }
+
     place(plan.returnPosition.x, plan.returnPosition.y, plan.returnPosition.z, BlockId.DungeonReturn);
     const returnState = this.world.machines.get(worldKey(plan.returnPosition.x, plan.returnPosition.y, plan.returnPosition.z));
     if (returnState) returnState.link = { x: plan.origin.x + 0.5, y: plan.origin.y + 0.05, z: plan.origin.z + 2.5 };
@@ -1666,17 +1970,60 @@ export class GameEngine {
     const bossId = `${plan.id}-guardian`;
     if (seal === BlockId.DungeonSeal && !this.world.mobs.some((mob) => mob.id === bossId)) {
       const bossNames: Record<DungeonPlan["theme"], string> = {
-        "moss crypt": "The Rootbound Warden",
+        "verdant basilica": "The Rootbound Hierophant",
         "ember foundry": "The Cinder Forgemaster",
         "moon vault": "The Moonvault Sentinel",
+        "sunken archive": "The Drowned Curator",
       };
+      const themeEnemies: Record<DungeonPlan["theme"], MobState["kind"][]> = {
+        "verdant basilica": ["mireling", "thornback", "shardcaster"],
+        "ember foundry": ["cinderling", "shardcaster", "cinderling"],
+        "moon vault": ["nightwisp", "shardcaster", "nightwisp"],
+        "sunken archive": ["shardcaster", "mireling", "nightwisp"],
+      };
+      for (let roomIndex = 1; roomIndex < plan.rooms.length - 1; roomIndex += 1) {
+        const room = plan.rooms[roomIndex];
+        const enemyCount = 1 + hashString(`${plan.id}:encounter:${roomIndex}`) % 3;
+        for (let enemyIndex = 0; enemyIndex < enemyCount; enemyIndex += 1) {
+          const id = `${plan.id}-room-${roomIndex}-enemy-${enemyIndex}`;
+          if (this.world.mobs.some((mob) => mob.id === id)) continue;
+          const kinds = themeEnemies[plan.theme];
+          const kind = kinds[(roomIndex + enemyIndex) % kinds.length];
+          const angle = (enemyIndex / enemyCount) * Math.PI * 2 + roomIndex * 0.73;
+          const position = {
+            x: room.x + Math.cos(angle) * Math.min(5, room.radius * 0.42),
+            y: plan.baseY + 1.01,
+            z: room.z + Math.sin(angle) * Math.min(5, room.radius * 0.42),
+          };
+          this.world.mobs.push({
+            id,
+            kind,
+            position,
+            velocity: { x: 0, y: 0, z: 0 },
+            health: MOB_DEFINITIONS[kind].maxHealth,
+            yaw: angle,
+            targetTimer: 0.5 + enemyIndex * 0.2,
+            attackTimer: 1.1 + enemyIndex * 0.35,
+            hurtTimer: 0,
+            natural: false,
+            dungeonId: plan.id,
+          });
+        }
+      }
+      const bossKind: MobState["kind"] = plan.theme === "ember foundry"
+        ? "cinderling"
+        : plan.theme === "moon vault"
+          ? "nightwisp"
+          : plan.theme === "sunken archive"
+            ? "shardcaster"
+            : "thornback";
       this.world.mobs.push({
         id: bossId,
-        kind: plan.theme === "ember foundry" ? "cinderling" : plan.theme === "moon vault" ? "nightwisp" : "thornback",
+        kind: bossKind,
         position: { ...plan.bossPosition },
         velocity: { x: 0, y: 0, z: 0 },
-        health: 145,
-        maxHealth: 145,
+        health: 185,
+        maxHealth: 185,
         yaw: 0,
         targetTimer: 0.5,
         attackTimer: 1.4,
@@ -1685,6 +2032,7 @@ export class GameEngine {
         bossName: bossNames[plan.theme],
         dungeonId: plan.id,
         lootPosition: { ...plan.sealPosition },
+        natural: false,
       });
     }
   }
@@ -1763,7 +2111,7 @@ export class GameEngine {
     const blockId = this.world.getBlock(x, y, z);
     const state = this.world.machines.get(key);
     if (!state) return;
-    if (BLOCKS[blockId].automation === "storage") {
+    if (BLOCKS[blockId].automation === "storage" && blockId !== BlockId.Dispenser && blockId !== BlockId.Dropper) {
       this.callbacks.onToast("Storage blocks keep a fixed facing so shared contents stay authoritative.");
       return;
     }
@@ -1930,6 +2278,182 @@ export class GameEngine {
     }
   }
 
+  private updateBoats(dt: number): void {
+    for (const boat of this.world.boats) {
+      const localRider = boat.riderId === this.network.playerId;
+      if (this.network.role === "guest" && !localRider) continue;
+      const input = localRider
+        ? { forward: this.input.forward, turn: this.input.strafe }
+        : boat.riderId
+          ? this.boatInputs.get(boat.riderId) ?? { forward: 0, turn: 0 }
+          : { forward: 0, turn: 0 };
+      updateBoatPhysics(this.world, boat, input, dt);
+      boat.realm = realmForPosition(boat.position);
+    }
+  }
+
+  private placeBoat(): boolean {
+    if (this.world.boats.length >= 128) {
+      this.callbacks.onToast("This world already has the maximum 128 active boats.");
+      return false;
+    }
+    const water = this.placementHit?.id === BlockId.Water ? this.placementHit.block : null;
+    if (!water) {
+      this.callbacks.onToast("Aim at open water to launch a boat.");
+      return false;
+    }
+    const position = { x: water.x + 0.5, y: water.y + 0.72, z: water.z + 0.5 };
+    if (!canPlaceBoat(this.world, position)) {
+      this.callbacks.onToast("That water is too cramped for a boat.");
+      return false;
+    }
+    if (this.world.boats.some((boat) => Math.hypot(
+      boat.position.x - position.x,
+      boat.position.y - position.y,
+      boat.position.z - position.z,
+    ) < 1.8)) {
+      this.callbacks.onToast("Another boat is already floating there.");
+      return false;
+    }
+    const woods: BoatState["wood"][] = ["emberwood", "frostpine", "riftwood"];
+    const wood = woods[hashString(`${this.world.seed}:${water.x},${water.z}`) % woods.length];
+    if (this.network.role === "guest") {
+      this.network.send({ type: "request-boat", action: "place", position, yaw: this.physics.yaw, wood });
+    } else {
+      this.world.boats.push({
+        id: `boat-${this.network.playerId}-${Date.now().toString(36)}`,
+        position,
+        velocity: { x: 0, y: 0, z: 0 },
+        yaw: this.physics.yaw,
+        angularVelocity: 0,
+        wood,
+        realm: realmForPosition(position),
+      });
+    }
+    if (this.mode === "survival") {
+      changeItem(this.inventory, "vehicle:boat", -1);
+      this.clearDepletedHotbar();
+    }
+    this.audio.play("place");
+    this.viewModel.swing("place");
+    this.callbacks.onToast("Boat launched · interact to board, sneak to dismount.");
+    return true;
+  }
+
+  private nearbyBoat(maxDistance = 3.2): BoatState | null {
+    const realm = realmForPosition(this.physics.position);
+    let nearest: BoatState | null = null;
+    let nearestDistance = maxDistance;
+    for (const boat of this.world.boats) {
+      if (boat.realm !== realm) continue;
+      const distance = Math.hypot(
+        boat.position.x - this.physics.position.x,
+        boat.position.y - this.physics.position.y,
+        boat.position.z - this.physics.position.z,
+      );
+      if (distance < nearestDistance) {
+        nearest = boat;
+        nearestDistance = distance;
+      }
+    }
+    return nearest;
+  }
+
+  private boardBoat(boat: BoatState): void {
+    if (boat.riderId && boat.riderId !== this.network.playerId) {
+      this.callbacks.onToast("That boat already has a rider.");
+      return;
+    }
+    boat.riderId = this.network.playerId;
+    this.ridingBoatId = boat.id;
+    this.creativeFlying = false;
+    if (this.network.role === "guest") this.network.send({ type: "request-boat", action: "board", boatId: boat.id });
+    this.callbacks.onToast("Boat boarded · steer with movement controls, sneak to dismount.");
+  }
+
+  private leaveBoat(boat: BoatState): void {
+    const destination = safeBoatDismount(this.world, boat);
+    if (this.network.role === "guest") this.network.send({ type: "request-boat", action: "leave", boatId: boat.id });
+    boat.riderId = undefined;
+    this.ridingBoatId = null;
+    this.physics.position.set(destination.x, destination.y, destination.z);
+    this.physics.velocity.set(boat.velocity.x * 0.3, Math.max(0, boat.velocity.y), boat.velocity.z * 0.3);
+    this.callbacks.onToast("You stepped out of the boat.");
+  }
+
+  private updateProjectiles(dt: number, authoritative: boolean): void {
+    for (let index = this.world.projectiles.length - 1; index >= 0; index -= 1) {
+      const projectile = this.world.projectiles[index];
+      projectile.life -= dt;
+      if (projectile.life <= 0 || projectile.realm !== realmForPosition(projectile.position)) {
+        this.world.projectiles.splice(index, 1);
+        continue;
+      }
+      const distance = Math.hypot(projectile.velocity.x, projectile.velocity.y, projectile.velocity.z) * dt;
+      const steps = Math.max(1, Math.ceil(distance / 0.18));
+      let removed = false;
+      for (let step = 0; step < steps && !removed; step += 1) {
+        projectile.position.x += projectile.velocity.x * dt / steps;
+        projectile.position.y += projectile.velocity.y * dt / steps;
+        projectile.position.z += projectile.velocity.z * dt / steps;
+        if (BLOCKS[this.world.peekBlock(projectile.position.x, projectile.position.y, projectile.position.z)].solid) {
+          removed = true;
+          break;
+        }
+        if (!authoritative) continue;
+        if (projectile.kind === "enemy-shard") {
+          const targets: Array<{ peerId?: string; snapshot: Pick<PlayerSnapshot, "position" | "realm"> }> = [
+            {
+              snapshot: {
+                position: { x: this.physics.position.x, y: this.physics.position.y, z: this.physics.position.z },
+                realm: realmForPosition(this.physics.position),
+              },
+            },
+            ...Array.from(this.remotePeerPlayers, ([peerId, player]) => ({ peerId, snapshot: player })),
+          ];
+          for (const target of targets) {
+            if ((target.snapshot.realm ?? realmForPosition(target.snapshot.position)) !== projectile.realm) continue;
+            const hit = Math.hypot(
+              target.snapshot.position.x - projectile.position.x,
+              target.snapshot.position.y + 0.9 - projectile.position.y,
+              target.snapshot.position.z - projectile.position.z,
+            ) < 0.62;
+            if (!hit) continue;
+            const origin = {
+              x: projectile.position.x - projectile.velocity.x * 0.12,
+              y: projectile.position.y,
+              z: projectile.position.z - projectile.velocity.z * 0.12,
+            };
+            if (target.peerId) this.network.send({ type: "damage", amount: projectile.damage, source: "Shardcaster bolt", origin }, target.peerId);
+            else this.damage(projectile.damage, "Shardcaster bolt", origin);
+            removed = true;
+            break;
+          }
+        } else if (projectile.kind === "dispenser-shot" && projectile.damage > 0) {
+          const mob = this.world.mobs.find((candidate) => {
+            if (realmForPosition(candidate.position) !== projectile.realm) return false;
+            const definition = MOB_DEFINITIONS[candidate.kind];
+            return Math.hypot(
+              candidate.position.x - projectile.position.x,
+              candidate.position.y + definition.height * 0.52 - projectile.position.y,
+              candidate.position.z - projectile.position.z,
+            ) < definition.radius + 0.24;
+          });
+          if (mob) {
+            this.strikeMob(mob, {
+              damage: projectile.damage,
+              reach: 0,
+              cooldown: 0,
+              knockback: 2.8,
+            }, projectile.position, undefined, false, false);
+            removed = true;
+          }
+        }
+      }
+      if (removed) this.world.projectiles.splice(index, 1);
+    }
+  }
+
   private updateDrops(dt: number): void {
     for (let index = this.world.drops.length - 1; index >= 0; index -= 1) {
       const drop = this.world.drops[index];
@@ -2078,6 +2602,8 @@ export class GameEngine {
     const palette = CREATURE_PALETTES[mob.kind];
     const rememberColor = (material: THREE.MeshLambertMaterial, ownsMap = false) => {
       material.userData.baseColor = material.color.getHex();
+      material.userData.baseEmissive = material.emissive.getHex();
+      material.userData.baseEmissiveIntensity = material.emissiveIntensity;
       material.userData.ownedMap = ownsMap;
       return material;
     };
@@ -2136,6 +2662,23 @@ export class GameEngine {
       }
       addPart(visual, [0.09, 0.09, 0.09], [-0.42, 0.84, 0.02], eyeMaterial);
       addPart(visual, [0.06, 0.06, 0.06], [0.38, 0.48, 0.08], eyeMaterial);
+      return root;
+    }
+
+    if (mob.kind === "shardcaster") {
+      addPart(visual, [0.58, 0.72, 0.34], [0, 0.92, 0], bodyMaterial, "body");
+      addPart(visual, [0.72, 0.22, 0.48], [0, 0.55, 0.06], accentMaterial, "robe");
+      addPart(visual, [0.48, 0.46, 0.44], [0, 1.46, -0.02], darkMaterial, "head");
+      addPart(visual, [0.5, 0.2, 0.46], [0, 1.7, -0.01], bodyMaterial, "hood");
+      for (const x of [-0.13, 0.13]) addPart(visual, [0.065, 0.075, 0.035], [x, 1.49, -0.245], eyeMaterial);
+      for (const [index, x] of [-0.42, 0.42].entries()) {
+        const arm = addPivotPart(`arm-${index}`, [x, 1.18, 0], [0.14, 0.66, 0.16], index ? accentMaterial : bodyMaterial);
+        arm.rotation.z = x < 0 ? 0.18 : -0.18;
+      }
+      for (const [index, x] of [-0.17, 0.17].entries()) addPivotPart(`leg-${index}`, [x, 0.56, 0], [0.18, 0.56, 0.2], darkMaterial);
+      const focus = addPart(visual, [0.08, 0.82, 0.08], [0.54, 1.02, -0.08], darkMaterial, "focus-staff");
+      focus.rotation.z = -0.16;
+      addPart(visual, [0.22, 0.22, 0.22], [0.62, 1.47, -0.08], eyeMaterial, "focus-crystal").rotation.y = Math.PI / 4;
       return root;
     }
 
@@ -2256,29 +2799,79 @@ export class GameEngine {
     return root;
   }
 
+  private spawnShardProjectile(mob: MobState, target: PlayerSnapshot, targetPeerId?: string): void {
+    const start = { x: mob.position.x, y: mob.position.y + 1.22, z: mob.position.z };
+    const distance = Math.hypot(
+      target.position.x - start.x,
+      target.position.y + 0.95 - start.y,
+      target.position.z - start.z,
+    );
+    const speed = mob.boss ? 8.4 : 7.2;
+    const travelTime = Math.min(1.9, distance / speed);
+    const lead = Math.min(0.9, (target.moveSpeed ?? 0) * travelTime * 0.14);
+    const targetPoint = {
+      x: target.position.x - Math.sin(target.yaw) * lead,
+      y: target.position.y + 0.95,
+      z: target.position.z - Math.cos(target.yaw) * lead,
+    };
+    const dx = targetPoint.x - start.x;
+    const dy = targetPoint.y - start.y;
+    const dz = targetPoint.z - start.z;
+    const length = Math.max(0.001, Math.hypot(dx, dy, dz));
+    const spread = mob.boss ? 0.018 : 0.035;
+    this.world.projectiles.push({
+      id: `shard-${mob.id}-${(this.projectileSerial += 1).toString(36)}`,
+      kind: "enemy-shard",
+      position: start,
+      velocity: {
+        x: (dx / length + (this.wildlifeRandom() - 0.5) * spread) * speed,
+        y: (dy / length + (this.wildlifeRandom() - 0.5) * spread * 0.55) * speed,
+        z: (dz / length + (this.wildlifeRandom() - 0.5) * spread) * speed,
+      },
+      damage: MOB_DEFINITIONS[mob.kind].damage * (mob.boss ? 1.3 : 1),
+      life: 4.2,
+      ownerId: mob.id,
+      targetPlayerId: targetPeerId ?? this.network.playerId,
+      realm: realmForPosition(start),
+    });
+    if (!targetPeerId) this.audio.playCreature(mob.kind, "attack", distance);
+  }
+
   private updateMobs(dt: number): void {
+    const localPlayer = this.playerSnapshot();
+    const candidates: Array<{ peerId?: string; player: PlayerSnapshot }> = [
+      { player: localPlayer },
+      ...Array.from(this.remotePeerPlayers, ([peerId, player]) => ({ peerId, player })),
+    ];
     for (const mob of this.world.mobs) {
       const definition = MOB_DEFINITIONS[mob.kind];
       resolveMobPenetration(this.world, mob);
-      let targetPosition = this.physics.position as { x: number; y: number; z: number };
-      let targetPeerId: string | undefined;
-      let distance = Math.hypot(targetPosition.x - mob.position.x, targetPosition.z - mob.position.z);
-      for (const [peerId, player] of this.remotePeerPlayers) {
-        const candidateDistance = Math.hypot(player.position.x - mob.position.x, player.position.z - mob.position.z);
+      const mobRealm = realmForPosition(mob.position);
+      let target: { peerId?: string; player: PlayerSnapshot } | undefined;
+      let distance = Number.POSITIVE_INFINITY;
+      for (const candidate of candidates) {
+        if ((candidate.player.realm ?? realmForPosition(candidate.player.position)) !== mobRealm) continue;
+        const candidateDistance = Math.hypot(
+          candidate.player.position.x - mob.position.x,
+          candidate.player.position.y + 0.88 - (mob.position.y + definition.height * 0.5),
+          candidate.player.position.z - mob.position.z,
+        );
         if (candidateDistance < distance) {
+          target = candidate;
           distance = candidateDistance;
-          targetPosition = player.position;
-          targetPeerId = peerId;
         }
       }
+      const targetPosition = target?.player.position ?? mob.home ?? mob.position;
       const dx = targetPosition.x - mob.position.x;
       const dz = targetPosition.z - mob.position.z;
+      const horizontalDistance = Math.hypot(dx, dz);
       const hostile = !definition.passive;
+      const hasAggro = hostile && Boolean(target) && distance < (mob.kind === "shardcaster" ? 19 : 15);
       mob.targetTimer -= dt;
       mob.attackTimer = Math.max(0, (mob.attackTimer ?? 0) - dt);
       mob.hurtTimer = Math.max(0, (mob.hurtTimer ?? 0) - dt);
       const fleeing = definition.passive && (mob.hurtTimer ?? 0) > 0;
-      if (hostile && distance < 15) mob.yaw = Math.atan2(-dx, -dz);
+      if (hasAggro) mob.yaw = Math.atan2(-dx, -dz);
       else if (fleeing && distance < 9) mob.yaw = Math.atan2(dx, dz);
       else if (mob.targetTimer <= 0) {
         const activityRoll = this.wildlifeRandom();
@@ -2299,9 +2892,10 @@ export class GameEngine {
           mob.activity = "wander";
         }
       }
+
       const speed = fleeing
         ? definition.speed * 1.45
-        : hostile && distance < 15
+        : hasAggro
           ? definition.speed
           : returningHome
             ? definition.speed * 0.78
@@ -2312,8 +2906,18 @@ export class GameEngine {
                 : Math.min(0.78, definition.speed * 0.44);
       let desiredX = -Math.sin(mob.yaw) * speed;
       let desiredZ = -Math.cos(mob.yaw) * speed;
+      if (mob.kind === "shardcaster" && hasAggro && target) {
+        if (distance < 6.2) {
+          desiredX = -(dx / Math.max(0.001, horizontalDistance)) * definition.speed;
+          desiredZ = -(dz / Math.max(0.001, horizontalDistance)) * definition.speed;
+        } else if (distance < 12.5) {
+          const strafeDirection = hashString(mob.id) % 2 === 0 ? 1 : -1;
+          desiredX = -(dz / Math.max(0.001, horizontalDistance)) * definition.speed * 0.58 * strafeDirection;
+          desiredZ = (dx / Math.max(0.001, horizontalDistance)) * definition.speed * 0.58 * strafeDirection;
+        }
+      }
       for (const other of this.world.mobs) {
-        if (other === mob) continue;
+        if (other === mob || realmForPosition(other.position) !== mobRealm) continue;
         const separationX = mob.position.x - other.position.x;
         const separationZ = mob.position.z - other.position.z;
         const separation = Math.hypot(separationX, separationZ);
@@ -2324,9 +2928,9 @@ export class GameEngine {
           desiredZ += (separationZ / separation) * force;
         }
       }
-      if (distance > 0.001 && distance < definition.radius + 0.42) {
-        desiredX -= (dx / distance) * 2.5;
-        desiredZ -= (dz / distance) * 2.5;
+      if (horizontalDistance > 0.001 && horizontalDistance < definition.radius + 0.42) {
+        desiredX -= (dx / horizontalDistance) * 2.5;
+        desiredZ -= (dz / horizontalDistance) * 2.5;
       }
       const desiredY = Math.max(-1.4, Math.min(1.4, (targetPosition.y - mob.position.y) * 0.65));
       const movement = moveMobWithCollision(this.world, mob, dt, desiredX, desiredZ, desiredY);
@@ -2335,14 +2939,20 @@ export class GameEngine {
         mob.targetTimer = 0.6;
       }
       resolveMobPenetration(this.world, mob);
-      if (hostile && distance < definition.reach && (mob.attackTimer ?? 0) <= 0) {
-        mob.attackTimer = 1.45 + this.wildlifeRandom() * 0.55;
-        const source = `${definition.name} attack`;
-        if (!targetPeerId) this.audio.playCreature(mob.kind, "attack", distance);
-        const damage = definition.damage * (mob.boss ? 1.38 : 1);
-        if (targetPeerId) this.network.send({ type: "damage", amount: damage, source }, targetPeerId);
-        else this.damage(damage, source);
+      if (!target || !hostile || (mob.attackTimer ?? 0) > 0) continue;
+      if (mob.kind === "shardcaster" && mobCanShootPlayer(this.world, mob, target.player)) {
+        mob.attackTimer = (mob.boss ? 1.65 : 2.25) + this.wildlifeRandom() * 0.75;
+        this.spawnShardProjectile(mob, target.player, target.peerId);
+        continue;
       }
+      if (!mobCanMeleeHit(this.world, mob, target.player)) continue;
+      mob.attackTimer = 1.45 + this.wildlifeRandom() * 0.55;
+      const source = `${definition.name} attack`;
+      if (!target.peerId) this.audio.playCreature(mob.kind, "attack", distance);
+      const damage = definition.damage * (mob.boss ? 1.38 : 1);
+      const origin = { ...mob.position };
+      if (target.peerId) this.network.send({ type: "damage", amount: damage, source, origin }, target.peerId);
+      else this.damage(damage, source, origin);
     }
   }
 
@@ -2355,6 +2965,7 @@ export class GameEngine {
         this.mobMeshes.set(mob.id, mesh);
         this.entityRoot.add(mesh);
       }
+      mesh.visible = realmForPosition(mob.position) === realmForPosition(this.physics.position);
       const motion = Math.hypot(mob.velocity.x, mob.velocity.z);
       const now = performance.now() / 1000;
       const hover = mob.kind === "nightwisp" ? 0.16 + Math.sin(now * 3.4 + mob.id.length) * 0.12 : 0;
@@ -2398,7 +3009,13 @@ export class GameEngine {
           for (const entry of materials) {
             if (entry instanceof THREE.MeshLambertMaterial && typeof entry.userData.baseColor === "number") {
               entry.color.setHex(entry.userData.baseColor);
-              if ((mob.hurtTimer ?? 0) > 0) entry.color.lerp(new THREE.Color(0xffe2da), 0.72);
+              entry.emissive.setHex(Number(entry.userData.baseEmissive ?? 0));
+              entry.emissiveIntensity = Number(entry.userData.baseEmissiveIntensity ?? 1);
+              if ((mob.hurtTimer ?? 0) > 0) {
+                entry.color.lerp(new THREE.Color(0xff2d28), 0.82);
+                entry.emissive.setHex(0x8f0907);
+                entry.emissiveIntensity = 0.82;
+              }
             }
           }
         }
@@ -2443,6 +3060,7 @@ export class GameEngine {
         this.dropMeshes.set(drop.id, mesh);
         this.entityRoot.add(mesh);
       }
+      mesh.visible = realmForPosition(drop.position) === realmForPosition(this.physics.position);
       const hover = Math.sin(performance.now() / 720 + drop.id.length) * 0.012;
       mesh.position.set(drop.position.x, drop.position.y + hover, drop.position.z);
       mesh.rotation.y += dt * 1.35;
@@ -2454,6 +3072,97 @@ export class GameEngine {
         this.dropMeshes.delete(id);
       }
     }
+
+    const projectileIds = new Set(this.world.projectiles.map((projectile) => projectile.id));
+    for (const projectile of this.world.projectiles) {
+      let mesh = this.projectileMeshes.get(projectile.id);
+      if (!mesh) {
+        const enemy = projectile.kind === "enemy-shard";
+        const geometry = enemy
+          ? new THREE.OctahedronGeometry(0.19, 0)
+          : new THREE.BoxGeometry(0.075, 0.075, projectile.kind === "aether-bolt" ? 0.72 : 0.42);
+        const color = enemy ? 0xd94f88 : projectile.kind === "aether-bolt" ? 0x76fff1 : 0xf1bf62;
+        mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color, fog: true }));
+        this.projectileMeshes.set(projectile.id, mesh);
+        this.entityRoot.add(mesh);
+      }
+      mesh.visible = projectile.realm === realmForPosition(this.physics.position);
+      mesh.position.set(projectile.position.x, projectile.position.y, projectile.position.z);
+      if (projectile.kind !== "enemy-shard") {
+        mesh.lookAt(
+          projectile.position.x + projectile.velocity.x,
+          projectile.position.y + projectile.velocity.y,
+          projectile.position.z + projectile.velocity.z,
+        );
+      } else {
+        mesh.rotation.x += dt * 5.4;
+        mesh.rotation.y += dt * 7.1;
+      }
+    }
+    for (const [id, mesh] of this.projectileMeshes) {
+      if (!projectileIds.has(id)) {
+        this.entityRoot.remove(mesh);
+        disposeObject(mesh, true);
+        this.projectileMeshes.delete(id);
+      }
+    }
+
+    const boatIds = new Set(this.world.boats.map((boat) => boat.id));
+    for (const boat of this.world.boats) {
+      let mesh = this.boatMeshes.get(boat.id);
+      if (!mesh) {
+        mesh = this.createBoatMesh(boat);
+        this.boatMeshes.set(boat.id, mesh);
+        this.entityRoot.add(mesh);
+      }
+      mesh.visible = boat.realm === realmForPosition(this.physics.position);
+      mesh.position.lerp(new THREE.Vector3(boat.position.x, boat.position.y, boat.position.z), 1 - Math.exp(-16 * dt));
+      const yawDelta = Math.atan2(Math.sin(boat.yaw - mesh.rotation.y), Math.cos(boat.yaw - mesh.rotation.y));
+      mesh.rotation.y += yawDelta * (1 - Math.exp(-13 * dt));
+      const speed = Math.hypot(boat.velocity.x, boat.velocity.z);
+      mesh.rotation.z = Math.sin(performance.now() * 0.003 + boat.id.length) * 0.018;
+      mesh.traverse((part) => {
+        if (part.name === "paddle-left") part.rotation.z = 0.42 + Math.sin(performance.now() * 0.01) * Math.min(0.55, speed * 0.09);
+        if (part.name === "paddle-right") part.rotation.z = -0.42 - Math.sin(performance.now() * 0.01) * Math.min(0.55, speed * 0.09);
+      });
+    }
+    for (const [id, mesh] of this.boatMeshes) {
+      if (!boatIds.has(id)) {
+        this.entityRoot.remove(mesh);
+        disposeObject(mesh, true);
+        this.boatMeshes.delete(id);
+      }
+    }
+  }
+
+  private createBoatMesh(boat: BoatState): THREE.Group {
+    const group = new THREE.Group();
+    const colors: Record<BoatState["wood"], [number, number]> = {
+      emberwood: [0x9f5f35, 0x633821],
+      frostpine: [0xb4aa92, 0x70695c],
+      riftwood: [0x7f5484, 0x4d3152],
+    };
+    const [wood, dark] = colors[boat.wood];
+    const material = new THREE.MeshLambertMaterial({ color: wood });
+    const darkMaterial = new THREE.MeshLambertMaterial({ color: dark });
+    const add = (size: [number, number, number], position: [number, number, number], source = material, name = "") => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), source);
+      mesh.position.set(...position);
+      mesh.name = name;
+      group.add(mesh);
+      return mesh;
+    };
+    add([1.22, 0.16, 1.9], [0, -0.06, 0], material, "hull-floor");
+    add([0.16, 0.48, 1.95], [-0.67, 0.12, 0], darkMaterial, "port-side");
+    add([0.16, 0.48, 1.95], [0.67, 0.12, 0], darkMaterial, "starboard-side");
+    add([1.22, 0.44, 0.16], [0, 0.11, 0.98], darkMaterial, "stern");
+    add([1.04, 0.32, 0.16], [0, 0.05, -0.98], darkMaterial, "bow");
+    add([1.02, 0.11, 0.28], [0, 0.18, 0.18], material, "seat");
+    const paddleLeft = add([0.08, 0.08, 1.65], [-0.83, 0.2, 0], material, "paddle-left");
+    paddleLeft.rotation.x = Math.PI / 2;
+    const paddleRight = add([0.08, 0.08, 1.65], [0.83, 0.2, 0], material, "paddle-right");
+    paddleRight.rotation.x = Math.PI / 2;
+    return group;
   }
 
   private createDropMesh(item: ItemId): THREE.Mesh {
@@ -2503,23 +3212,67 @@ export class GameEngine {
 
   private createRemotePlayerMesh(player: PlayerSnapshot): THREE.Group {
     const group = new THREE.Group();
-    const material = new THREE.MeshLambertMaterial({ color: player.color });
-    const dark = material.clone();
-    dark.color.multiplyScalar(0.68);
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.78, 0.34), material);
-    body.position.y = 1.05;
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.48, 0.48), material);
-    head.position.y = 1.68;
-    group.add(body, head);
-    for (const x of [-0.17, 0.17]) {
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.72, 0.22), dark);
-      leg.position.set(x, 0.4, 0);
+    const seed = player.skinSeed ?? hashString(`skin:${player.id}`);
+    const skinTones = [0xf2c7a5, 0xdca47c, 0xb97955, 0x875139, 0x5f382a];
+    const skin = new THREE.MeshLambertMaterial({ color: skinTones[seed % skinTones.length] });
+    const shirtColor = new THREE.Color().setHSL(((seed >>> 4) % 360) / 360, 0.52, 0.45);
+    const shirt = new THREE.MeshLambertMaterial({ color: shirtColor });
+    const trim = new THREE.MeshLambertMaterial({ color: shirtColor.clone().offsetHSL(0.47, 0.08, 0.18) });
+    const pants = new THREE.MeshLambertMaterial({ color: new THREE.Color().setHSL(((seed >>> 9) % 360) / 360, 0.28, 0.25) });
+    const hair = new THREE.MeshLambertMaterial({ color: [0x2d211b, 0x5c3925, 0x8a633c, 0xc7a86f, 0x382c42][(seed >>> 3) % 5] });
+    const eye = new THREE.MeshBasicMaterial({ color: 0x192329 });
+    const add = (parent: THREE.Object3D, size: [number, number, number], position: [number, number, number], material: THREE.Material, name = "") => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+      mesh.position.set(...position);
+      mesh.name = name;
+      parent.add(mesh);
+      return mesh;
+    };
+    add(group, [0.58, 0.76, 0.34], [0, 1.04, 0], shirt, "remote-body");
+    add(group, [0.6, 0.15, 0.36], [0, 1.27, -0.01], trim, "remote-trim");
+    add(group, [0.48, 0.48, 0.48], [0, 1.68, 0], skin, "remote-head");
+    add(group, [0.5, 0.13, 0.5], [0, 1.89, 0], hair, "remote-hair");
+    if ((seed >>> 6) % 3 === 0) add(group, [0.5, 0.2, 0.08], [0, 1.79, 0.22], hair, "remote-hair-back");
+    for (const x of [-0.13, 0.13]) add(group, [0.055, 0.055, 0.025], [x, 1.72, -0.253], eye, "remote-eye");
+    for (const [index, x] of [-0.18, 0.18].entries()) {
+      const leg = new THREE.Group();
+      leg.name = `remote-leg-${index}`;
+      leg.position.set(x, 0.74, 0);
+      add(leg, [0.2, 0.72, 0.22], [0, -0.36, 0], pants);
       group.add(leg);
     }
+    for (const [index, x] of [-0.39, 0.39].entries()) {
+      const arm = new THREE.Group();
+      arm.name = `remote-arm-${index}`;
+      arm.position.set(x, 1.35, 0);
+      add(arm, [0.16, 0.62, 0.18], [0, -0.31, 0], index === 0 ? shirt : trim);
+      add(arm, [0.16, 0.18, 0.18], [0, -0.64, 0], skin);
+      group.add(arm);
+    }
+    group.userData.gait = 0;
+    group.userData.heldItem = null;
+    this.refreshRemoteHeldItem(group, player.heldItem ?? null);
     return group;
   }
 
-  private updateRemotePlayerMeshes(): void {
+  private refreshRemoteHeldItem(group: THREE.Group, item: ItemId | null): void {
+    const previous = group.getObjectByName("remote-held-item");
+    if (previous) {
+      group.remove(previous);
+      disposeObject(previous, true);
+    }
+    group.userData.heldItem = item;
+    if (!item) return;
+    const held = this.createDropMesh(item);
+    held.name = "remote-held-item";
+    held.scale.setScalar(item.startsWith("tool:") ? 0.88 : 0.68);
+    held.position.set(0.49, 0.93, -0.34);
+    held.rotation.set(-0.48, 0, item.startsWith("tool:") ? 0.3 : 0);
+    group.add(held);
+  }
+
+  private updateRemotePlayerMeshes(dt: number): void {
+    const localRealm = realmForPosition(this.physics.position);
     for (const [id, player] of this.remotePlayers) {
       if (id === this.network.playerId) continue;
       let mesh = this.remotePlayerMeshes.get(id);
@@ -2528,8 +3281,24 @@ export class GameEngine {
         this.remotePlayerMeshes.set(id, mesh);
         this.remotePlayerRoot.add(mesh);
       }
-      mesh.position.set(player.position.x, player.position.y, player.position.z);
-      mesh.rotation.y = player.yaw;
+      mesh.visible = (player.realm ?? realmForPosition(player.position)) === localRealm;
+      mesh.position.lerp(new THREE.Vector3(player.position.x, player.position.y, player.position.z), 0.42);
+      const yawDelta = Math.atan2(Math.sin(player.yaw - mesh.rotation.y), Math.cos(player.yaw - mesh.rotation.y));
+      mesh.rotation.y += yawDelta * 0.44;
+      if (mesh.userData.heldItem !== (player.heldItem ?? null)) this.refreshRemoteHeldItem(mesh, player.heldItem ?? null);
+      const movement = Math.min(1, (player.moveSpeed ?? 0) / 4.5);
+      mesh.userData.gait = Number(mesh.userData.gait ?? 0) + dt * (2.2 + movement * 5.8);
+      const gait = Number(mesh.userData.gait);
+      mesh.traverse((part) => {
+        if (part.name.startsWith("remote-leg-")) {
+          const index = Number(part.name.slice(-1));
+          part.rotation.x = player.ridingBoatId ? -1.05 : Math.sin(gait + index * Math.PI) * movement * 0.65;
+        } else if (part.name.startsWith("remote-arm-")) {
+          const index = Number(part.name.slice(-1));
+          part.rotation.x = index === 1 && player.heldItem ? -0.48 : Math.sin(gait + (index + 1) * Math.PI) * movement * 0.48;
+        }
+      });
+      mesh.scale.y = player.crouching && !player.ridingBoatId ? 0.87 : 1;
     }
     for (const [id, mesh] of this.remotePlayerMeshes) {
       if (!this.remotePlayers.has(id)) {
@@ -2555,7 +3324,9 @@ export class GameEngine {
         this.callbacks.onToast(`Night ${this.dayCount} has fallen. Hostile creatures are active.`);
       }
     }
-    const inEmberdeep = isEmberdeepCoordinate(this.physics.position.x);
+    const currentRealm = realmForPosition(this.physics.position);
+    const inEmberdeep = currentRealm === "emberdeep";
+    const inDungeon = currentRealm.startsWith("dungeon:");
     const angle = (this.timeOfDay - 0.25) * Math.PI * 2;
     const solarHeight = Math.sin(angle);
     const daylight = THREE.MathUtils.smoothstep(solarHeight, -0.2, 0.16);
@@ -2566,14 +3337,15 @@ export class GameEngine {
     const twilight = Math.max(0, 1 - Math.abs(solarHeight) / 0.34) * 0.46;
     sky.lerp(twilightColor, twilight);
     if (inEmberdeep) sky.setHex(0x4a2838);
+    else if (inDungeon) sky.setHex(0x101b28);
     this.scene.background = sky;
     if (this.scene.fog) this.scene.fog.color.copy(sky);
-    this.hemisphere.color.setHex(inEmberdeep ? 0xffa06c : daylight > 0.28 ? 0xbce9ff : 0x8299c9);
-    this.hemisphere.groundColor.setHex(inEmberdeep ? 0x351a23 : daylight > 0.28 ? 0x5a4a36 : 0x343b52);
-    this.hemisphere.intensity = inEmberdeep ? 1.02 : 0.72 + daylight * 0.78;
-    this.ambient.color.setHex(inEmberdeep ? 0xff8a62 : 0x91a9c9);
-    this.ambient.intensity = inEmberdeep ? 0.46 : 0.34 + daylight * 0.17;
-    this.sun.intensity = inEmberdeep ? 0.28 : 0.16 + daylight * 1.62;
+    this.hemisphere.color.setHex(inEmberdeep ? 0xffa06c : inDungeon ? 0x75b9bd : daylight > 0.28 ? 0xbce9ff : 0x8299c9);
+    this.hemisphere.groundColor.setHex(inEmberdeep ? 0x351a23 : inDungeon ? 0x242d38 : daylight > 0.28 ? 0x5a4a36 : 0x343b52);
+    this.hemisphere.intensity = inEmberdeep ? 1.02 : inDungeon ? 0.68 : 0.72 + daylight * 0.78;
+    this.ambient.color.setHex(inEmberdeep ? 0xff8a62 : inDungeon ? 0x8fc8c8 : 0x91a9c9);
+    this.ambient.intensity = inEmberdeep ? 0.46 : inDungeon ? 0.54 : 0.34 + daylight * 0.17;
+    this.sun.intensity = inEmberdeep ? 0.28 : inDungeon ? 0.08 : 0.16 + daylight * 1.62;
     const orbitRadius = 145;
     const orbitX = Math.cos(angle) * orbitRadius;
     const orbitY = solarHeight * orbitRadius;
@@ -2584,31 +3356,90 @@ export class GameEngine {
     );
     this.sun.target.position.set(this.physics.position.x, this.physics.position.y, this.physics.position.z);
     this.sunDisc.position.copy(this.sun.position);
-    this.sunDisc.visible = !inEmberdeep && solarHeight > -0.12;
+    this.sunDisc.visible = !inEmberdeep && !inDungeon && solarHeight > -0.12;
     this.moonDisc.position.set(
       this.physics.position.x - orbitX,
       this.physics.position.y - orbitY,
       this.physics.position.z - 44,
     );
-    this.moonDisc.visible = !inEmberdeep && solarHeight < 0.18;
+    this.moonDisc.visible = !inEmberdeep && !inDungeon && solarHeight < 0.18;
     this.starField.position.set(this.physics.position.x, this.physics.position.y, this.physics.position.z);
     const starMaterial = this.starField.material as THREE.PointsMaterial;
-    starMaterial.opacity = inEmberdeep ? 0 : Math.max(0, 1 - daylight * 1.35);
+    starMaterial.opacity = inEmberdeep || inDungeon ? 0 : Math.max(0, 1 - daylight * 1.35);
   }
 
-  private damage(amount: number, source: string): void {
+  private damage(amount: number, source: string, origin?: Vec3Data): void {
     if (this.mode === "creative") return;
+    if (origin && this.damageImmunity > 0) return;
+    if (origin) this.damageImmunity = 0.42;
     this.health = Math.max(0, this.health - amount);
+    this.damageFlash = 1;
+    this.damageShake = Math.min(1.35, this.damageShake + 0.82);
+    if (origin) {
+      const awayX = this.physics.position.x - origin.x;
+      const awayZ = this.physics.position.z - origin.z;
+      const distance = Math.max(0.001, Math.hypot(awayX, awayZ));
+      const force = 4.5 + Math.min(3, amount * 0.1);
+      this.physics.velocity.x += awayX / distance * force;
+      this.physics.velocity.z += awayZ / distance * force;
+      this.physics.velocity.y = Math.max(this.physics.velocity.y, 2.2 + Math.min(1.7, amount * 0.055));
+      this.damageDirection = damageIndicatorAngle(this.physics.position, this.physics.yaw, origin);
+    }
     this.audio.play("hurt");
     this.callbacks.onToast(`${source} · −${Math.round(amount)} health`);
     if (this.health <= 0) {
       this.publishDeath(source);
-      const spawn = this.world.findSpawn();
+      const bedSpawn = this.spawnPoint && this.world.getBlock(
+        Math.floor(this.spawnPoint.x),
+        Math.floor(this.spawnPoint.y - 0.5),
+        Math.floor(this.spawnPoint.z),
+      ) === BlockId.FrontierBed
+        ? this.spawnPoint
+        : undefined;
+      const spawn = bedSpawn ?? this.world.findSpawn();
+      const boat = this.ridingBoatId ? this.world.boats.find((candidate) => candidate.id === this.ridingBoatId) : undefined;
+      if (boat) boat.riderId = undefined;
+      this.ridingBoatId = null;
       this.physics.position.set(spawn.x, spawn.y, spawn.z);
       this.physics.velocity.set(0, 0, 0);
       this.health = 100;
       this.hunger = 76;
-      this.callbacks.onToast("You reformed at the frontier beacon.");
+      this.callbacks.onToast(bedSpawn ? "You reformed at your bed spawn." : "You reformed at the frontier beacon.");
+    }
+  }
+
+  private playerSaveState(): PlayerSaveState {
+    return {
+      position: {
+        x: this.physics.position.x,
+        y: this.physics.position.y,
+        z: this.physics.position.z,
+      },
+      yaw: this.physics.yaw,
+      pitch: this.physics.pitch,
+      health: this.health,
+      hunger: this.hunger,
+      stamina: this.stamina,
+      inventory: cloneInventory(this.inventory),
+      hotbar: [...this.hotbar],
+      inventorySlots: [...this.inventorySlots],
+      selectedSlot: this.selectedSlot,
+      tradeCredit: this.tradeCredit,
+      spawnPoint: this.spawnPoint ? { ...this.spawnPoint } : undefined,
+      realm: realmForPosition(this.physics.position),
+      skinSeed: this.skinSeed,
+    };
+  }
+
+  private rememberPlayerProfile(playerId: string, profile: PlayerSaveState): void {
+    this.playerProfiles.delete(playerId);
+    this.playerProfiles.set(playerId, clonePlayerSaveState(profile));
+    while (this.playerProfiles.size > MAX_SAVED_PLAYER_PROFILES) {
+      const removable = Array.from(this.playerProfiles.keys()).find((candidate) => (
+        candidate !== this.network.playerId && candidate !== playerId
+      ));
+      if (!removable) break;
+      this.playerProfiles.delete(removable);
     }
   }
 
@@ -2630,6 +3461,11 @@ export class GameEngine {
       swimming: this.physics.swimming,
       flying: this.creativeFlying,
       crouching: this.input.crouch,
+      heldItem: this.hotbar[this.selectedSlot],
+      moveSpeed: Math.hypot(this.physics.velocity.x, this.physics.velocity.z),
+      realm: realmForPosition(this.physics.position),
+      skinSeed: this.skinSeed,
+      ridingBoatId: this.ridingBoatId ?? undefined,
     };
   }
 
@@ -2686,7 +3522,7 @@ export class GameEngine {
         player.position.y + 1 - (y + 0.5),
         player.position.z - (z + 0.5),
       ) <= 9;
-      const hostManagedStorage = [BlockId.Crate, BlockId.TradePost, BlockId.RelicCache, BlockId.DungeonReturn].includes(blockId);
+      const hostManagedStorage = [BlockId.Crate, BlockId.Dispenser, BlockId.Dropper, BlockId.TradePost, BlockId.RelicCache, BlockId.DungeonReturn].includes(blockId);
       if (!existing || !withinReach || !BLOCKS[blockId].automation || hostManagedStorage) return;
       const state = cloneMachineState(message.state);
       state.orientation = Math.max(0, Math.min(3, Math.floor(state.orientation))) as 0 | 1 | 2 | 3;
@@ -2717,6 +3553,7 @@ export class GameEngine {
       const player = this.remotePeerPlayers.get(peerId);
       const mob = this.world.mobs.find((candidate) => candidate.id === message.mobId);
       if (!player || !mob) return;
+      if ((player.realm ?? realmForPosition(player.position)) !== realmForPosition(mob.position)) return;
       const stats = weaponStats(message.item);
       const origin = new THREE.Vector3(player.position.x, player.position.y + 1.62, player.position.z);
       const center = new THREE.Vector3(
@@ -2737,12 +3574,15 @@ export class GameEngine {
         distance <= stats.reach + 0.9 &&
         look.dot(aim) > 0.55 &&
         (!obstruction || obstruction.distance + 0.3 >= distance)
-      ) this.strikeMob(mob, stats, player.position, peerId, isCriticalHit({
+      ) {
+        if (message.item === "tool:aether-repeater") this.spawnAetherTracer(mob, player.id, player);
+        this.strikeMob(mob, stats, player.position, peerId, isCriticalHit({
         grounded: player.grounded ?? true,
         velocityY: player.velocityY ?? 0,
         swimming: player.swimming,
         flying: player.flying,
-      }, stats));
+        }, stats));
+      }
     } else if (message.type === "mob-state" && this.network.role === "guest") {
       this.world.mobs.splice(0, this.world.mobs.length, ...message.mobs.map((mob) => ({
         ...mob,
@@ -2754,12 +3594,38 @@ export class GameEngine {
         position: { ...drop.position },
         velocity: { ...drop.velocity },
       })));
+      this.world.boats.splice(0, this.world.boats.length, ...message.boats.map((boat) => ({
+        ...boat,
+        position: { ...boat.position },
+        velocity: { ...boat.velocity },
+      })));
+      this.world.projectiles.splice(0, this.world.projectiles.length, ...message.projectiles.map((projectile) => ({
+        ...projectile,
+        position: { ...projectile.position },
+        velocity: { ...projectile.velocity },
+      })));
       this.timeOfDay = message.timeOfDay;
       this.dayCount = message.dayCount;
     } else if (message.type === "damage" && this.network.role === "guest") {
-      this.damage(message.amount, message.source);
-    } else if (message.type === "critical-hit") {
-      this.showCriticalHit();
+      this.damage(message.amount, message.source, message.origin);
+    } else if (message.type === "hit-confirm") {
+      this.hitMarker = 1;
+      if (message.critical) this.showCriticalHit();
+    } else if (message.type === "player-profile" && this.network.role === "host") {
+      const player = this.remotePeerPlayers.get(peerId);
+      const profile = message.profile;
+      if (!player || !profile || !Array.isArray(profile.hotbar) || typeof profile.inventory !== "object") return;
+      const profilePosition = safeProfilePoint(profile.position);
+      if (!profilePosition || Math.hypot(
+        profilePosition.x - player.position.x,
+        profilePosition.y - player.position.y,
+        profilePosition.z - player.position.z,
+      ) > 24) return;
+      this.rememberPlayerProfile(player.id, sanitizeRemotePlayerProfile(
+        profile,
+        profilePosition,
+        player.skinSeed ?? hashString(`skin:${player.id}`),
+      ));
     } else if (message.type === "give-item" && this.network.role === "guest") {
       if (this.collectItem(message.item, message.count)) {
         if (
@@ -2850,6 +3716,47 @@ export class GameEngine {
       if (!closeEnough || (id !== BlockId.DungeonGate && id !== BlockId.DungeonReturn)) return;
       if (id === BlockId.DungeonReturn) this.returnFromDungeon(message.origin, peerId);
       else this.activateDungeon(message.origin);
+    } else if (message.type === "request-boat" && this.network.role === "host") {
+      const player = this.remotePeerPlayers.get(peerId);
+      if (!player) return;
+      if (message.action === "place") {
+        if (this.world.boats.length >= 128 || Math.hypot(
+          player.position.x - message.position.x,
+          player.position.y - message.position.y,
+          player.position.z - message.position.z,
+        ) > 7 || !canPlaceBoat(this.world, message.position) || this.world.boats.some((boat) => Math.hypot(
+          boat.position.x - message.position.x,
+          boat.position.y - message.position.y,
+          boat.position.z - message.position.z,
+        ) < 1.8)) return;
+        this.world.boats.push({
+          id: `boat-${player.id}-${Date.now().toString(36)}`,
+          position: { ...message.position },
+          velocity: { x: 0, y: 0, z: 0 },
+          yaw: message.yaw,
+          angularVelocity: 0,
+          wood: message.wood,
+          realm: realmForPosition(message.position),
+        });
+      } else {
+        const boat = this.world.boats.find((candidate) => candidate.id === message.boatId);
+        if (!boat) return;
+        if (message.action === "leave") {
+          if (boat.riderId === player.id) boat.riderId = undefined;
+        } else if ((!boat.riderId || boat.riderId === player.id) && Math.hypot(
+          player.position.x - boat.position.x,
+          player.position.y - boat.position.y,
+          player.position.z - boat.position.z,
+        ) <= 4) boat.riderId = player.id;
+      }
+    } else if (message.type === "boat-input" && this.network.role === "host") {
+      const player = this.remotePeerPlayers.get(peerId);
+      const boat = this.world.boats.find((candidate) => candidate.id === message.boatId);
+      if (!player || !boat || boat.riderId !== player.id) return;
+      this.boatInputs.set(player.id, {
+        forward: THREE.MathUtils.clamp(message.forward, -1, 1),
+        turn: THREE.MathUtils.clamp(message.turn, -1, 1),
+      });
     } else if (message.type === "request-sleep" && this.network.role === "host") {
       const night = this.timeOfDay < 0.22 || this.timeOfDay > 0.78;
       if (!night) {
@@ -2887,7 +3794,7 @@ export class GameEngine {
       this.portalReleaseRequired = true;
       this.queueNearbyChunks(true);
       this.audio.play("rift");
-      this.objective = isDungeonCoordinate(message.position.z)
+      this.objective = isDungeonCoordinate(message.position.x, message.position.z)
         ? "Expedition active: clear the generated chambers, defeat the guardian, and share the loot."
         : isEmberdeepCoordinate(message.position.x)
         ? "The Emberdeep: gather Riftwood, rare ores, and Ember Glowstone—avoid the molten currents."
@@ -2923,6 +3830,9 @@ export class GameEngine {
     } else if (message.type === "peer-left") {
       const player = this.remotePeerPlayers.get(message.playerId);
       if (player) this.remotePlayers.delete(player.id);
+      const boat = this.world.boats.find((candidate) => candidate.riderId === player?.id);
+      if (boat) boat.riderId = undefined;
+      if (player) this.boatInputs.delete(player.id);
       this.remotePeerPlayers.delete(message.playerId);
     } else if (message.type === "toast") {
       this.callbacks.onToast(message.text);
@@ -2945,22 +3855,46 @@ export class GameEngine {
       position: { ...mob.position },
       velocity: { ...mob.velocity },
     })));
+    this.world.boats.push(...(save.boats ?? []).map((boat) => ({
+      ...boat,
+      position: { ...boat.position },
+      velocity: { ...boat.velocity },
+      riderId: undefined,
+      realm: boat.realm ?? realmForPosition(boat.position),
+    })));
+    this.playerProfiles.clear();
+    for (const [playerId, profile] of Object.entries(save.playerProfiles ?? {}).slice(-MAX_SAVED_PLAYER_PROFILES)) {
+      this.rememberPlayerProfile(playerId, profile);
+    }
     this.timeOfDay = save.timeOfDay;
     this.dayCount = save.dayCount ?? this.dayCount;
     this.mode = save.mode ?? this.mode;
     if (!preserveLocalPlayer) {
-      this.inventory = this.mode === "creative" ? creativeInventory() : {};
-      this.hotbar = defaultHotbar(this.mode);
-      this.inventorySlots = createInventoryLayout(this.inventory, undefined, this.hotbar);
+      const profile = save.playerProfiles?.[this.network.playerId];
+      this.inventory = profile ? cloneInventory(profile.inventory) : this.mode === "creative" ? creativeInventory() : {};
+      this.hotbar = profile ? [...profile.hotbar] : defaultHotbar(this.mode);
+      this.inventorySlots = createInventoryLayout(this.inventory, profile?.inventorySlots, this.hotbar);
       this.hotbar = hotbarFromLayout(this.inventorySlots);
-      this.selectedSlot = 0;
-      this.health = 100;
-      this.hunger = 100;
-      this.stamina = 100;
-      this.tradeCredit = 0;
+      this.selectedSlot = profile ? Math.max(0, Math.min(HOTBAR_SIZE - 1, profile.selectedSlot)) : 0;
+      this.health = profile?.health ?? 100;
+      this.hunger = profile?.hunger ?? 100;
+      this.stamina = profile?.stamina ?? 100;
+      this.tradeCredit = profile?.tradeCredit ?? 0;
+      this.spawnPoint = profile?.spawnPoint ? { ...profile.spawnPoint } : undefined;
+      this.skinSeed = profile?.skinSeed ?? hashString(`skin:${this.network.playerId}`);
       this.creativeFlying = false;
-      this.physics.position.set(save.player.position.x + 1.4, save.player.position.y, save.player.position.z + 1.4);
+      const arrival = profile?.position ?? {
+        x: save.player.position.x + 1.4,
+        y: save.player.position.y,
+        z: save.player.position.z + 1.4,
+      };
+      this.physics.position.set(arrival.x, arrival.y, arrival.z);
+      if (profile) {
+        this.physics.yaw = profile.yaw;
+        this.physics.pitch = profile.pitch;
+      }
     }
+    this.ridingBoatId = null;
     this.viewModel.setItem(this.hotbar[this.selectedSlot]);
     for (const meshSet of this.chunks.values()) {
       this.chunkRoot.remove(meshSet.group);
@@ -2975,7 +3909,14 @@ export class GameEngine {
   private emitHud(networkStatus?: string): void {
     this.clearDepletedHotbar();
     const mobDefinition = this.targetedMob ? MOB_DEFINITIONS[this.targetedMob.kind] : null;
-    const locatorMarkers = buildLocatorMarkers(this.physics.position, this.physics.yaw, this.remotePlayers.values());
+    const realm = realmForPosition(this.physics.position);
+    const realmPlayers = Array.from(this.remotePlayers.values()).filter((player) => (player.realm ?? realmForPosition(player.position)) === realm);
+    const locatorMarkers = buildLocatorMarkers(this.physics.position, this.physics.yaw, realmPlayers);
+    const displayCoordinates = localRealmCoordinates({
+      x: this.physics.position.x,
+      y: this.physics.position.y,
+      z: this.physics.position.z,
+    });
     this.callbacks.onHud({
       health: this.health,
       hunger: this.hunger,
@@ -2989,9 +3930,9 @@ export class GameEngine {
       timeOfDay: this.timeOfDay,
       biome: this.world.getBiome(this.physics.position.x, this.physics.position.z),
       coordinates: {
-        x: Math.floor(this.physics.position.x),
-        y: Math.floor(this.physics.position.y),
-        z: Math.floor(this.physics.position.z),
+        x: Math.floor(displayCoordinates.x),
+        y: Math.floor(displayCoordinates.y),
+        z: Math.floor(displayCoordinates.z),
       },
       fps: this.fps,
       networkStatus: networkStatus ?? (this.network.role === "offline" ? "Offline" : `${this.network.role === "host" ? "Hosting" : "Guest"} · ${this.network.connectedPeers} peer${this.network.connectedPeers === 1 ? "" : "s"}`),
@@ -3012,6 +3953,11 @@ export class GameEngine {
       locatorMarkers,
       workbenchActive: this.stationAvailable("workbench"),
       sprinting: this.input.sprint && (this.mode === "creative" || this.hunger > 10),
+      damageFlash: this.damageFlash,
+      damageDirection: this.damageDirection,
+      hitMarker: this.hitMarker,
+      realmLabel: realmLabel(realm),
+      ridingBoat: Boolean(this.ridingBoatId),
     });
   }
 
@@ -3090,7 +4036,9 @@ export class GameEngine {
   }
 
   private chestKeys(key: string): string[] {
-    if (this.world.getBlock(...parseWorldKey(key)) !== BlockId.Crate) return [];
+    const id = this.world.getBlock(...parseWorldKey(key));
+    if (id === BlockId.Dispenser || id === BlockId.Dropper) return [key];
+    if (id !== BlockId.Crate) return [];
     const partner = this.adjacentChestKeys(key)[0];
     if (!partner || this.adjacentChestKeys(partner)[0] !== key) return [key];
     return [key, partner].sort((a, b) => {
@@ -3103,7 +4051,9 @@ export class GameEngine {
   private ensureChestState(key: string): MachineState | null {
     const state = this.world.machines.get(key);
     if (!state) return null;
-    state.storageSlots = reconcileStorageSlots(state.storageSlots, state.storage, SINGLE_CHEST_SLOTS);
+    const id = this.world.getBlock(...parseWorldKey(key));
+    const capacity = id === BlockId.Dispenser || id === BlockId.Dropper ? 9 : SINGLE_CHEST_SLOTS;
+    state.storageSlots = reconcileStorageSlots(state.storageSlots, state.storage, capacity);
     return state;
   }
 
@@ -3118,10 +4068,11 @@ export class GameEngine {
       slots.push(...(state.storageSlots ?? []));
       for (const [item, count] of Object.entries(state.storage)) storage[item] = (storage[item] ?? 0) + count;
     }
+    const id = this.world.getBlock(...parseWorldKey(key));
     return {
       keys,
-      title: keys.length === 2 ? "Double Frontier Chest" : "Frontier Chest",
-      rows: keys.length === 2 ? 6 : 3,
+      title: id === BlockId.Dispenser ? "Dispenser" : id === BlockId.Dropper ? "Dropper" : keys.length === 2 ? "Double Frontier Chest" : "Frontier Chest",
+      rows: id === BlockId.Dispenser || id === BlockId.Dropper ? 1 : keys.length === 2 ? 6 : 3,
       slots,
       storage,
     };
@@ -3130,7 +4081,7 @@ export class GameEngine {
   private chestInRange(key: string, peer?: PlayerSnapshot): boolean {
     const [x, y, z] = parseWorldKey(key);
     const position = peer?.position ?? this.physics.position;
-    return this.world.getBlock(x, y, z) === BlockId.Crate
+    return [BlockId.Crate, BlockId.Dispenser, BlockId.Dropper].includes(this.world.getBlock(x, y, z))
       && Math.hypot(position.x - (x + 0.5), position.y + 0.8 - (y + 0.5), position.z - (z + 0.5)) <= 7.5;
   }
 
@@ -3648,29 +4599,19 @@ export class GameEngine {
   }
 
   makeSave(): WorldSave {
+    const player = this.playerSaveState();
+    this.rememberPlayerProfile(this.network.playerId, player);
     return {
       version: SAVE_VERSION,
       generation: this.world.generation,
       createdAt: Date.now(),
       seed: this.world.seedText,
       mode: this.mode,
-      player: {
-        position: {
-          x: this.physics.position.x,
-          y: this.physics.position.y,
-          z: this.physics.position.z,
-        },
-        yaw: this.physics.yaw,
-        pitch: this.physics.pitch,
-        health: this.health,
-        hunger: this.hunger,
-        stamina: this.stamina,
-        inventory: cloneInventory(this.inventory),
-        hotbar: [...this.hotbar],
-        inventorySlots: [...this.inventorySlots],
-        selectedSlot: this.selectedSlot,
-        tradeCredit: this.tradeCredit,
-      },
+      player,
+      playerProfiles: Object.fromEntries(Array.from(this.playerProfiles, ([playerId, profile]) => [
+        playerId,
+        clonePlayerSaveState(profile),
+      ])),
       timeOfDay: this.timeOfDay,
       dayCount: this.dayCount,
       mutations: this.world.serializeMutations(),
@@ -3680,6 +4621,12 @@ export class GameEngine {
       ]),
       drops: this.world.drops.map((drop) => ({ ...drop, position: { ...drop.position }, velocity: { ...drop.velocity } })),
       mobs: this.world.mobs.map((mob) => ({ ...mob, position: { ...mob.position }, velocity: { ...mob.velocity } })),
+      boats: this.world.boats.map((boat) => ({
+        ...boat,
+        riderId: undefined,
+        position: { ...boat.position },
+        velocity: { ...boat.velocity },
+      })),
       waterLevels: this.world.serializeWaterLevels(),
     };
   }
@@ -3708,7 +4655,8 @@ export class GameEngine {
     if (this.destroyed) return;
     this.destroyed = true;
     cancelAnimationFrame(this.frameRequest);
-    if (this.network.role !== "guest") this.saveNow(false);
+    if (this.network.role === "guest") this.network.send({ type: "player-profile", profile: this.playerSaveState() });
+    else this.saveNow(false);
     window.removeEventListener("resize", this.onResize);
     window.removeEventListener("pointermove", this.onPointerMove);
     window.removeEventListener("mouseup", this.onMouseUp);

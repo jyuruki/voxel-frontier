@@ -100,6 +100,11 @@ function sanitizePlayerMessage(message: GameMessage, playerId: string): GameMess
       swimming: Boolean(data.swimming),
       flying: Boolean(data.flying),
       crouching: Boolean(data.crouching),
+      heldItem: typeof data.heldItem === "string" && data.heldItem.length <= 80 ? data.heldItem : null,
+      moveSpeed: finiteCoordinate(data.moveSpeed, 32) ? Math.max(0, data.moveSpeed) : 0,
+      realm: typeof data.realm === "string" && data.realm.length <= 40 ? data.realm : "frontier",
+      skinSeed: Number.isInteger(data.skinSeed) && typeof data.skinSeed === "number" ? data.skinSeed >>> 0 : 0,
+      ridingBoatId: typeof data.ridingBoatId === "string" && data.ridingBoatId.length <= 120 ? data.ridingBoatId : undefined,
     },
   };
 }
@@ -138,6 +143,42 @@ function validSlot(value: unknown, maximum: number): boolean {
   return Number.isInteger(value) && typeof value === "number" && value >= 0 && value < maximum;
 }
 
+function validItemSlot(value: unknown): boolean {
+  return value === null || (typeof value === "string" && value.length > 0 && value.length <= 80);
+}
+
+function validProfilePoint(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const point = value as Record<string, unknown>;
+  return finiteCoordinate(point.x) && finiteCoordinate(point.y, 512) && finiteCoordinate(point.z);
+}
+
+function validPlayerProfile(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const data = value as Record<string, unknown>;
+  if (!validProfilePoint(data.position)
+    || !data.inventory || typeof data.inventory !== "object" || Array.isArray(data.inventory)
+    || !Array.isArray(data.hotbar) || data.hotbar.length > 9 || !data.hotbar.every(validItemSlot)
+    || !Number.isInteger(data.selectedSlot) || typeof data.selectedSlot !== "number" || data.selectedSlot < 0 || data.selectedSlot > 8
+    || !finiteCoordinate(data.yaw, 10_000_000) || !finiteCoordinate(data.pitch, 10)
+    || !finiteCoordinate(data.health, 100) || typeof data.health !== "number" || data.health < 0
+    || !finiteCoordinate(data.hunger, 100) || typeof data.hunger !== "number" || data.hunger < 0
+    || !finiteCoordinate(data.stamina, 100) || typeof data.stamina !== "number" || data.stamina < 0) return false;
+  const inventory = data.inventory as Record<string, unknown>;
+  if (Object.keys(inventory).length > 256 || Object.entries(inventory).some(([item, count]) => (
+    !item || item.length > 80 || !Number.isInteger(count) || typeof count !== "number" || count < 0 || count > 1_000_000_000
+  ))) return false;
+  if (data.inventorySlots !== undefined && (
+    !Array.isArray(data.inventorySlots)
+    || data.inventorySlots.length > 36
+    || !data.inventorySlots.every(validItemSlot)
+  )) return false;
+  if (data.spawnPoint !== undefined && !validProfilePoint(data.spawnPoint)) return false;
+  if (data.tradeCredit !== undefined && (!finiteCoordinate(data.tradeCredit, 1_000_000_000) || typeof data.tradeCredit !== "number" || data.tradeCredit < 0)) return false;
+  if (data.realm !== undefined && (typeof data.realm !== "string" || data.realm.length > 80)) return false;
+  return data.skinSeed === undefined || (Number.isInteger(data.skinSeed) && typeof data.skinSeed === "number" && data.skinSeed >= 0 && data.skinSeed <= 0xffff_ffff);
+}
+
 function validGuestIntent(message: GameMessage): boolean {
   if (message.type === "player") return true;
   if (message.type === "chat" || message.type === "death") return true;
@@ -152,6 +193,26 @@ function validGuestIntent(message: GameMessage): boolean {
       && Boolean(message.state) && typeof message.state === "object";
   }
   if (message.type === "request-mob-hit") return typeof message.mobId === "string" && message.mobId.length <= 120;
+  if (message.type === "player-profile") {
+    return validPlayerProfile(message.profile);
+  }
+  if (message.type === "boat-input") {
+    return typeof message.boatId === "string" && message.boatId.length <= 120
+      && finiteCoordinate(message.forward, 1) && finiteCoordinate(message.turn, 1);
+  }
+  if (message.type === "request-boat") {
+    if (message.action === "board" || message.action === "leave") {
+      return typeof message.boatId === "string" && message.boatId.length <= 120;
+    }
+    if (message.action !== "place") return false;
+    const position = message.position;
+    return Boolean(position) && typeof position === "object"
+      && finiteCoordinate((position as Record<string, unknown>).x)
+      && finiteCoordinate((position as Record<string, unknown>).y, 512)
+      && finiteCoordinate((position as Record<string, unknown>).z)
+      && finiteCoordinate(message.yaw, 100)
+      && (message.wood === "emberwood" || message.wood === "frostpine" || message.wood === "riftwood");
+  }
   if (message.type === "request-drop") {
     return typeof message.item === "string" && message.item.length <= 80
       && Number.isInteger(message.count) && typeof message.count === "number" && message.count > 0 && message.count <= 999;

@@ -1,33 +1,33 @@
 # Voxel Frontier
 
-Voxel Frontier is an original, mobile-friendly procedural voxel survival, exploration, combat, and automation game. Begin empty-handed or build freely, explore flowing water and sparse mineral veins, trade with village specialists, automate machines, cross into the Emberdeep, play together through a real room server, and carry a world between devices as a portable `VF1` save key.
+Voxel Frontier is an original, mobile-friendly procedural voxel survival, exploration, combat, and automation game. Begin empty-handed or build freely, explore open caves and sparse mineral veins, trade with village specialists, build Fluxstone machines, sail with friends, cross into the Emberdeep, and carry a shared world between devices as a portable `VF2` save key.
 
 **Play:** [jyuruki.github.io/voxel-frontier](https://jyuruki.github.io/voxel-frontier/)
 
-> **Living Frontier (Version 9)** adds proximity- and light-aware natural spawning around every online traveler, propagated torch safety, synchronized chat and death messages, click-to-place inventory and arbitrary chest slots, an explicit three-slot furnace above the full inventory, generic all-timber tools, toggle sprint, corrected locator bearings, safer caves and dungeon arrivals, reliable post-menu mouse capture, and direct in-world Flux automation. See the [Version 9 release notes](docs/VERSION9_RELEASE.md) and [feature matrix](docs/FEATURE_MATRIX.md).
+> **Realmworks (Version 10)** fixes unseen through-floor enemy damage with three-dimensional reach and voxel line-of-sight checks, adds hit feedback and dodgeable ranged Shardcasters, launches physics-driven boats, rebuilds Fluxstone around familiar circuit components, opens some caves to the surface, and moves enormous randomized delves into their own logical realms. Chat fades into a reopenable archive, beds set personal spawn, multiplayer checkpoints preserve stable player profiles, player models carry visible gear, and mobile landscape now uses four compact actions. See the [Version 10 release notes](docs/VERSION10_RELEASE.md) and [feature matrix](docs/FEATURE_MATRIX.md).
 
 ## Highlights
 
-- Endless deterministic chunks across Y −64…319, with Generation 4 plains, rivers, rolling hills, rare bounded mountains, six climates, broad shelf-lined caves, narrower vertical rifts, aquifers, sparse ore veins, ruins, and the Emberdeep
+- Endless deterministic chunks across Y −64…319, with Generation 5 plains, rivers, rolling hills, rare bounded mountains, six climates, broad shelf-lined caves, occasional surface cave mouths, narrower vertical rifts, aquifers, sparse ore veins, ruins, and the Emberdeep
 - Dynamic settlements using crossroads, courtyards, or lanes; 3–7 randomized farms, cottages, longhouses, forges, libraries, workshops, and towers; varied residents and profession mixes; paths, markets, furnishings, and biome-aware timber
-- 119 original block types with generated textures and eighteen mesh families, including alpha-tested foliage, clearer glass, doors, fences, flora, thin wire, directional components, torches, linked chests, slabs, stairs, pistons, beds, and portals
+- 121 original block types with generated textures and eighteen mesh families, including alpha-tested foliage, clearer glass, doors, fences, flora, Fluxstone dust, directional components, torches, linked chests, slabs, stairs, pistons, beds, and portals
 - Survival with an empty starting inventory, physical drops, mining tiers, crafting, smelting, hunger, combat, beds, and trade; Creative with a searchable catalog, collision-aware flight, block picking, and exact one-click mining
 - A persistent 4×9 inventory with the bottom row as the hotbar, unique tool placement, one-click pick/place organization, shift-click transfer, item throwing, recipe search, craftable/all filters, contextual workbench recipes, and detailed tooltips
-- Smooth acceleration, partial-block collision, step-up motion, coyote time, jump buffering, ledge-safe crouching, mobile auto-jump, swimming drag, strokes, bobbing, buoyancy, diving, and shore assist
-- Directional 0–15 circuits with connected wire, sources, gates, four-delay repeaters, comparators, inverter torches, observers, targets, memory lamps, tone blocks, pistons, hoppers, conveyors, storage, drills, furnaces, and fabricators
-- Sheep, cows, pigs, chickens, villagers, and original creatures with procedural textures, articulated animation, recognizable synthesized voices, collision-safe water motion, combat, and loot; natural populations spawn near active explorers using distance, surface, and block/sky-light rules
+- Smooth acceleration, partial-block collision, step-up motion, coyote time, jump buffering, ledge-safe crouching, mobile auto-jump, swimming, and physics-driven boats with buoyancy, drag, speed-aware steering, shore collision, and safe dismounting
+- Rebuilt directional 0–15 Fluxstone circuits with dust, levers, torches, four-delay repeaters, comparators, observers, buttons, plates, targets, lamps, pistons, sticky pistons, hoppers, dispensers, droppers, conveyors, storage, drills, furnaces, and fabricators
+- Sheep, cows, pigs, chickens, villagers, and original creatures with procedural textures, articulated animation, recognizable synthesized voices, collision-safe water motion, combat, and loot; Shardcasters lead imperfect avoidable shots while melee requires vertical overlap and clear sight
 - Day/night lighting, a clock and day counter, brighter readable nights, craftable beds, a seeded diatonic ambient score, procedural effects, and original animal-like calls
 - Universal villager sales priced by item value, Frontier Mark currency, five daily limited offers per profession, and drag/tap selling
-- Local autosave plus compressed, checksummed, copyable world keys
-- Six-character online rooms with server-owned membership and routing policy, host-authoritative simulation, snapshots, 12-second checkpoints, reconnection backoff, multi-peer updates, sanitized chat/death messages, and automatic host handoff
+- Local autosave plus compressed, checksummed, copyable `VF2` world keys containing boats and up to 32 stable-browser player profiles
+- Six-character online rooms with server-owned membership and routing policy, host-authoritative simulation, snapshots, 12-second persistent checkpoints, reconnection backoff, multi-peer updates, transient/reopenable chat, and automatic host handoff
 - Shared 27-slot chests that link in pairs to 54 freely addressable slots, synchronized physical item exchange, a corrected forward-arc party locator, and release-safe grouped dungeon teleportation
-- Rare deterministic Expedition Gates leading to varied procedural Moss Crypt, Ember Foundry, and Moon Vault layouts with named guardians, shared physical loot, relic caches, and return beacons
+- Rare deterministic Expedition Gates leading to isolated void-backed realms with 8–11 huge randomized rooms, four architectural themes, gardens, galleries, bridges, encounters, named minibosses, shared loot, and return beacons
 
 All code, names, textures, models, UI, and synthesized audio are original to this project.
 
 ## Play and controls
 
-The game needs a current browser with WebGL and WebSocket support. Chrome, Edge, Firefox, and Safari are recommended. Mobile browsers receive on-screen movement, look, action, inventory, and flight controls.
+The game needs a current browser with WebGL and WebSocket support. Chrome, Edge, Firefox, and Safari are recommended. Mobile landscape uses a compact movement/look layout with Attack, Place / Use, Jump, and Sneak actions; chat sits separately at the top edge.
 
 | Desktop input | Action |
 | --- | --- |
@@ -62,7 +62,9 @@ There is no SDP copy/paste, WebRTC hole punching, or TURN dependency. The room s
 
 Leave **World seed** blank to generate a different readable high-entropy seed every time. Enter a phrase when you intentionally want reproducible terrain.
 
-Open **Pause → Save & world key → Generate current key** to create a `VF1` key containing the seed, generator version, mode, time, player state, changed blocks, water levels, inventory layout, machine/trade stock, drops, and creatures. Version 5 and older keys are lifted into Version 6's taller coordinate system; Version 6 terrain remains on its original generator so existing worlds do not develop seams.
+Open **Pause → Save & world key → Generate current key** to create a `VF2` key containing the seed, generator version, mode, time, changed blocks, water levels, machine/trade stock, drops, creatures, boats, and up to 32 player profiles keyed to stable browser identities. Version 10 intentionally does not import earlier `VF1` keys; its world generation, dungeon coordinates, entity model, and shared-profile checkpoint have changed together.
+
+In an online room, the Durable Object checkpoint carries the same shared world and player-profile table. A returning player on the same browser identity recovers their saved inventory, position, bed spawn, vitals, and generated skin. GitHub Pages still serves only the static client; dynamic room state lives in the multiplayer Durable Object rather than in the Git repository.
 
 ## Development
 
@@ -87,11 +89,11 @@ Full validation:
 npm test
 ```
 
-This runs linting, 48 deterministic simulation tests, Cloudflare Worker type-checking and bundling, a real two-client Miniflare room lifecycle test, and a production GitHub Pages export. The multiplayer integration opens a host and guest, sanitizes chat and death messages, transfers a snapshot and live world delta, verifies guest authority rejection plus item, chest, furnace, and dungeon intent routing, writes a checkpoint larger than one storage row, disconnects the host, and verifies promotion with recovered state.
+This runs linting, 55 deterministic simulation tests, Cloudflare Worker type-checking and bundling, a real two-client Miniflare room lifecycle test, and a production GitHub Pages export. The multiplayer integration opens a host and guest, sanitizes chat and death messages, transfers a snapshot and live world delta, verifies guest authority rejection plus item, chest, furnace, dungeon, profile, and boat intent routing, writes a checkpoint larger than one storage row, disconnects the host, and verifies promotion with recovered state.
 
 ## Free server deployment
 
-[GitHub Pages serves static files only](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages), so Version 9 keeps the game frontend there and deploys `server/` to a Cloudflare Durable Object. Cloudflare documents Durable Objects on its [Workers Free plan](https://developers.cloudflare.com/durable-objects/platform/pricing/) and recommends its [WebSocket Hibernation API](https://developers.cloudflare.com/durable-objects/best-practices/websockets/) for multiplayer rooms that sleep without disconnecting clients.
+[GitHub Pages serves static files only](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages), so Version 10 keeps the game frontend there and deploys `server/` to a Cloudflare Durable Object. Cloudflare documents Durable Objects on its [Workers Free plan](https://developers.cloudflare.com/durable-objects/platform/pricing/) and recommends its [WebSocket Hibernation API](https://developers.cloudflare.com/durable-objects/best-practices/websockets/) for multiplayer rooms that sleep without disconnecting clients.
 
 For a manual deployment:
 

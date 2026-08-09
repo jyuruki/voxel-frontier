@@ -1,12 +1,95 @@
 import { strFromU8, strToU8, zlibSync, unzlibSync } from "fflate";
 import { hashString } from "./prng";
-import { SAVE_VERSION, WORLD_MAX_Y, WORLD_MIN_Y, WorldSave } from "./types";
+import { BoatState, PlayerSaveState, SAVE_VERSION, WORLD_MAX_Y, WORLD_MIN_Y, WorldSave } from "./types";
 import { parseWorldKey, worldKey } from "./prng";
 
-export const LOCAL_SAVE_KEY = "voxel-frontier.save.v1";
+export const LOCAL_SAVE_KEY = "voxel-frontier.save.v10";
 const MAX_KEY_LENGTH = 8_000_000;
 const LEGACY_Y_OFFSET = 46;
 const TALL_WORLD_GENERATION = 2;
+const MAX_COORDINATE = 1_000_000;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function finiteNumber(value: unknown, minimum: number, maximum: number): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= minimum && value <= maximum;
+}
+
+function validatePoint(value: unknown, label: string): void {
+  if (!isRecord(value)
+    || !finiteNumber(value.x, -MAX_COORDINATE, MAX_COORDINATE)
+    || !finiteNumber(value.y, WORLD_MIN_Y - 32, WORLD_MAX_Y + 32)
+    || !finiteNumber(value.z, -MAX_COORDINATE, MAX_COORDINATE)) {
+    throw new Error(`${label} has invalid coordinates.`);
+  }
+}
+
+function validateInventory(value: unknown, label: string): void {
+  if (!isRecord(value) || Object.keys(value).length > 256) throw new Error(`${label} is invalid.`);
+  for (const [item, count] of Object.entries(value)) {
+    if (!item || item.length > 80 || !Number.isInteger(count) || !finiteNumber(count, 0, 1_000_000_000)) {
+      throw new Error(`${label} contains an invalid item stack.`);
+    }
+  }
+}
+
+function validItemSlot(value: unknown): boolean {
+  return value === null || (typeof value === "string" && value.length > 0 && value.length <= 80);
+}
+
+function validatePlayerState(value: unknown, label: string): asserts value is PlayerSaveState {
+  if (!isRecord(value)) throw new Error(`${label} is incomplete.`);
+  validatePoint(value.position, `${label} position`);
+  validateInventory(value.inventory, `${label} inventory`);
+  if (!Array.isArray(value.hotbar) || value.hotbar.length > 9 || !value.hotbar.every(validItemSlot)) {
+    throw new Error(`${label} hotbar is invalid.`);
+  }
+  if (value.inventorySlots !== undefined && (
+    !Array.isArray(value.inventorySlots)
+    || value.inventorySlots.length > 36
+    || !value.inventorySlots.every(validItemSlot)
+  )) throw new Error(`${label} inventory layout is invalid.`);
+  if (!Number.isInteger(value.selectedSlot) || !finiteNumber(value.selectedSlot, 0, 8)) {
+    throw new Error(`${label} selected slot is invalid.`);
+  }
+  for (const field of ["health", "hunger", "stamina"] as const) {
+    if (!finiteNumber(value[field], 0, 100)) throw new Error(`${label} ${field} is invalid.`);
+  }
+  if (!finiteNumber(value.yaw, -10_000_000, 10_000_000) || !finiteNumber(value.pitch, -10, 10)) {
+    throw new Error(`${label} view direction is invalid.`);
+  }
+  if (value.tradeCredit !== undefined && !finiteNumber(value.tradeCredit, 0, 1_000_000_000)) {
+    throw new Error(`${label} trade credit is invalid.`);
+  }
+  if (value.spawnPoint !== undefined) validatePoint(value.spawnPoint, `${label} spawn point`);
+  if (value.realm !== undefined && (typeof value.realm !== "string" || value.realm.length > 80)) {
+    throw new Error(`${label} realm is invalid.`);
+  }
+  if (value.skinSeed !== undefined && (!Number.isInteger(value.skinSeed) || !finiteNumber(value.skinSeed, 0, 0xffff_ffff))) {
+    throw new Error(`${label} skin is invalid.`);
+  }
+}
+
+function validateBoatState(value: unknown): asserts value is BoatState {
+  if (!isRecord(value) || typeof value.id !== "string" || !value.id || value.id.length > 120) {
+    throw new Error("The saved boat state is invalid.");
+  }
+  validatePoint(value.position, "A saved boat");
+  if (!isRecord(value.velocity)
+    || !finiteNumber(value.velocity.x, -128, 128)
+    || !finiteNumber(value.velocity.y, -128, 128)
+    || !finiteNumber(value.velocity.z, -128, 128)
+    || !finiteNumber(value.yaw, -10_000_000, 10_000_000)
+    || !finiteNumber(value.angularVelocity, -128, 128)
+    || !["emberwood", "frostpine", "riftwood"].includes(String(value.wood))
+    || typeof value.realm !== "string"
+    || value.realm.length > 80
+    || (value.riderId !== undefined && (typeof value.riderId !== "string" || value.riderId.length > 120))) {
+    throw new Error("The saved boat state is invalid.");
+  }
+}
 
 function shiftPositionY<T extends { y: number }>(position: T): T {
   return {
@@ -74,14 +157,21 @@ function validateSave(value: unknown): asserts value is WorldSave {
   if (save.dayCount !== undefined && (!Number.isInteger(save.dayCount) || save.dayCount < 1)) {
     throw new Error("The saved day counter is invalid.");
   }
-  if (!save.player || !Array.isArray(save.player.hotbar) || typeof save.player.inventory !== "object") {
-    throw new Error("The player state is incomplete.");
-  }
-  if (save.player.inventorySlots !== undefined && (!Array.isArray(save.player.inventorySlots) || save.player.inventorySlots.length > 36)) {
-    throw new Error("The saved inventory layout is invalid.");
-  }
+  validatePlayerState(save.player, "The player state");
   if (!Array.isArray(save.mutations) || !Array.isArray(save.machines)) throw new Error("The terrain state is incomplete.");
   if (!Array.isArray(save.drops) || !Array.isArray(save.mobs)) throw new Error("The entity state is incomplete.");
+  if (save.boats !== undefined && (!Array.isArray(save.boats) || save.boats.length > 1_024)) {
+    throw new Error("The saved boat state is invalid.");
+  }
+  for (const boat of save.boats ?? []) validateBoatState(boat);
+  if (save.playerProfiles !== undefined && (
+    !isRecord(save.playerProfiles)
+    || Object.keys(save.playerProfiles).length > 32
+  )) throw new Error("The saved player profiles are invalid.");
+  for (const [playerId, profile] of Object.entries(save.playerProfiles ?? {})) {
+    if (!playerId || playerId.length > 120) throw new Error("A saved player identity is invalid.");
+    validatePlayerState(profile, `The profile for ${playerId.slice(0, 24)}`);
+  }
   if (save.mutations.length > 1_000_000) throw new Error("This save contains too many block changes.");
   if (save.waterLevels !== undefined && (!Array.isArray(save.waterLevels) || save.waterLevels.length > 1_000_000)) {
     throw new Error("The saved water state is invalid.");
@@ -92,14 +182,14 @@ export function encodeWorldKey(save: WorldSave): string {
   const json = JSON.stringify(save);
   const checksum = hashString(json).toString(36);
   const compressed = zlibSync(strToU8(json), { level: 9 });
-  return `VF1.${checksum}.${bytesToBase64(compressed)}`;
+  return `VF2.${checksum}.${bytesToBase64(compressed)}`;
 }
 
 export function decodeWorldKey(key: string): WorldSave {
   const cleaned = key.trim();
   if (cleaned.length > MAX_KEY_LENGTH) throw new Error("That world key is too large to import safely.");
   const [prefix, checksum, payload] = cleaned.split(".");
-  if (prefix !== "VF1" || !checksum || !payload) throw new Error("This is not a Voxel Frontier world key.");
+  if (prefix !== "VF2" || !checksum || !payload) throw new Error("This is not a Version 10 Voxel Frontier world key.");
   let json: string;
   try {
     json = strFromU8(unzlibSync(base64ToBytes(payload)));

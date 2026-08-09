@@ -1,6 +1,7 @@
-import { BLOCKS, itemForBlock } from "./blocks";
+import { BLOCKS, blockForItem, itemForBlock } from "./blocks";
 import { BlockId, DroppedItemState, ItemId, MachineState, Vec3Data, WORLD_MIN_Y } from "./types";
 import { parseWorldKey, worldKey } from "./prng";
+import { realmForPosition } from "./realms";
 import { SMELTING_RECIPES, ensureFurnaceSlots, smeltingRecipeFor } from "./smelting";
 import { VoxelWorld } from "./world";
 
@@ -29,7 +30,7 @@ const MACHINE_COST: Partial<Record<BlockId, number>> = {
 };
 
 export interface AutomationEvent {
-  type: "mined" | "smelted" | "crafted" | "pushed" | "pulled" | "fuel" | "note";
+  type: "mined" | "smelted" | "crafted" | "pushed" | "pulled" | "fuel" | "note" | "dispensed" | "dropped";
   position: Vec3Data;
   item?: ItemId;
 }
@@ -153,6 +154,13 @@ function updatePrimarySources(world: VoxelWorld, players: Vec3Data[], timeOfDay:
   }
 }
 
+function clearWireSignals(world: VoxelWorld): void {
+  for (const [key, state] of world.machines) {
+    const [x, y, z] = parseWorldKey(key);
+    if (world.getBlock(x, y, z) === BlockId.FluxWire) state.signal = 0;
+  }
+}
+
 function updateLogic(world: VoxelWorld): void {
   for (const [key, state] of world.machines) {
     const [x, y, z] = parseWorldKey(key);
@@ -253,6 +261,9 @@ function updateSignalConsumers(world: VoxelWorld, events: AutomationEvent[]): vo
       if (id === BlockId.NoteEmitter && input > 0 && (state.lastInput ?? 0) === 0) {
         events.push({ type: "note", position: { x, y, z } });
       }
+      if ((id === BlockId.Dispenser || id === BlockId.Dropper) && input > 0 && (state.lastInput ?? 0) === 0) {
+        state.pulseTicks = 1;
+      }
       state.lastInput = input;
     }
   }
@@ -265,7 +276,13 @@ function propagateSignals(
   events: AutomationEvent[],
 ): void {
   updatePrimarySources(world, players, timeOfDay);
+  // The first pass carries primary and previous stateful outputs to logic
+  // inputs. Logic is then evaluated once per simulation beat, and the second
+  // pass carries the new outputs. Clearing between passes is what lets a dust
+  // line turn off as reliably as it turns on.
+  propagateWires(world);
   updateLogic(world);
+  clearWireSignals(world);
   propagateWires(world);
   updateSignalConsumers(world, events);
 }
@@ -430,6 +447,61 @@ function runHopper(world: VoxelWorld, key: string, state: MachineState): void {
   addItem(output.storage, item, 1);
 }
 
+function firstStoredItem(state: MachineState): ItemId | null {
+  const slotted = state.storageSlots?.find((item): item is ItemId => Boolean(item) && (state.storage[item!] ?? 0) > 0);
+  if (slotted) return slotted;
+  const entry = Object.entries(state.storage).find(([, count]) => count > 0);
+  return entry ? entry[0] as ItemId : null;
+}
+
+function removeStoredItem(state: MachineState, item: ItemId): void {
+  addItem(state.storage, item, -1);
+  if ((state.storage[item] ?? 0) <= 0 && state.storageSlots) {
+    state.storageSlots = state.storageSlots.map((slot) => slot === item ? null : slot);
+  }
+}
+
+function runDispenserOrDropper(
+  world: VoxelWorld,
+  key: string,
+  state: MachineState,
+  id: BlockId.Dispenser | BlockId.Dropper,
+  events: AutomationEvent[],
+): void {
+  if ((state.pulseTicks ?? 0) <= 0) return;
+  state.pulseTicks = 0;
+  const item = firstStoredItem(state);
+  if (!item) return;
+  const [x, y, z] = parseWorldKey(key);
+  const facing = FACING[state.orientation];
+  const mouth = { x: x + 0.5 + facing.x * 0.72, y: y + 0.58, z: z + 0.5 + facing.z * 0.72 };
+  removeStoredItem(state, item);
+
+  if (id === BlockId.Dropper) {
+    spawnDrop(world, item, 1, mouth, { x: facing.x * 2.4, y: 0.65, z: facing.z * 2.4 });
+    events.push({ type: "dropped", position: { x, y, z }, item });
+    return;
+  }
+
+  const placed = blockForItem(item);
+  const target = { x: x + facing.x, y, z: z + facing.z };
+  if (placed !== null && world.getBlock(target.x, target.y, target.z) === BlockId.Air) {
+    world.setBlock(target.x, target.y, target.z, placed);
+  } else {
+    world.projectiles.push({
+      id: `dispense-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      kind: "dispenser-shot",
+      position: mouth,
+      velocity: { x: facing.x * 8.5, y: 0.2, z: facing.z * 8.5 },
+      damage: item === "ammo:aether-bolt" ? 7 : 3,
+      life: 3.2,
+      ownerId: `machine:${key}`,
+      realm: realmForPosition(mouth),
+    });
+  }
+  events.push({ type: "dispensed", position: { x, y, z }, item });
+}
+
 function movable(id: BlockId): boolean {
   return id !== BlockId.Air && id !== BlockId.Water && id !== BlockId.Bedrock && id !== BlockId.RelicCache;
 }
@@ -509,6 +581,7 @@ function runUnpoweredDevices(world: VoxelWorld, events: AutomationEvent[]): void
     const id = world.getBlock(x, y, z);
     if (id === BlockId.Hopper) runHopper(world, key, state);
     else if (id === BlockId.HearthFurnace && state.enabled) runFurnace(state, { x, y, z }, events, true);
+    else if (id === BlockId.Dispenser || id === BlockId.Dropper) runDispenserOrDropper(world, key, state, id, events);
   }
   runPistons(world, events);
 }

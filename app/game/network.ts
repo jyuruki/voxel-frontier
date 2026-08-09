@@ -7,7 +7,7 @@ import {
   type ServerRoomPacket,
   normalizeSharedRoomCode,
 } from "../../shared/room-protocol";
-import { BlockId, DroppedItemState, ItemId, MachineState, MobState, MutationTuple, PlayerSnapshot, Vec3Data, WorldSave } from "./types";
+import { BlockId, BoatState, DroppedItemState, ItemId, MachineState, MobState, MutationTuple, PlayerSaveState, PlayerSnapshot, ProjectileState, Vec3Data, WorldSave } from "./types";
 import type { FurnaceSlot } from "./smelting";
 
 export type NetworkMessage =
@@ -21,10 +21,11 @@ export type NetworkMessage =
   | { type: "request-machine"; key: string; state: MachineState }
   | { type: "world-state"; mutations: MutationTuple[]; machines: Array<[string, MachineState]>; waterLevels?: Array<[string, number]> }
   | { type: "player"; player: PlayerSnapshot }
-  | { type: "mob-state"; mobs: MobState[]; drops: DroppedItemState[]; timeOfDay: number; dayCount: number }
+  | { type: "mob-state"; mobs: MobState[]; drops: DroppedItemState[]; boats: BoatState[]; projectiles: ProjectileState[]; timeOfDay: number; dayCount: number }
   | { type: "request-mob-hit"; mobId: string; item: ItemId | null }
-  | { type: "critical-hit"; mobId: string }
-  | { type: "damage"; amount: number; source: string }
+  | { type: "hit-confirm"; mobId: string; critical: boolean }
+  | { type: "damage"; amount: number; source: string; origin?: Vec3Data }
+  | { type: "player-profile"; profile: PlayerSaveState }
   | { type: "give-item"; item: ItemId; count: number; targetSlot?: number }
   | { type: "request-drop"; item: ItemId; count: number }
   | { type: "request-chest"; key: string; direction: "deposit"; item: ItemId; count: number; sourceSlot?: number; targetSlot?: number }
@@ -34,6 +35,9 @@ export type NetworkMessage =
   | { type: "request-furnace"; key: string; direction: "withdraw"; slot: FurnaceSlot; count: number; targetSlot?: number }
   | { type: "request-cache"; origin: Vec3Data }
   | { type: "request-dungeon"; origin: Vec3Data }
+  | { type: "request-boat"; action: "place"; position: Vec3Data; yaw: number; wood: BoatState["wood"] }
+  | { type: "request-boat"; action: "board" | "leave"; boatId: string }
+  | { type: "boat-input"; boatId: string; forward: number; turn: number }
   | { type: "request-sleep" }
   | { type: "request-rift"; origin: Vec3Data }
   | { type: "teleport"; position: Vec3Data; text: string }
@@ -62,6 +66,21 @@ function randomId(prefix: string): string {
   return `${prefix}-${Array.from(entropy, (value) => value.toString(36)).join("-")}`;
 }
 
+const PLAYER_ID_STORAGE_KEY = "voxel-frontier.player.v10";
+
+function persistentPlayerId(): string {
+  const generated = randomId("traveler");
+  if (typeof window === "undefined") return generated;
+  try {
+    const existing = window.localStorage.getItem(PLAYER_ID_STORAGE_KEY);
+    if (existing && /^traveler-[a-zA-Z0-9_-]{8,80}$/.test(existing)) return existing;
+    window.localStorage.setItem(PLAYER_ID_STORAGE_KEY, generated);
+  } catch {
+    // Storage can be disabled in private browsing; a session identity still works.
+  }
+  return generated;
+}
+
 export function configuredMultiplayerServer(explicit?: string): string | null {
   const configured = explicit?.trim() || process.env.NEXT_PUBLIC_MULTIPLAYER_URL?.trim();
   if (configured) {
@@ -86,7 +105,7 @@ export function configuredMultiplayerServer(explicit?: string): string | null {
 
 export class NetworkSession {
   role: "offline" | OnlineRole = "offline";
-  readonly playerId = randomId("traveler");
+  readonly playerId = persistentPlayerId();
   private socket: WebSocket | null = null;
   private readonly roomPeers = new Set<string>();
   private activeRoomCode: string | null = null;

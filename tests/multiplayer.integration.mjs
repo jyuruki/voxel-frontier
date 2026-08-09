@@ -43,7 +43,7 @@ function trackedSocket(socket) {
 
 async function connect(miniflare, roomCode, role, playerId) {
   const response = await miniflare.dispatchFetch(
-    `http://localhost/room/${roomCode}?role=${role}&playerId=${playerId}&protocol=9`,
+    `http://localhost/room/${roomCode}?role=${role}&playerId=${playerId}&protocol=10`,
     { headers: { Upgrade: "websocket", Origin: ORIGIN } },
   );
   assert.equal(response.status, 101);
@@ -62,7 +62,7 @@ const miniflare = new Miniflare({
 try {
   const health = await miniflare.dispatchFetch("http://localhost/health");
   assert.equal(health.status, 200);
-  assert.equal((await health.json()).protocol, 9);
+  assert.equal((await health.json()).protocol, 10);
 
   const hostId = "traveler-host-12345678";
   const guestId = "traveler-guest-12345678";
@@ -101,6 +101,36 @@ try {
   const guestPlayer = await host.next((packet) => packet.kind === "game" && packet.message?.type === "player", "sanitized guest player");
   assert.equal(guestPlayer.message.player.id, guestId);
   assert.equal(guestPlayer.message.player.name, "Cave Friend");
+
+  guest.send({
+    kind: "game",
+    message: {
+      type: "player-profile",
+      profile: {
+        position: { x: 2, y: 72, z: 3 },
+        yaw: 0,
+        pitch: 0,
+        health: 92,
+        hunger: 80,
+        stamina: 74,
+        inventory: { "part:coal": 12 },
+        hotbar: ["part:coal", null, null, null, null, null, null, null, null],
+        inventorySlots: ["part:coal"],
+        selectedSlot: 0,
+        tradeCredit: 4,
+        spawnPoint: { x: 1.5, y: 72, z: 1.5 },
+        realm: "frontier",
+        skinSeed: 12345,
+      },
+    },
+  });
+  const profile = await host.next((packet) => packet.kind === "game" && packet.message?.type === "player-profile", "guest player profile");
+  assert.equal(profile.peerId, guestId);
+  assert.equal(profile.message.profile.inventory["part:coal"], 12);
+
+  guest.send({ kind: "game", message: { type: "player-profile", profile: { position: { x: 2, y: 72, z: 3 }, inventory: { "part:coal": -4 }, hotbar: [], selectedSlot: 0 } } });
+  const badProfile = await guest.next((packet) => packet.kind === "error" && packet.code === "bad-intent", "invalid profile rejection");
+  assert.match(badProfile.message, /invalid guest request/i);
 
   guest.send({ kind: "game", message: { type: "chat", text: "  found\u0000 diamonds!  " } });
   const chat = await host.next((packet) => packet.kind === "game" && packet.message?.type === "chat", "room chat");
@@ -159,6 +189,18 @@ try {
   const dungeonRequest = await host.next((packet) => packet.kind === "game" && packet.message?.type === "request-dungeon", "guest dungeon activation");
   assert.equal(dungeonRequest.peerId, guestId);
 
+  guest.send({
+    kind: "game",
+    message: { type: "request-boat", action: "place", position: { x: 4.5, y: 64.72, z: 5.5 }, yaw: 0.4, wood: "frostpine" },
+  });
+  const boatRequest = await host.next((packet) => packet.kind === "game" && packet.message?.type === "request-boat", "guest boat placement");
+  assert.equal(boatRequest.peerId, guestId);
+  assert.equal(boatRequest.message.wood, "frostpine");
+
+  guest.send({ kind: "game", message: { type: "boat-input", boatId: "boat-test-123", forward: 1, turn: -0.5 } });
+  const boatInput = await host.next((packet) => packet.kind === "game" && packet.message?.type === "boat-input", "guest boat input");
+  assert.equal(boatInput.message.turn, -0.5);
+
   host.raw.close(1000, "integration host handoff");
   await guest.next((packet) => packet.kind === "peer-left" && packet.peerId === hostId, "host departure");
   const promotion = await guest.next((packet) => packet.kind === "role" && packet.role === "host", "guest promotion");
@@ -166,7 +208,7 @@ try {
   assert.deepEqual(promotion.checkpoint, liveSave);
   guest.raw.close(1000, "integration complete");
 
-  console.log("multiplayer integration: host, guest, chat, storage, furnace, authority, snapshot, and handoff passed");
+  console.log("multiplayer integration: host, guest, profiles, boats, chat, storage, furnace, authority, snapshot, and handoff passed");
 } finally {
   await miniflare.dispose();
 }

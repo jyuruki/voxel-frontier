@@ -1,4 +1,4 @@
-export const NETWORK_PROTOCOL_VERSION = 9;
+export const NETWORK_PROTOCOL_VERSION = 10;
 export const ROOM_CODE_LENGTH = 6;
 export const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -39,6 +39,9 @@ const GUEST_REQUESTS = new Set([
   "request-furnace",
   "request-cache",
   "request-dungeon",
+  "request-boat",
+  "boat-input",
+  "player-profile",
 ]);
 
 export type MessageRoute = "broadcast" | "host" | "snapshot" | "reject";

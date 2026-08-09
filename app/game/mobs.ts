@@ -129,6 +129,21 @@ export const MOB_DEFINITIONS: Record<MobState["kind"], MobDefinition> = {
     reach: 1.1,
     loot: [{ item: "part:moonshard", min: 1, max: 2 }],
   },
+  shardcaster: {
+    name: "Shardcaster",
+    maxHealth: 34,
+    radius: 0.4,
+    height: 1.48,
+    passive: false,
+    speed: 1.55,
+    waterSpeed: 0.72,
+    damage: 8,
+    reach: 1.05,
+    loot: [
+      { item: "part:moonshard", min: 1, max: 3 },
+      { item: "ammo:aether-bolt", min: 1, max: 4 },
+    ],
+  },
   wayfarer: {
     name: "Wayfarer",
     maxHealth: 30,

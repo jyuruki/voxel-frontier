@@ -3,6 +3,7 @@ import { MOB_DEFINITIONS } from "./mobs";
 import { worldKey } from "./prng";
 import { BlockId, MobState, Vec3Data, WORLD_MAX_Y, WORLD_MIN_Y } from "./types";
 import { isEmberdeepCoordinate, VoxelWorld } from "./world";
+import { isDungeonCoordinate } from "./realms";
 
 export const NATURAL_SPAWN_MIN_DISTANCE = 18;
 export const NATURAL_SPAWN_MAX_DISTANCE = 48;
@@ -12,7 +13,7 @@ export const TORCH_BLOCK_LIGHT_RADIUS = 14;
 export type NaturalSpawnCategory = "passive" | "hostile";
 
 const PASSIVE_KINDS: MobState["kind"][] = ["sheep", "cow", "pig", "chicken", "glowgrazer"];
-const HOSTILE_KINDS: MobState["kind"][] = ["mireling", "cinderling", "thornback", "nightwisp"];
+const HOSTILE_KINDS: MobState["kind"][] = ["mireling", "cinderling", "thornback", "nightwisp", "shardcaster"];
 
 export function isNaturalSpawnKind(kind: MobState["kind"], category: NaturalSpawnCategory): boolean {
   return category === "passive" ? PASSIVE_KINDS.includes(kind) : HOSTILE_KINDS.includes(kind);
@@ -70,7 +71,7 @@ export function blockLightLevel(
 }
 
 export function skyLightLevel(world: VoxelWorld, position: Vec3Data, timeOfDay: number): number {
-  if (isEmberdeepCoordinate(position.x)) return 0;
+  if (isEmberdeepCoordinate(position.x) || isDungeonCoordinate(position.x, position.z)) return 0;
   const x = Math.floor(position.x);
   const y = Math.floor(position.y);
   const z = Math.floor(position.z);
@@ -190,7 +191,7 @@ export function chooseNaturalMobKind(
   }
   if (isEmberdeepCoordinate(position.x)) return roll < 0.58 ? "cinderling" : roll < 0.82 ? "nightwisp" : "thornback";
   if (biome === "Cinder Reach") return roll < 0.7 ? "cinderling" : "thornback";
-  return roll < 0.42 ? "nightwisp" : roll < 0.7 ? "mireling" : "thornback";
+  return roll < 0.3 ? "nightwisp" : roll < 0.56 ? "mireling" : roll < 0.8 ? "thornback" : "shardcaster";
 }
 
 export function naturalMobCap(category: NaturalSpawnCategory, playerCount: number): number {

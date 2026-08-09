@@ -1,11 +1,13 @@
 import { BLOCKS } from "./blocks";
 import {
   BlockId,
+  BoatState,
   CHUNK_SIZE,
   DroppedItemState,
   MachineState,
   MobState,
   MutationTuple,
+  ProjectileState,
   SEA_LEVEL,
   Vec3Data,
   VillagerProfession,
@@ -23,6 +25,7 @@ import {
 } from "./prng";
 import { isDungeonEntranceChunk } from "./dungeons";
 import { SINGLE_CHEST_SLOTS } from "./storage";
+import { EMBERDEEP_OFFSET, isDungeonCoordinate, isEmberdeepCoordinate } from "./realms";
 
 export interface ChunkData {
   cx: number;
@@ -32,14 +35,10 @@ export interface ChunkData {
 }
 
 const CHUNK_VOLUME = CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT;
-export const EMBERDEEP_OFFSET = 100_000;
-
-export function isEmberdeepCoordinate(x: number): boolean {
-  return Math.abs(x) >= EMBERDEEP_OFFSET / 2;
-}
+export { EMBERDEEP_OFFSET, isEmberdeepCoordinate } from "./realms";
 
 export function isVillageChunk(cx: number, cz: number, seed: number): boolean {
-  if (isEmberdeepCoordinate(cx * CHUNK_SIZE)) return false;
+  if (isEmberdeepCoordinate(cx * CHUNK_SIZE) || isDungeonCoordinate(cx * CHUNK_SIZE, cz * CHUNK_SIZE)) return false;
   const regionSize = 8;
   const regionX = Math.floor(cx / regionSize);
   const regionZ = Math.floor(cz / regionSize);
@@ -166,7 +165,11 @@ function defaultMachineState(id: BlockId): MachineState {
     pulseTicks: 0,
     extended: false,
     lastInput: 0,
-    storageSlots: id === BlockId.Crate ? Array(SINGLE_CHEST_SLOTS).fill(null) : undefined,
+    storageSlots: id === BlockId.Crate
+      ? Array(SINGLE_CHEST_SLOTS).fill(null)
+      : id === BlockId.Dispenser || id === BlockId.Dropper
+        ? Array(9).fill(null)
+        : undefined,
     storage: {},
   };
 }
@@ -241,6 +244,33 @@ function overworldOreAt(x: number, y: number, z: number, seed: number, cache: Ma
   return null;
 }
 
+export interface SurfaceCaveEntrance {
+  x: number;
+  z: number;
+  radius: number;
+  depth: number;
+}
+
+export function surfaceCaveEntranceForRegion(regionX: number, regionZ: number, seed: number): SurfaceCaveEntrance | null {
+  const regionSize = 72;
+  if (hash3(regionX, 431, regionZ, seed ^ 0x6a09e667) % 100 >= 24) return null;
+  const centerX = regionX * regionSize + 12 + hash3(regionX, 433, regionZ, seed ^ 0xbb67ae85) % (regionSize - 24);
+  const centerZ = regionZ * regionSize + 12 + hash3(regionX, 439, regionZ, seed ^ 0x3c6ef372) % (regionSize - 24);
+  const radius = 3.2 + (hash3(regionX, 443, regionZ, seed) % 25) / 10;
+  const depth = 12 + hash3(regionX, 449, regionZ, seed ^ 0xa54ff53a) % 10;
+  return { x: centerX, z: centerZ, radius, depth };
+}
+
+function surfaceCaveShaft(x: number, y: number, z: number, height: number, seed: number): boolean {
+  if (height <= SEA_LEVEL + 7 || height >= 132) return false;
+  const entrance = surfaceCaveEntranceForRegion(Math.floor(x / 72), Math.floor(z / 72), seed);
+  if (!entrance || y > height || y < height - entrance.depth) return false;
+  const progress = (height - y) / entrance.depth;
+  const throatRadius = entrance.radius * (0.58 + progress * 0.42);
+  const distance = Math.hypot(x + 0.5 - entrance.x, z + 0.5 - entrance.z);
+  return distance < throatRadius && hash3(x, y, z, seed ^ 0x510e527f) % 100 > 5;
+}
+
 export class VoxelWorld {
   readonly seedText: string;
   readonly seed: number;
@@ -250,6 +280,8 @@ export class VoxelWorld {
   readonly machines = new Map<string, MachineState>();
   readonly drops: DroppedItemState[] = [];
   readonly mobs: MobState[] = [];
+  readonly projectiles: ProjectileState[] = [];
+  readonly boats: BoatState[] = [];
   readonly waterLevels = new Map<string, number>();
   readonly dirtyChunks = new Set<string>();
   private readonly pendingNetworkMutations = new Map<string, BlockId>();
@@ -268,6 +300,10 @@ export class VoxelWorld {
     const cacheKey = `${x},${z}`;
     const cached = this.heightCache.get(cacheKey);
     if (cached !== undefined) return cached;
+    if (isDungeonCoordinate(x, z)) {
+      this.heightCache.set(cacheKey, WORLD_MIN_Y);
+      return WORLD_MIN_Y;
+    }
     if (isEmberdeepCoordinate(x)) {
       const localX = x > 0 ? x - EMBERDEEP_OFFSET : x + EMBERDEEP_OFFSET;
       const basin = fractalNoise2(localX / 110, z / 110, this.seed ^ 0x3c6ef372, 4);
@@ -311,6 +347,7 @@ export class VoxelWorld {
   }
 
   getBiome(x: number, z: number): string {
+    if (isDungeonCoordinate(x, z)) return "Expedition Realm";
     if (isEmberdeepCoordinate(x)) return "The Emberdeep";
     const cacheKey = `${Math.floor(x)},${Math.floor(z)}`;
     const cached = this.biomeCache.get(cacheKey);
@@ -339,6 +376,7 @@ export class VoxelWorld {
 
   private baseTerrainBlock(x: number, y: number, z: number): BlockId {
     if (y < WORLD_MIN_Y || y >= WORLD_MAX_Y) return BlockId.Air;
+    if (isDungeonCoordinate(x, z)) return y === WORLD_MIN_Y ? BlockId.Bedrock : BlockId.Air;
     if (y === WORLD_MIN_Y || (y < WORLD_MIN_Y + 4 && hash3(x, y, z, this.seed ^ 0x4cf5ad43) % 5 < WORLD_MIN_Y + 4 - y)) return BlockId.Bedrock;
     const height = this.getHeight(x, z);
     if (isEmberdeepCoordinate(x)) {
@@ -360,6 +398,7 @@ export class VoxelWorld {
       return BlockId.Emberrock;
     }
     if (y > height) return y <= SEA_LEVEL ? BlockId.Water : BlockId.Air;
+    if (this.generation >= 5 && surfaceCaveShaft(x, y, z, height, this.seed)) return BlockId.Air;
     const biome = this.getBiome(x, z);
 
     const depth = height - y;
@@ -419,6 +458,7 @@ export class VoxelWorld {
   private addSurfaceFeatures(chunk: ChunkData): void {
     const baseX = chunk.cx * CHUNK_SIZE;
     const baseZ = chunk.cz * CHUNK_SIZE;
+    if (isDungeonCoordinate(baseX + CHUNK_SIZE / 2, baseZ + CHUNK_SIZE / 2)) return;
     if (isEmberdeepCoordinate(baseX + CHUNK_SIZE / 2)) {
       this.addEmberdeepFeatures(chunk);
       return;
@@ -429,6 +469,7 @@ export class VoxelWorld {
         const z = baseZ + lz;
         const height = this.getHeight(x, z);
         if (height >= WORLD_MAX_Y - 7) continue;
+        if (this.peekBlock(x, height, z) === BlockId.Air) continue;
         const biome = this.getBiome(x, z);
         const featureRoll = hash3(x, 0, z, this.seed ^ 0x9e3779b9) % 1000;
         const dryTreeSite = height > SEA_LEVEL + 1

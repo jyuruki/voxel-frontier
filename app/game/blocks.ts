@@ -88,14 +88,14 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
     hardness: 1.2,
     tool: "axe",
   }),
-  [BlockId.FluxWire]: block(BlockId.FluxWire, "Flux Conduit", "#ca5a3f", "Carries logic signals and machine power.", {
+  [BlockId.FluxWire]: block(BlockId.FluxWire, "Fluxstone Dust", "#ca4138", "Carries a signal up to fifteen blocks, losing one level per block.", {
     solid: false,
     hardness: 0.25,
     shape: "wire",
     automation: "wire",
     emissive: 0.12,
   }),
-  [BlockId.Toggle]: block(BlockId.Toggle, "Toggle Relay", "#c78b47", "A player-controlled signal source.", {
+  [BlockId.Toggle]: block(BlockId.Toggle, "Fluxstone Lever", "#c78b47", "A player-controlled on/off signal source.", {
     solid: false,
     hardness: 0.5,
     shape: "plate",
@@ -133,7 +133,7 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
     hardness: 2.8,
     automation: "machine",
   }),
-  [BlockId.Ram]: block(BlockId.Ram, "Linear Ram", "#6b6971", "Pushes a line of blocks when its input rises.", {
+  [BlockId.Ram]: block(BlockId.Ram, "Piston", "#6b6971", "Pushes up to six movable blocks when powered.", {
     hardness: 2,
     shape: "piston",
     automation: "machine",
@@ -169,7 +169,7 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
     shape: "plate",
     automation: "logic",
   }),
-  [BlockId.Hopper]: block(BlockId.Hopper, "Collector Funnel", "#4d5859", "Collects loose items and transfers them into facing storage.", {
+  [BlockId.Hopper]: block(BlockId.Hopper, "Hopper", "#4d5859", "Collects loose items above it and transfers them into facing storage.", {
     hardness: 1.5,
     shape: "hopper",
     automation: "machine",
@@ -252,19 +252,19 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
     opaque: false,
     hardness: 0.45,
   }),
-  [BlockId.PulseRepeater]: block(BlockId.PulseRepeater, "Pulse Repeater", "#9a644d", "Carries a full-strength signal forward after a configurable delay.", {
+  [BlockId.PulseRepeater]: block(BlockId.PulseRepeater, "Fluxstone Repeater", "#9a4d45", "Carries a full-strength signal forward after a configurable one-to-four beat delay.", {
     solid: false, hardness: 0.35, shape: "plate", automation: "logic",
   }),
-  [BlockId.FluxComparator]: block(BlockId.FluxComparator, "Flux Comparator", "#8f5a51", "Compares or subtracts rear and side signal strengths.", {
+  [BlockId.FluxComparator]: block(BlockId.FluxComparator, "Fluxstone Comparator", "#8f4c48", "Compares or subtracts rear and side signal strengths.", {
     solid: false, hardness: 0.4, shape: "plate", automation: "logic",
   }),
-  [BlockId.InverterTorch]: block(BlockId.InverterTorch, "Inverter Torch", "#e35d52", "Emits a signal until its rear input is powered.", {
+  [BlockId.InverterTorch]: block(BlockId.InverterTorch, "Fluxstone Torch", "#e33d36", "Emits a signal until the block behind it is powered.", {
     solid: false, hardness: 0.15, shape: "torch", automation: "logic", emissive: 0.62,
   }),
-  [BlockId.Observer]: block(BlockId.Observer, "Change Observer", "#68777d", "Pulses when the block in front of its sensing face changes.", {
+  [BlockId.Observer]: block(BlockId.Observer, "Observer", "#68777d", "Pulses when the block in front of its sensing face changes.", {
     hardness: 1.7, shape: "observer", automation: "logic",
   }),
-  [BlockId.AdhesiveRam]: block(BlockId.AdhesiveRam, "Adhesive Ram", "#65715f", "Pushes a block line and pulls the nearest block back on retraction.", {
+  [BlockId.AdhesiveRam]: block(BlockId.AdhesiveRam, "Sticky Piston", "#65715f", "Pushes a block line and pulls the nearest block back on retraction.", {
     hardness: 2.2, shape: "piston", automation: "machine",
   }),
   [BlockId.PulseButton]: block(BlockId.PulseButton, "Pulse Button", "#b9855c", "A compact manual source that emits a short pulse.", {
@@ -407,6 +407,12 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
   [BlockId.DungeonSeal]: block(BlockId.DungeonSeal, "Guardian Seal", "#8f4f68", "A sealed loot plinth bound to the dungeon guardian.", {
     solid: false, opaque: false, hardness: 999, collectible: false, shape: "plate", emissive: 0.65,
   }),
+  [BlockId.Dispenser]: block(BlockId.Dispenser, "Dispenser", "#606a6b", "Fires the first stored item from its facing side on a rising signal.", {
+    hardness: 2.1, automation: "storage",
+  }),
+  [BlockId.Dropper]: block(BlockId.Dropper, "Dropper", "#555f61", "Drops the first stored item from its facing side on a rising signal.", {
+    hardness: 2.1, automation: "storage",
+  }),
 };
 
 const LEAF_BLOCKS = new Set<BlockId>([
@@ -471,6 +477,7 @@ export const ITEM_NAMES: Record<string, string> = {
   "food:pork": "Raw Pork",
   "food:chicken": "Raw Chicken",
   "consumable:mender-tonic": "Mender Tonic",
+  "vehicle:boat": "Wooden Boat",
 };
 
 const ITEM_DESCRIPTIONS: Partial<Record<ItemId, string>> = {
@@ -511,6 +518,7 @@ const ITEM_DESCRIPTIONS: Partial<Record<ItemId, string>> = {
   "food:pork": "Raw pork from pigs. Restores nutrition when eaten.",
   "food:chicken": "Raw chicken from chickens. Restores a little nutrition when eaten.",
   "consumable:mender-tonic": "A single-use tonic that restores a large amount of health.",
+  "vehicle:boat": "A buoyant, steerable boat. Use it on water, interact to board, and sneak to dismount.",
 };
 
 export const ALL_ITEMS: ItemId[] = [
@@ -579,8 +587,8 @@ export const RECIPES: Recipe[] = [
   { id: "flux-coil", name: "Flux Coil", station: "workbench", inputs: { "part:copper-ingot": 2, [itemForBlock(BlockId.AetherCrystal)]: 1 }, output: { item: "part:flux-coil", count: 2 }, description: "The heart of powered devices." },
   { id: "logic-wafer", name: "Logic Wafer", station: "workbench", inputs: { "part:copper-ingot": 1, [itemForBlock(BlockId.AetherCrystal)]: 2 }, output: { item: "part:logic-wafer", count: 2 }, description: "Carries conditional logic." },
   { id: "gear", name: "Drive Gear", station: "workbench", inputs: { "part:copper-ingot": 2, [itemForBlock(BlockId.Stone)]: 1 }, output: { item: "part:gear", count: 1 }, description: "Transfers mechanical force." },
-  { id: "wire", name: "Flux Conduit", station: "workbench", inputs: { "part:copper-ingot": 1 }, output: { item: itemForBlock(BlockId.FluxWire), count: 8 }, description: "Carries signal strength and machine energy." },
-  { id: "toggle", name: "Toggle Relay", station: "workbench", inputs: { "part:copper-ingot": 1, [itemForBlock(BlockId.Stone)]: 1 }, output: { item: itemForBlock(BlockId.Toggle), count: 1 }, description: "Manual on/off input." },
+  { id: "wire", name: "Fluxstone Dust", station: "workbench", inputs: { "part:flux-dust": 1 }, output: { item: itemForBlock(BlockId.FluxWire), count: 8 }, description: "Carries a fading fifteen-level signal through adjacent dust." },
+  { id: "toggle", name: "Fluxstone Lever", station: "workbench", inputs: { "part:copper-ingot": 1, [itemForBlock(BlockId.Stone)]: 1 }, output: { item: itemForBlock(BlockId.Toggle), count: 1 }, description: "Manual on/off input." },
   { id: "lamp", name: "Flux Lamp", station: "workbench", inputs: { "part:flux-coil": 1, [itemForBlock(BlockId.Glass)]: 2 }, output: { item: itemForBlock(BlockId.FluxLamp), count: 1 }, description: "Signal-controlled illumination." },
   { id: "generator", name: "Thermal Dynamo", station: "workbench", inputs: { "part:flux-coil": 2, "part:gear": 2, [itemForBlock(BlockId.StoneBrick)]: 4 }, output: { item: itemForBlock(BlockId.ThermalGenerator), count: 1 }, description: "Burns carbon shale for 24 flux per beat." },
   { id: "cell", name: "Flux Cell", station: "workbench", inputs: { "part:flux-coil": 2, "part:copper-ingot": 3 }, output: { item: itemForBlock(BlockId.FluxCell), count: 1 }, description: "Buffers up to 1,000 flux." },
@@ -592,16 +600,22 @@ export const RECIPES: Recipe[] = [
   { id: "or", name: "OR Matrix", station: "workbench", inputs: { "part:logic-wafer": 1 }, output: { item: itemForBlock(BlockId.OrGate), count: 1 }, description: "Accepts any active neighbor." },
   { id: "not", name: "NOT Matrix", station: "workbench", inputs: { "part:logic-wafer": 1, [itemForBlock(BlockId.AetherCrystal)]: 1 }, output: { item: itemForBlock(BlockId.NotGate), count: 1 }, description: "Inverts its input." },
   { id: "delay", name: "Pulse Delay", station: "workbench", inputs: { "part:logic-wafer": 1, "part:flux-coil": 1 }, output: { item: itemForBlock(BlockId.DelayGate), count: 1 }, description: "Adds four beats of delay." },
-  { id: "pulse-repeater", name: "Pulse Repeater", station: "workbench", inputs: { "part:logic-wafer": 1, "part:copper-ingot": 2, [itemForBlock(BlockId.StoneSlab)]: 1 }, output: { item: itemForBlock(BlockId.PulseRepeater), count: 1 }, description: "Restores signal strength with a directional delay." },
-  { id: "flux-comparator", name: "Flux Comparator", station: "workbench", inputs: { "part:logic-wafer": 2, "part:copper-ingot": 2, [itemForBlock(BlockId.AetherCrystal)]: 1 }, output: { item: itemForBlock(BlockId.FluxComparator), count: 1 }, description: "Compares rear and side analog signals." },
-  { id: "inverter-torch", name: "Inverter Torch", station: "workbench", inputs: { "part:copper-ingot": 1, [itemForBlock(BlockId.GlowRod)]: 1 }, output: { item: itemForBlock(BlockId.InverterTorch), count: 2 }, description: "A compact normally-on inverter." },
-  { id: "observer", name: "Change Observer", station: "workbench", inputs: { "part:logic-wafer": 2, [itemForBlock(BlockId.Stone)]: 4, [itemForBlock(BlockId.AetherCrystal)]: 1 }, output: { item: itemForBlock(BlockId.Observer), count: 1 }, description: "Pulses when its watched block changes." },
-  { id: "ram", name: "Linear Ram", station: "workbench", inputs: { "part:gear": 2, "part:copper-ingot": 3, [itemForBlock(BlockId.StoneBrick)]: 3 }, output: { item: itemForBlock(BlockId.Ram), count: 1 }, description: "Pushes up to six movable blocks." },
-  { id: "adhesive-ram", name: "Adhesive Ram", station: "workbench", inputs: { "part:gear": 2, "part:copper-ingot": 3, [itemForBlock(BlockId.Thornvine)]: 2 }, output: { item: itemForBlock(BlockId.AdhesiveRam), count: 1 }, description: "Pushes on extension and pulls on retraction." },
+  { id: "pulse-repeater", name: "Fluxstone Repeater", station: "workbench", inputs: { "part:flux-dust": 2, "part:copper-ingot": 2, [itemForBlock(BlockId.StoneSlab)]: 1 }, output: { item: itemForBlock(BlockId.PulseRepeater), count: 1 }, description: "Restores signal strength with a directional delay." },
+  { id: "flux-comparator", name: "Fluxstone Comparator", station: "workbench", inputs: { "part:flux-dust": 3, "part:copper-ingot": 2, [itemForBlock(BlockId.AetherCrystal)]: 1 }, output: { item: itemForBlock(BlockId.FluxComparator), count: 1 }, description: "Compares rear and side analog signals." },
+  { id: "inverter-torch", name: "Fluxstone Torch", station: "workbench", inputs: { "part:flux-dust": 1, [itemForBlock(BlockId.GlowRod)]: 1 }, output: { item: itemForBlock(BlockId.InverterTorch), count: 2 }, description: "A compact normally-on inverter." },
+  { id: "observer", name: "Observer", station: "workbench", inputs: { "part:logic-wafer": 2, [itemForBlock(BlockId.Stone)]: 4, [itemForBlock(BlockId.AetherCrystal)]: 1 }, output: { item: itemForBlock(BlockId.Observer), count: 1 }, description: "Pulses when its watched block changes." },
+  { id: "ram", name: "Piston", station: "workbench", inputs: { "part:gear": 2, "part:copper-ingot": 3, [itemForBlock(BlockId.StoneBrick)]: 3 }, output: { item: itemForBlock(BlockId.Ram), count: 1 }, description: "Pushes up to six movable blocks." },
+  { id: "adhesive-ram", name: "Sticky Piston", station: "workbench", inputs: { "part:gear": 2, "part:copper-ingot": 3, [itemForBlock(BlockId.Thornvine)]: 2 }, output: { item: itemForBlock(BlockId.AdhesiveRam), count: 1 }, description: "Pushes on extension and pulls on retraction." },
   { id: "button", name: "Pulse Button", station: "workbench", inputs: { [itemForBlock(BlockId.Stone)]: 1, "part:copper-ingot": 1 }, output: { item: itemForBlock(BlockId.PulseButton), count: 2 }, description: "Emits a short manual pulse." },
   { id: "pressure-plate", name: "Presence Plate", station: "workbench", inputs: { [itemForBlock(BlockId.StoneSlab)]: 1, "part:copper-ingot": 1 }, output: { item: itemForBlock(BlockId.PressurePlate), count: 1 }, description: "Detects players, creatures, and loose items." },
   { id: "daylight-sensor", name: "Sun Dial", station: "workbench", inputs: { [itemForBlock(BlockId.Glass)]: 2, "part:logic-wafer": 1, [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, output: { item: itemForBlock(BlockId.DaylightSensor), count: 1 }, description: "Measures daylight as signal strength." },
-  { id: "hopper", name: "Collector Funnel", station: "workbench", inputs: { "part:copper-ingot": 4, [itemForBlock(BlockId.Crate)]: 1 }, output: { item: itemForBlock(BlockId.Hopper), count: 1 }, description: "Collects and transfers loose resources." },
+  { id: "pulse-target", name: "Pulse Target", station: "workbench", inputs: { [itemForBlock(BlockId.Stone)]: 4, "part:soft-fiber": 1, "part:flux-dust": 1 }, output: { item: itemForBlock(BlockId.TargetBlock), count: 1 }, description: "Emits a pulse when used or struck by a projectile." },
+  { id: "memory-lamp", name: "Memory Lamp", station: "workbench", inputs: { [itemForBlock(BlockId.FluxLamp)]: 1, "part:logic-wafer": 1 }, output: { item: itemForBlock(BlockId.LatchLamp), count: 1 }, description: "Toggles between lit and dark on each rising signal." },
+  { id: "tone-block", name: "Tone Block", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 6, "part:flux-dust": 1 }, inputOptions: withAnyWood({ "part:flux-dust": 1 }, 6), output: { item: itemForBlock(BlockId.NoteEmitter), count: 1 }, description: "Plays a synthesized note on a rising signal." },
+  { id: "hopper", name: "Hopper", station: "workbench", inputs: { "part:iron-ingot": 5, [itemForBlock(BlockId.Crate)]: 1 }, output: { item: itemForBlock(BlockId.Hopper), count: 1 }, description: "Collects and transfers loose resources." },
+  { id: "dispenser", name: "Dispenser", station: "workbench", inputs: { [itemForBlock(BlockId.Cobblestone)]: 7, "part:flux-dust": 1, "part:gear": 1 }, output: { item: itemForBlock(BlockId.Dispenser), count: 1 }, description: "Fires stored items when a signal rises." },
+  { id: "dropper", name: "Dropper", station: "workbench", inputs: { [itemForBlock(BlockId.Cobblestone)]: 7, "part:flux-dust": 1 }, output: { item: itemForBlock(BlockId.Dropper), count: 1 }, description: "Drops stored items when a signal rises." },
+  { id: "boat", name: "Wooden Boat", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 5 }, inputOptions: withAnyWood({}, 5), output: { item: "vehicle:boat", count: 1 }, description: "A steerable boat for rivers, lakes, and oceans." },
   { id: "stone-slabs", name: "Roughstone Slabs", station: "hand", inputs: { [itemForBlock(BlockId.Stone)]: 3 }, output: { item: itemForBlock(BlockId.StoneSlab), count: 6 }, description: "Half-height pieces for compact construction." },
   { id: "stone-steps", name: "Roughstone Steps", station: "workbench", inputs: { [itemForBlock(BlockId.Stone)]: 4 }, output: { item: itemForBlock(BlockId.StoneStairs), count: 4 }, description: "Smooth two-tier steps." },
   { id: "frostpine-planks", name: "Cut Frostpine Planks", station: "hand", inputs: { [itemForBlock(BlockId.FrostpineLog)]: 1 }, output: { item: itemForBlock(BlockId.FrostpinePlanks), count: 4 }, description: "Cut pale alpine timber into planks." },
@@ -660,6 +674,7 @@ const DESIGNED_TEXTURES = new Set<BlockId>([
   BlockId.FluxCell, BlockId.BoreDrill, BlockId.Conveyor, BlockId.ArcFurnace,
   BlockId.Fabricator, BlockId.Ram, BlockId.Hopper, BlockId.Observer,
   BlockId.HearthFurnace, BlockId.TradePost, BlockId.RelicCache,
+  BlockId.Dispenser, BlockId.Dropper,
   BlockId.DungeonGate, BlockId.DungeonBrick, BlockId.DungeonReturn, BlockId.DungeonSeal,
 ]);
 
