@@ -3,8 +3,8 @@ export const WORLD_MIN_Y = -64;
 export const WORLD_MAX_Y = 320;
 export const WORLD_HEIGHT = WORLD_MAX_Y - WORLD_MIN_Y;
 export const SEA_LEVEL = 64;
-export const SAVE_VERSION = 1;
-export const WORLD_GENERATION_VERSION = 4;
+export const SAVE_VERSION = 2;
+export const WORLD_GENERATION_VERSION = 5;
 
 export type GameMode = "survival" | "creative";
 
@@ -129,6 +129,8 @@ export enum BlockId {
   DungeonBrick = 117,
   DungeonReturn = 118,
   DungeonSeal = 119,
+  Dispenser = 120,
+  Dropper = 121,
 }
 
 export type ItemId =
@@ -169,7 +171,8 @@ export type ItemId =
   | "food:glowcut"
   | "food:pork"
   | "food:chicken"
-  | "consumable:mender-tonic";
+  | "consumable:mender-tonic"
+  | "vehicle:boat";
 
 export interface Vec3Data {
   x: number;
@@ -196,6 +199,7 @@ export interface MachineState {
   lastInput?: number;
   observedBlock?: BlockId;
   pulseTicks?: number;
+  cooldownTicks?: number;
   extended?: boolean;
   note?: number;
   tradeStock?: Record<string, number>;
@@ -219,7 +223,7 @@ export interface DroppedItemState {
 
 export interface MobState {
   id: string;
-  kind: "sheep" | "cow" | "pig" | "chicken" | "mireling" | "glowgrazer" | "cinderling" | "thornback" | "nightwisp" | "wayfarer";
+  kind: "sheep" | "cow" | "pig" | "chicken" | "mireling" | "glowgrazer" | "cinderling" | "thornback" | "nightwisp" | "shardcaster" | "wayfarer";
   position: Vec3Data;
   velocity: Vec3Data;
   health: number;
@@ -243,7 +247,49 @@ export interface MobState {
   spawnedAt?: number;
 }
 
+export type RealmId = "frontier" | "emberdeep" | `dungeon:${string}`;
+
+export interface ProjectileState {
+  id: string;
+  kind: "enemy-shard" | "aether-bolt" | "dispenser-shot";
+  position: Vec3Data;
+  velocity: Vec3Data;
+  damage: number;
+  life: number;
+  ownerId: string;
+  targetPlayerId?: string;
+  realm: RealmId;
+}
+
+export interface BoatState {
+  id: string;
+  position: Vec3Data;
+  velocity: Vec3Data;
+  yaw: number;
+  angularVelocity: number;
+  riderId?: string;
+  wood: "emberwood" | "frostpine" | "riftwood";
+  realm: RealmId;
+}
+
 export type MutationTuple = [number, number, number, BlockId];
+
+export interface PlayerSaveState {
+  position: Vec3Data;
+  yaw: number;
+  pitch: number;
+  health: number;
+  hunger: number;
+  stamina: number;
+  inventory: Inventory;
+  hotbar: Array<ItemId | null>;
+  inventorySlots?: InventoryLayout;
+  selectedSlot: number;
+  tradeCredit?: number;
+  spawnPoint?: Vec3Data;
+  realm?: RealmId;
+  skinSeed?: number;
+}
 
 export interface WorldSave {
   version: number;
@@ -251,25 +297,15 @@ export interface WorldSave {
   createdAt: number;
   seed: string;
   mode?: GameMode;
-  player: {
-    position: Vec3Data;
-    yaw: number;
-    pitch: number;
-    health: number;
-    hunger: number;
-    stamina: number;
-    inventory: Inventory;
-    hotbar: Array<ItemId | null>;
-    inventorySlots?: InventoryLayout;
-    selectedSlot: number;
-    tradeCredit?: number;
-  };
+  player: PlayerSaveState;
+  playerProfiles?: Record<string, PlayerSaveState>;
   timeOfDay: number;
   dayCount?: number;
   mutations: MutationTuple[];
   machines: Array<[string, MachineState]>;
   drops: DroppedItemState[];
   mobs: MobState[];
+  boats?: BoatState[];
   waterLevels?: Array<[string, number]>;
 }
 
@@ -392,6 +428,11 @@ export interface HudState {
   locatorMarkers: LocatorMarker[];
   workbenchActive: boolean;
   sprinting: boolean;
+  damageFlash: number;
+  damageDirection: number;
+  hitMarker: number;
+  realmLabel: string;
+  ridingBoat: boolean;
   toast?: string;
 }
 
@@ -425,6 +466,11 @@ export interface PlayerSnapshot {
   swimming?: boolean;
   flying?: boolean;
   crouching?: boolean;
+  heldItem?: ItemId | null;
+  moveSpeed?: number;
+  realm?: RealmId;
+  skinSeed?: number;
+  ridingBoatId?: string;
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {

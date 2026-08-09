@@ -4,9 +4,9 @@ import "./globals.css";
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
 export const metadata: Metadata = {
-  title: "Voxel Frontier — Living Frontier",
+  title: "Voxel Frontier — Realmworks",
   description:
-    "An original voxel survival game with living light-aware creatures, server-backed chat and multiplayer, click-to-place storage, procedural co-op delves, combat, and automation.",
+    "An original voxel survival game with responsive combat, boats, rebuilt Fluxstone automation, server-backed multiplayer, and monumental procedural realm delves.",
   applicationName: "Voxel Frontier",
   manifest: `${basePath}/manifest.webmanifest`,
   icons: {

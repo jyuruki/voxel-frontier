@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ALL_ITEMS, BLOCKS, RECIPES, itemDescription, itemName, matchingRecipeInputs, recipeInputOptions } from "./game/blocks";
+import { ALL_ITEMS, BLOCKS, RECIPES, blockForItem, itemDescription, itemName, matchingRecipeInputs, recipeInputOptions } from "./game/blocks";
 import { ChestPanelData, GameEngine, MachinePanelData, TradePanelData } from "./game/engine";
 import { itemSalePoints } from "./game/economy";
 import { HOTBAR_START, INVENTORY_SLOT_COUNT } from "./game/inventory";
@@ -63,7 +63,62 @@ const EMPTY_HUD: HudState = {
   locatorMarkers: [],
   workbenchActive: false,
   sprinting: false,
+  damageFlash: 0,
+  damageDirection: 0,
+  hitMarker: 0,
+  realmLabel: "Living Frontier",
+  ridingBoat: false,
 };
+
+const ITEM_SOURCE_HINTS: Partial<Record<ItemId, string>> = {
+  "part:coal": "Mine Carbon Shale with a wooden pickaxe or better; the ore drops Coal.",
+  "part:flux-dust": "Mine a deep Fluxstone Ore seam with a Roughstone Pick or better.",
+  "part:diamond": "Mine Diamond Ore near the deepest stone layers with an Iron Pick or better.",
+  "part:soft-fiber": "Defeat or harvest sheep; Soft Fiber is their common material drop.",
+  "part:rift-core": "Trade with a Wayfarer or clear high-tier dimensional encounters.",
+  "part:moonshard": "Cut Moonshard Ore at a Tinker Bench, or defeat Shardcasters in delves.",
+  "part:carapace": "Defeat Thornbacks in wild biomes and dungeon encounters.",
+  "part:cinder-core": "Defeat Cinderlings in the Emberdeep.",
+  "part:feather": "Chickens drop feathers when defeated.",
+  "currency:frontier-mark": "Sell gathered or crafted stacks to village Wayfarers, then spend the Marks with any specialist.",
+  "food:starfruit": "Gather luminous Starblooms growing in the frontier.",
+  "food:glowcut": "Cattle drop Raw Beef.",
+  "food:pork": "Pigs drop Raw Pork.",
+  "food:chicken": "Chickens drop Raw Chicken.",
+};
+
+const GUIDE_ITEMS = ALL_ITEMS.filter((item) => {
+  const blockId = blockForItem(item);
+  return blockId === null
+    || BLOCKS[blockId].collectible
+    || RECIPES.some((recipe) => recipe.output.item === item);
+});
+
+function acquisitionHint(item: ItemId): string {
+  const source = ITEM_SOURCE_HINTS[item];
+  if (source) return source;
+  const recipe = RECIPES.find((candidate) => candidate.output.item === item);
+  if (recipe) {
+    const station = recipe.station === "hand"
+      ? "your inventory"
+      : recipe.station === "workbench"
+        ? "a placed Tinker Bench"
+        : recipe.station === "furnace"
+          ? "a Hearth Furnace"
+          : "a Fabricator";
+    const ingredients = Object.entries(recipeInputOptions(recipe)[0])
+      .map(([ingredient, count]) => `${count} ${itemName(ingredient as ItemId)}`)
+      .join(", ");
+    return `Make ${recipe.output.count} at ${station} using ${ingredients}.`;
+  }
+  const blockId = blockForItem(item);
+  if (blockId !== null) {
+    const definition = BLOCKS[blockId];
+    const verb = definition.shape === "cross" ? "Gather" : "Mine or reclaim";
+    return `${verb} ${definition.name} in the world with an appropriate tool.`;
+  }
+  return "Find this through exploration, creature drops, dungeon rewards, or Wayfarer trading.";
+}
 
 function ItemIcon({ item, count, compact = false }: { item: ItemId; count?: number | string; compact?: boolean }) {
   return (
@@ -308,6 +363,7 @@ export default function GameApp() {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatText, setChatText] = useState("");
   const [chatEntries, setChatEntries] = useState<ChatEntry[]>([]);
+  const [chatClock, setChatClock] = useState(0);
   const toastTimer = useRef<number | null>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
 
@@ -340,6 +396,17 @@ export default function GameApp() {
   }, [chatOpen]);
 
   useEffect(() => {
+    if (chatOpen || chatEntries.length === 0) return;
+    const expiresAt = Math.max(...chatEntries.map((entry) => entry.timestamp)) + 5_600;
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      setChatClock(now);
+      if (now >= expiresAt) window.clearInterval(timer);
+    }, 400);
+    return () => window.clearInterval(timer);
+  }, [chatOpen, chatEntries]);
+
+  useEffect(() => {
     const updateFullscreen = () => setIsFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener("fullscreenchange", updateFullscreen);
     return () => document.removeEventListener("fullscreenchange", updateFullscreen);
@@ -363,6 +430,12 @@ export default function GameApp() {
   const closeOverlay = useCallback(() => {
     setOverlay("none");
     engineRef.current?.resume();
+  }, []);
+
+  const closeChat = useCallback(() => {
+    setChatOpen(false);
+    setChatText("");
+    engineRef.current?.resumeInputCapture();
   }, []);
 
   const toggleInventory = useCallback((station: "hand" | "workbench" = "hand") => {
@@ -407,7 +480,11 @@ export default function GameApp() {
             openOverlay("trade");
           },
           onChatOpen: () => setChatOpen(true),
-          onChat: (entry) => setChatEntries((current) => [...current.filter((candidate) => candidate.id !== entry.id), entry].slice(-30)),
+          onChat: (entry) => {
+            const received = { ...entry, timestamp: Date.now() };
+            setChatClock(received.timestamp);
+            setChatEntries((current) => [...current.filter((candidate) => candidate.id !== received.id), received].slice(-30));
+          },
           onToast: showToast,
         },
       });
@@ -479,6 +556,9 @@ export default function GameApp() {
   const inventoryTypes = Object.values(hud.inventory).filter((count) => count > 0).length;
 
   const heldItem = hud.hotbar[hud.selectedSlot] ?? null;
+  const visibleChatEntries = chatOpen
+    ? chatEntries.slice(-30)
+    : chatEntries.filter((entry) => chatClock - entry.timestamp < 5_600).slice(-4);
 
   const refreshMachine = () => {
     if (!machine) return;
@@ -522,7 +602,7 @@ export default function GameApp() {
             <span className="brand__mark"><i /><i /><i /></span>
             <span><strong>VOXEL</strong><em>FRONTIER</em></span>
           </div>
-          <span className="build-tag">Living Frontier · Version 9</span>
+          <span className="build-tag">Realmworks · Version 10</span>
         </header>
 
         <section className="landing__content">
@@ -530,10 +610,10 @@ export default function GameApp() {
             <p className="eyebrow">Shape the wild. Let the world answer.</p>
             <h1>Build a world worth sharing.</h1>
             <p>
-              Explore a world that populates around your party, light caves against danger, organize shared storage, chat, smelt, and gather friends for procedural guardian delves.
+              Explore open cave mouths, build working Fluxstone circuits, sail with friends, and enter vast procedural guardian delves in their own realms.
             </p>
             <div className="feature-chips">
-              <span>Living spawns</span><span>Room chat</span><span>True furnace UI</span><span>Safer delves</span>
+              <span>Readable combat</span><span>Working boats</span><span>Rebuilt Fluxstone</span><span>Realm delves</span>
             </div>
           </div>
 
@@ -573,7 +653,7 @@ export default function GameApp() {
             </button>
             <details className="import-panel">
               <summary>Import a world key</summary>
-              <textarea value={importValue} onChange={(event) => setImportValue(event.target.value)} placeholder="Paste a VF1 world key…" />
+              <textarea value={importValue} onChange={(event) => setImportValue(event.target.value)} placeholder="Paste a VF2 world key…" />
               {importError && <p className="form-error">{importError}</p>}
               <button className="secondary-button" onClick={importWorld}>Open imported world</button>
             </details>
@@ -591,7 +671,7 @@ export default function GameApp() {
 
         {overlay === "guide" && <GuideModal onClose={() => setOverlay("none")} />}
         {overlay === "options" && (
-          <OptionsModal settings={settings} update={updateSetting} isFullscreen={isFullscreen} onToggleFullscreen={toggleFullscreen} onClose={() => setOverlay("none")} />
+          <OptionsModal settings={settings} update={updateSetting} isFullscreen={isFullscreen} onToggleFullscreen={toggleFullscreen} onOpenGuide={() => setOverlay("guide")} onClose={() => setOverlay("none")} />
         )}
         {toast && <div className="toast">{toast}</div>}
       </main>
@@ -602,6 +682,14 @@ export default function GameApp() {
     <main className="game-shell" onContextMenu={(event) => event.preventDefault()}>
       <canvas ref={canvasRef} className="game-canvas" aria-label="Voxel Frontier 3D world" />
       <div className="vignette" />
+      <div
+        className="damage-feedback"
+        style={{
+          opacity: hud.damageFlash,
+          "--damage-angle": `${hud.damageDirection}rad`,
+        } as CSSProperties}
+        aria-hidden="true"
+      ><i /></div>
       {launchError && (
         <div className="graphics-error" role="alert">
           <div className="brand brand--hud"><span className="brand__mark"><i /><i /><i /></span><span><strong>VOXEL</strong><em>FRONTIER</em></span></div>
@@ -612,6 +700,7 @@ export default function GameApp() {
         </div>
       )}
       <div className={`crosshair ${hud.targetedMob ? "crosshair--hostile" : ""}`} aria-hidden="true"><i /><i /></div>
+      <div className="hit-confirm" style={{ opacity: hud.hitMarker }} aria-hidden="true"><i /><i /><i /><i /></div>
       {hud.critical && <div className="critical-hit" role="status">CRITICAL!</div>}
 
       <div className="hud-top-left">
@@ -620,18 +709,20 @@ export default function GameApp() {
           <span><strong>VOXEL</strong><em>FRONTIER</em></span>
         </div>
         <div className="location-card">
-          <strong>{hud.biome}</strong>
+          <strong>{hud.realmLabel} · {hud.biome}</strong>
           <span>{hud.coordinates.x} · {hud.coordinates.y} · {hud.coordinates.z}</span>
           <span>{hud.timeLabel} · Day {hud.dayCount} · {hud.gameMode}{hud.flying ? " · flying" : ""}</span>
         </div>
       </div>
 
-      <div className="hud-top-center">
-        <p>ACTIVE BLUEPRINT</p>
-        <strong>{hud.objective}</strong>
-      </div>
-
       <button className="pause-button" onClick={() => openOverlay("pause")} aria-label="Pause game">Ⅱ</button>
+      {isTouch && (
+        <button className="touch-chat-utility" onPointerDown={(event) => {
+          event.preventDefault();
+          if (chatOpen) closeChat();
+          else engineRef.current?.beginChat();
+        }} aria-label={chatOpen ? "Close chat archive" : "Open chat archive"}>{chatOpen ? "CLOSE" : "CHAT"}</button>
+      )}
 
       {hud.targetedMob && (
         <div className="combat-target" aria-label={`${hud.targetedMob.name} health`}>
@@ -650,7 +741,7 @@ export default function GameApp() {
       {settings.showFps && <div className="fps-pill">{hud.fps} FPS</div>}
 
       <div className="held-item-label" aria-live="polite">
-        {heldItem ? itemName(heldItem) : "Empty hand"}
+        {hud.ridingBoat ? "Sailing · sneak to leave" : heldItem ? itemName(heldItem) : "Empty hand"}
       </div>
       <div className="locator-bar" aria-label={`Player locator, facing ${hud.locatorHeading}`}>
         <span className="locator-bar__edge">‹</span>
@@ -695,8 +786,9 @@ export default function GameApp() {
       </div>
 
       <div className={`chat-feed ${chatOpen ? "chat-feed--open" : ""}`} aria-live="polite">
-        {chatEntries.slice(-6).map((entry) => (
-          <p key={entry.id} className={`chat-entry chat-entry--${entry.kind}`}>
+        {chatOpen && <div className="chat-archive-heading"><strong>CHAT ARCHIVE</strong><span>{chatEntries.length} recent</span><button type="button" onClick={closeChat} aria-label="Close chat">×</button></div>}
+        {visibleChatEntries.map((entry) => (
+          <p key={entry.id} className={`chat-entry chat-entry--${entry.kind} ${chatOpen ? "" : "chat-entry--transient"}`}>
             {entry.kind === "chat" ? <><strong>{entry.name}</strong><span>{entry.text}</span></> : <span><strong>{entry.name}</strong> {entry.text}</span>}
           </p>
         ))}
@@ -705,9 +797,7 @@ export default function GameApp() {
         <form className="chat-input" onSubmit={(event) => {
           event.preventDefault();
           engineRef.current?.sendChat(chatText);
-          setChatText("");
-          setChatOpen(false);
-          engineRef.current?.resumeInputCapture();
+          closeChat();
         }}>
           <input
             ref={chatInputRef}
@@ -717,9 +807,7 @@ export default function GameApp() {
             onKeyDown={(event) => {
               if (event.key !== "Escape") return;
               event.preventDefault();
-              setChatOpen(false);
-              setChatText("");
-              engineRef.current?.resumeInputCapture();
+              closeChat();
             }}
             placeholder={network.role === "offline" ? "Write a local note…" : "Message the room…"}
             aria-label="Chat message"
@@ -742,27 +830,11 @@ export default function GameApp() {
             opacity={settings.touchOpacity}
             onMove={(x, y) => engineRef.current?.setMove(x, y)}
           />
-          {hud.gameMode === "creative" && (
-            <button className={`touch-flight-toggle ${hud.flying ? "active" : ""}`} onPointerDown={(event) => {
-              event.preventDefault();
-              engineRef.current?.toggleCreativeFlight();
-            }}>{hud.flying ? "LAND" : "FLY"}</button>
-          )}
           <div className={`touch-actions ${settings.leftHanded ? "touch-actions--left" : ""}`} style={{ opacity: settings.touchOpacity }}>
-            <HoldButton label="MINE / HIT" className="touch-button--mine" onChange={(pressed) => engineRef.current?.setAction("mine", pressed)} />
-            <HoldButton label="PLACE" onChange={(pressed) => engineRef.current?.setAction("place", pressed)} />
+            <HoldButton label="ATTACK" className="touch-button--attack" onChange={(pressed) => engineRef.current?.setAction("mine", pressed)} />
+            <HoldButton label="PLACE / USE" className="touch-button--place" onChange={(pressed) => engineRef.current?.setAction("place", pressed)} />
             <HoldButton label="JUMP" onChange={(pressed) => engineRef.current?.setAction("jump", pressed)} />
-            <HoldButton label={hud.sprinting ? "RUN ON" : "RUN"} className={hud.sprinting ? "active" : ""} onChange={(pressed) => engineRef.current?.setAction("sprint", pressed)} />
-            <HoldButton label="USE" onChange={(pressed) => engineRef.current?.setAction("interact", pressed)} />
-            <HoldButton label="DIVE" className="touch-button--dive" onChange={(pressed) => engineRef.current?.setAction("crouch", pressed)} />
-            <button className="touch-button touch-button--drop" onPointerDown={(event) => {
-              event.preventDefault();
-              engineRef.current?.dropSelectedItem(false);
-            }}>DROP</button>
-            <button className="touch-button touch-button--chat" onPointerDown={(event) => {
-              event.preventDefault();
-              engineRef.current?.beginChat();
-            }}>CHAT</button>
+            <HoldButton label="SNEAK" className="touch-button--sneak" onChange={(pressed) => engineRef.current?.setAction("crouch", pressed)} />
           </div>
         </div>
       )}
@@ -774,7 +846,7 @@ export default function GameApp() {
             <button className="secondary-button" onClick={() => { setCraftingStation("hand"); setOverlay("inventory"); }}>Inventory & crafting</button>
             <button className="secondary-button" onClick={() => setOverlay("network")}>Online room</button>
             <button className="secondary-button" onClick={() => setOverlay("save")}>Save & world key</button>
-            <button className="secondary-button" onClick={() => setOverlay("guide")}>Engineering guide</button>
+            <button className="secondary-button" onClick={() => setOverlay("guide")}>Guidebook</button>
             <button className="secondary-button" onClick={() => setOverlay("options")}>Options</button>
             <button className="text-button danger" onClick={exitWorld}>Save and return to title</button>
           </div>
@@ -847,7 +919,7 @@ export default function GameApp() {
       )}
 
       {overlay === "guide" && <GuideModal onClose={closeOverlay} />}
-      {overlay === "options" && <OptionsModal settings={settings} update={updateSetting} isFullscreen={isFullscreen} onToggleFullscreen={toggleFullscreen} onClose={closeOverlay} />}
+      {overlay === "options" && <OptionsModal settings={settings} update={updateSetting} isFullscreen={isFullscreen} onToggleFullscreen={toggleFullscreen} onOpenGuide={() => setOverlay("guide")} onClose={closeOverlay} />}
 
       {overlay === "save" && (
         <Modal title="World key" eyebrow="Portable save state" onClose={closeOverlay} wide>
@@ -873,10 +945,10 @@ export default function GameApp() {
       )}
 
       {overlay === "network" && (
-        <Modal title="Online room" eyebrow="Server-backed multiplayer · Version 9" onClose={closeOverlay} wide>
+        <Modal title="Online room" eyebrow="Server-backed multiplayer · Version 10" onClose={closeOverlay} wide>
           <div className="network-callout">
             <strong>Share one six-character code. Both players connect to the same room server.</strong>
-            <span>No SDP exchange, router negotiation, or manual answer key. The server routes authoritative world updates, preserves checkpoints, reconnects interrupted browsers, and promotes a guest if the host leaves.</span>
+            <span>No SDP exchange, router negotiation, or manual answer key. The server routes authoritative world updates, preserves world and per-player checkpoints, reconnects interrupted browsers, and promotes a guest if the host leaves.</span>
           </div>
           {!network.serverConfigured && <p className="form-error">This build does not have a multiplayer server URL yet. The game server must be deployed before online rooms can open.</p>}
           <div className="tab-row">
@@ -1063,16 +1135,23 @@ function OptionsModal({
   update,
   isFullscreen,
   onToggleFullscreen,
+  onOpenGuide,
   onClose,
 }: {
   settings: GameSettings;
   update: <K extends keyof GameSettings>(key: K, value: GameSettings[K]) => void;
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
+  onOpenGuide: () => void;
   onClose: () => void;
 }) {
   return (
     <Modal title="Options" eyebrow="Performance, controls, and audio" onClose={onClose} wide>
+      <button className="guidebook-launch" onClick={onOpenGuide}>
+        <span aria-hidden="true">▤</span>
+        <span><strong>Open the guidebook</strong><small>Controls, progression, Fluxstone circuits, boats, beds, delves, saves, and a searchable “how to get it” index.</small></span>
+        <b aria-hidden="true">→</b>
+      </button>
       <div className="settings-grid">
         <section>
           <h3>View</h3>
@@ -1093,7 +1172,7 @@ function OptionsModal({
           <label className="switch-row"><input type="checkbox" checked={settings.invertY} onChange={(e) => update("invertY", e.target.checked)} /><span>Invert vertical look</span></label>
           <label className="switch-row"><input type="checkbox" checked={settings.leftHanded} onChange={(e) => update("leftHanded", e.target.checked)} /><span>Left-handed touch layout</span></label>
           <label className="switch-row"><input type="checkbox" checked={settings.autoJump} onChange={(e) => update("autoJump", e.target.checked)} /><span>Auto-jump one-block rises</span></label>
-          <label className="switch-row"><input type="checkbox" checked={settings.toggleSprint} onChange={(e) => update("toggleSprint", e.target.checked)} /><span>Toggle sprint (R / mobile Run)</span></label>
+          <label className="switch-row"><input type="checkbox" checked={settings.toggleSprint} onChange={(e) => update("toggleSprint", e.target.checked)} /><span>Toggle sprint (R)</span></label>
           <label className="switch-row"><input type="checkbox" checked={settings.showFps} onChange={(e) => update("showFps", e.target.checked)} /><span>Show frame rate</span></label>
           <button className="secondary-button fullscreen-button" onClick={onToggleFullscreen}>{isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}</button>
         </section>
@@ -1103,42 +1182,68 @@ function OptionsModal({
 }
 
 function GuideModal({ onClose }: { onClose: () => void }) {
+  const [search, setSearch] = useState("");
+  const query = search.trim().toLowerCase();
+  const visibleItems = GUIDE_ITEMS.filter((item) => !query
+    || itemName(item).toLowerCase().includes(query)
+    || itemDescription(item).toLowerCase().includes(query)
+    || acquisitionHint(item).toLowerCase().includes(query));
   return (
-    <Modal title="Frontier field guide" eyebrow="Living Frontier · Version 9" onClose={onClose} wide>
+    <Modal title="Frontier guidebook" eyebrow="Realmworks · Version 10" onClose={onClose} wide>
+      <div className="guide-intro">
+        <div><span aria-hidden="true">▤</span><div><strong>Everything important, in one place.</strong><p>Start with the short chapters, then search any block, tool, part, food, vehicle, or machine below to learn where it comes from.</p></div></div>
+      </div>
       <div className="guide-grid">
         <article className="guide-card guide-card--accent">
-          <span>01</span><h3>Living populations</h3>
-          <p>Animals and threats populate near every active traveler as the party explores. Bright Turf supports livestock; hostile creatures require fully dark ground, and distant natural mobs make room for new encounters.</p>
+          <span>01</span><h3>Your first day</h3>
+          <p>Break a surface log, craft planks in your inventory, then make a Tinker Bench. A Wooden Pick gathers Roughstone and Coal; a Roughstone Pick unlocks Copper, Iron, and Fluxstone.</p>
         </article>
         <article className="guide-card">
-          <span>02</span><h3>Storage & smelting</h3>
-          <p>Click a stack once and then its destination. Every chest slot is selectable, double chests remain synchronized, and Hearth Furnaces expose clear input, fuel, and output slots above your full inventory.</p>
+          <span>02</span><h3>Fluxstone basics</h3>
+          <p>Levers, buttons, plates, torches, and sensors make power. Dust carries a 15-level signal. Repeaters restore it with a selectable delay; comparators compare or subtract. Rotate directional parts with X.</p>
         </article>
         <article className="guide-card">
-          <span>03</span><h3>Rooms & delves</h3>
-          <p>Press T or Enter to chat; defeats are announced to the room. Dungeon arrivals now land away from the return beacon and require a released input before another portal can activate.</p>
+          <span>03</span><h3>Moving things</h3>
+          <p>Pistons push up to six blocks; sticky pistons also pull one back. Observers pulse when the watched block changes. Hoppers transfer stored items, while droppers eject them and dispensers fire or place them.</p>
         </article>
         <article className="guide-card">
-          <span>04</span><h3>Light is protection</h3>
-          <p>Trail Torches cast a much broader warm visual pool and propagate fourteen levels of gameplay light. Hostile natural spawning requires block-light zero, so a lit mine is visibly and mechanically safer.</p>
+          <span>04</span><h3>Boats & beds</h3>
+          <p>Craft a boat from five planks, select it, and Place / Use on water. Interact nearby to board; steer while moving and Sneak to dismount. Place and use a bed at any time to set your personal respawn.</p>
         </article>
         <article className="guide-card">
-          <span>05</span><h3>Clean controls</h3>
-          <p>R toggles sprint by default, with a hold option in Settings. Menus recapture the mouse when closed, and a fallback capture click is consumed so it cannot accidentally break a Creative block.</p>
+          <span>05</span><h3>Combat feedback</h3>
+          <p>Damage now requires a real body overlap, vertical reach, and clear sight. A red vignette, directional knockback, and camera kick show incoming hits. Enemies flash red and recoil; Shardcaster bolts can be sidestepped.</p>
         </article>
         <article className="guide-card">
-          <span>06</span><h3>Direct automation</h3>
-          <p>Powered wire, gates, lamps, observers, rams, belts, and similar Flux components work directly in-world. Only machines that need fuel, ingredients, or a recipe keep a console.</p>
+          <span>06</span><h3>Roguelike delves</h3>
+          <p>Dungeon gates create a seeded realm of monumental rooms, bridges, gardens, galleries, and encounters. Each layout and architectural theme changes, with a sealed guardian vault and return beacon at the end.</p>
+        </article>
+        <article className="guide-card">
+          <span>07</span><h3>Storage & crafting</h3>
+          <p>Tap one inventory stack and then its destination; shift-click on desktop transfers quickly. Chests hold 27 slots and pair for 54. Furnaces have explicit input, fuel, and output slots.</p>
+        </article>
+        <article className="guide-card">
+          <span>08</span><h3>Rooms, chat & saves</h3>
+          <p>Chat messages fade after a few seconds; reopen Chat for the recent archive. A Version 10 world key carries the world, boats, and saved profiles for players who joined with their stable browser identity.</p>
         </article>
       </div>
       <div className="controls-table">
-        <h3>Desktop controls</h3>
-        <div><span><kbd>W A S D</kbd> Move / swim / fly</span><span><kbd>R</kbd> Toggle run / swim stroke</span><span><kbd>Shift</kbd> Crouch / dive / descend</span><span><kbd>Space</kbd> Jump / ascend</span><span><kbd>Q</kbd> Drop one</span><span><kbd>Shift + Q</kbd> Drop stack</span><span><kbd>T / Enter</kbd> Chat</span><span><kbd>V</kbd> Toggle Creative flight</span><span><kbd>Mouse</kbd> Look</span><span><kbd>LMB</kbd> Swing / mine / attack</span><span><kbd>MMB</kbd> Pick block in Creative</span><span><kbd>RMB</kbd> Place / use item</span><span><kbd>F</kbd> Interact</span><span><kbd>X</kbd> Rotate machinery</span><span><kbd>E</kbd> Open / close inventory</span></div>
+        <h3>Controls</h3>
+        <div><span><kbd>W A S D</kbd> Move / swim / fly</span><span><kbd>R</kbd> Toggle sprint</span><span><kbd>Shift</kbd> Sneak / dive / dismount</span><span><kbd>Space</kbd> Jump / ascend</span><span><kbd>Q</kbd> Drop one</span><span><kbd>Shift + Q</kbd> Drop stack</span><span><kbd>T / Enter</kbd> Chat archive</span><span><kbd>V</kbd> Creative flight</span><span><kbd>Mouse</kbd> Look</span><span><kbd>LMB</kbd> Mine / attack</span><span><kbd>RMB</kbd> Place / use</span><span><kbd>F</kbd> Interact / board</span><span><kbd>X</kbd> Rotate machinery</span><span><kbd>E</kbd> Inventory</span><span><kbd>Mobile</kbd> Stick + Attack, Place / Use, Jump, Sneak</span></div>
       </div>
-      <div className="scope-note">
-        <strong>What this release contains</strong>
-        <p>Version 9 makes exploration populate around every player, ties hostile spawning to propagated block light, adds synchronized chat and death notices, rebuilds chest and furnace interaction, corrects locator orientation, improves cave traversal, and closes the dungeon/menu input regressions.</p>
-      </div>
+      <section className="guide-index">
+        <header><div><p className="eyebrow">Acquisition index</p><h3>How do I get…?</h3></div><span>{visibleItems.length} matches</span></header>
+        <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search: boat, repeater, iron, bed, hopper…" autoComplete="off" />
+        <div className="guide-item-list">
+          {visibleItems.length === 0 && <div className="empty-inventory"><strong>No matching item.</strong><span>Try a simpler name or browse the recipe book in Inventory.</span></div>}
+          {visibleItems.map((item) => (
+            <article key={item}>
+              <ItemIcon item={item} compact />
+              <div><strong>{itemName(item)}</strong><span>{itemDescription(item)}</span><p>{acquisitionHint(item)}</p></div>
+            </article>
+          ))}
+        </div>
+      </section>
     </Modal>
   );
 }

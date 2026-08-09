@@ -3,9 +3,11 @@ import test from "node:test";
 import * as THREE from "three";
 import { AutomationSystem } from "../app/game/automation";
 import { ALL_ITEMS, BLOCKS, RECIPES, isLeafBlock, itemForBlock, matchingRecipeInputs } from "../app/game/blocks";
+import { boatIntersectsSolid, canPlaceBoat, updateBoatPhysics } from "../app/game/boats";
 import { CRITICAL_DAMAGE_MULTIPLIER, isCriticalHit, weaponStats } from "../app/game/combat";
 import { itemSalePoints } from "../app/game/economy";
 import { createDungeonPlan, isDungeonCoordinate, isDungeonEntranceChunk } from "../app/game/dungeons";
+import { clearCombatLine, damageIndicatorAngle, mobCanMeleeHit, mobCanShootPlayer } from "../app/game/encounters";
 import {
   HOTBAR_START,
   INVENTORY_SLOT_COUNT,
@@ -25,8 +27,8 @@ import { decodeWorldKey, encodeWorldKey } from "../app/game/save";
 import { blockLightLevel, canNaturalMobSpawn, NATURAL_DESPAWN_DISTANCE, NATURAL_SPAWN_MAX_DISTANCE, NATURAL_SPAWN_MIN_DISTANCE } from "../app/game/spawning";
 import { depositFurnaceItem, ensureFurnaceSlots, furnaceSlotItem, withdrawFurnaceItem } from "../app/game/smelting";
 import { DOUBLE_CHEST_SLOTS, SINGLE_CHEST_SLOTS, clearStorageItem, moveStorageSlot, placeStorageItem, reconcileStorageSlots, storageCanAccept } from "../app/game/storage";
-import { BlockId, CHUNK_SIZE, InputFrame, MobState, PlayerSnapshot, SAVE_VERSION, SEA_LEVEL, WORLD_GENERATION_VERSION, WORLD_MAX_Y, WORLD_MIN_Y, WorldSave } from "../app/game/types";
-import { EMBERDEEP_OFFSET, createVillagePlan, isVillageChunk, VoxelWorld } from "../app/game/world";
+import { BlockId, BoatState, CHUNK_SIZE, InputFrame, MobState, PlayerSnapshot, SAVE_VERSION, SEA_LEVEL, WORLD_GENERATION_VERSION, WORLD_MAX_Y, WORLD_MIN_Y, WorldSave } from "../app/game/types";
+import { EMBERDEEP_OFFSET, createVillagePlan, isVillageChunk, surfaceCaveEntranceForRegion, VoxelWorld } from "../app/game/world";
 import { NETWORK_PROTOCOL_VERSION, isValidRoomCode, routeGameMessage } from "../shared/room-protocol";
 
 function prepareArena(
@@ -163,6 +165,46 @@ test("placement raycasts target water cells while mining raycasts through them",
   assert.equal(voxelRaycast(world, origin, direction, 6, true)?.id, BlockId.Water);
 });
 
+test("boats float, steer, respect speed limits, and stop at shore obstacles", () => {
+  const world = new VoxelWorld("boat physics bench");
+  prepareArena(world, -3, 12, -3, 3, 40, 5);
+  for (let x = -3; x <= 12; x += 1) {
+    for (let z = -3; z <= 3; z += 1) world.setBlock(x, 41, z, BlockId.Water);
+  }
+  assert.equal(canPlaceBoat(world, { x: 0.5, y: 41.2, z: 0.5 }), true);
+  for (let z = -2; z <= 2; z += 1) {
+    world.setBlock(7, 41, z, BlockId.Stone);
+    world.setBlock(7, 42, z, BlockId.Stone);
+  }
+  const boat: BoatState = {
+    id: "physics-boat",
+    position: { x: 0.5, y: 41.72, z: 0.5 },
+    velocity: { x: 0, y: 0, z: 0 },
+    yaw: -Math.PI / 2,
+    angularVelocity: 0,
+    wood: "emberwood",
+    realm: "frontier",
+  };
+  for (let frame = 0; frame < 240; frame += 1) updateBoatPhysics(world, boat, { forward: 1, turn: frame < 20 ? 0.12 : 0 }, 1 / 60);
+  assert.ok(boat.position.x > 3, `boat failed to make useful progress; x=${boat.position.x}`);
+  assert.ok(boat.position.x <= 6.3, `boat crossed a solid shoreline wall; x=${boat.position.x}`);
+  assert.ok(boat.position.y > 41.3 && boat.position.y < 42.1, `boat buoyancy drifted to y=${boat.position.y}`);
+  assert.ok(Math.hypot(boat.velocity.x, boat.velocity.z) <= 7.41);
+  assert.equal(boatIntersectsSolid(world, boat.position), false);
+
+  const groundWorld = new VoxelWorld("falling boat bench");
+  prepareArena(groundWorld, -2, 2, -2, 2, 40, 6);
+  const fallingBoat: BoatState = {
+    ...boat,
+    id: "falling-boat",
+    position: { x: 0.5, y: 46, z: 0.5 },
+    velocity: { x: 0, y: 0, z: 0 },
+  };
+  for (let frame = 0; frame < 240; frame += 1) updateBoatPhysics(groundWorld, fallingBoat, { forward: 0, turn: 0 }, 1 / 60);
+  assert.ok(fallingBoat.position.y >= 41.33, `falling boat passed through its solid floor; y=${fallingBoat.position.y}`);
+  assert.equal(boatIntersectsSolid(groundWorld, fallingBoat.position), false);
+});
+
 test("the 36-slot inventory keeps items unique and supports pick/place plus shift transfer", () => {
   const inventory = {
     "tool:rough-pick": 1,
@@ -235,8 +277,27 @@ test("portable world keys round-trip and detect corruption", () => {
     drops: [],
     mobs: [],
   };
+  save.player.spawnPoint = { x: 4.5, y: 22.01, z: -8.5 };
+  save.player.skinSeed = 913;
+  save.playerProfiles = {
+    "traveler-friend0001": {
+      ...save.player,
+      position: { x: 9.5, y: 23, z: 2.5 },
+      inventory: { "part:diamond": 2 },
+      hotbar: ["part:diamond"],
+    },
+  };
+  save.boats = [{
+    id: "saved-boat",
+    position: { x: 3.5, y: 63.7, z: 4.5 },
+    velocity: { x: 0.2, y: 0, z: -0.1 },
+    yaw: 0.4,
+    angularVelocity: 0.03,
+    wood: "frostpine",
+    realm: "frontier",
+  }];
   const key = encodeWorldKey(save);
-  assert.ok(key.startsWith("VF1."));
+  assert.ok(key.startsWith("VF2."));
   assert.deepEqual(decodeWorldKey(key), save);
   const legacySave = { ...save };
   delete legacySave.generation;
@@ -251,6 +312,14 @@ test("portable world keys round-trip and detect corruption", () => {
   const parts = key.split(".");
   const damaged = `${parts[0]}.${parts[1]}x.${parts[2]}`;
   assert.throws(() => decodeWorldKey(damaged), /damaged|integrity/i);
+  const tooManyProfiles = {
+    ...save,
+    playerProfiles: Object.fromEntries(Array.from({ length: 33 }, (_, index) => [
+      `traveler-overflow-${index.toString().padStart(8, "0")}`,
+      { ...save.player, position: { ...save.player.position }, inventory: {}, hotbar: [] },
+    ])),
+  };
+  assert.throws(() => decodeWorldKey(encodeWorldKey(tooManyProfiles)), /player profiles/i);
 });
 
 test("mobile auto-jump clears a full one-block rise", () => {
@@ -315,6 +384,45 @@ test("critical hits require a descending airborne melee strike", () => {
   assert.equal(CRITICAL_DAMAGE_MULTIPLIER, 1.5);
 });
 
+test("hostile melee requires real vertical overlap and line of sight", () => {
+  const world = new VoxelWorld("combat reach bench");
+  prepareArena(world, -2, 14, -2, 2, 40, 8);
+  const mob: MobState = {
+    id: "reach-mireling",
+    kind: "mireling",
+    position: { x: 0.5, y: 41.01, z: 0.5 },
+    velocity: { x: 0, y: 0, z: 0 },
+    health: 36,
+    yaw: 0,
+    targetTimer: 1,
+  };
+  const nearby = { position: { x: 2.15, y: 41.01, z: 0.5 }, realm: "frontier" as const };
+  assert.equal(mobCanMeleeHit(world, mob, nearby), true);
+  assert.equal(mobCanMeleeHit(world, mob, { position: { x: 0.5, y: 61, z: 0.5 }, realm: "frontier" }), false, "a mob below the player must not hit through twenty blocks of height");
+  world.setBlock(1, 41, 0, BlockId.Stone);
+  world.setBlock(1, 42, 0, BlockId.Stone);
+  assert.equal(clearCombatLine(world, { x: 0.5, y: 41.7, z: 0.5 }, { x: 2.15, y: 41.9, z: 0.5 }), false);
+  assert.equal(mobCanMeleeHit(world, mob, nearby), false, "solid cover must block a melee hit");
+
+  world.setBlock(1, 41, 0, BlockId.Air);
+  world.setBlock(1, 42, 0, BlockId.Air);
+  const caster: MobState = { ...mob, id: "reach-caster", kind: "shardcaster", health: 34 };
+  const distant = { position: { x: 10.5, y: 41.01, z: 0.5 }, realm: "frontier" as const };
+  assert.equal(mobCanShootPlayer(world, caster, distant), true);
+  world.setBlock(5, 41, 0, BlockId.Stone);
+  world.setBlock(5, 42, 0, BlockId.Stone);
+  assert.equal(mobCanShootPlayer(world, caster, distant), false, "ranged enemies must respect cover");
+  assert.equal(mobCanShootPlayer(world, caster, { ...distant, realm: "emberdeep" }), false, "enemies cannot attack across realms");
+});
+
+test("damage direction maps world bearings onto the player's screen", () => {
+  const player = { x: 0, y: 41, z: 0 };
+  assert.ok(Math.abs(damageIndicatorAngle(player, 0, { x: 0, y: 41, z: -2 })) < 1e-8, "front should point up");
+  assert.ok(Math.abs(damageIndicatorAngle(player, 0, { x: 2, y: 41, z: 0 }) - Math.PI / 2) < 1e-8, "right should point right");
+  assert.ok(Math.abs(damageIndicatorAngle(player, -Math.PI / 2, { x: 2, y: 41, z: 0 })) < 1e-8, "camera yaw should rotate the bearing");
+  assert.ok(Math.abs(Math.abs(damageIndicatorAngle(player, 0, { x: 0, y: 41, z: 2 })) - Math.PI) < 1e-8, "back should point down");
+});
+
 test("creative flight ascends smoothly while retaining collision physics", () => {
   const world = new VoxelWorld("creative flight bench");
   prepareArena(world, -2, 2, -2, 2);
@@ -372,13 +480,16 @@ test("server multiplayer uses normalized six-character room codes", () => {
 });
 
 test("room server policy preserves host authority and upgrades secure endpoints", () => {
-  assert.equal(NETWORK_PROTOCOL_VERSION, 9);
+  assert.equal(NETWORK_PROTOCOL_VERSION, 10);
   assert.equal(routeGameMessage("guest", "request-block"), "host");
   assert.equal(routeGameMessage("guest", "request-machine"), "host");
   assert.equal(routeGameMessage("guest", "request-drop"), "host");
   assert.equal(routeGameMessage("guest", "request-chest"), "host");
   assert.equal(routeGameMessage("guest", "request-furnace"), "host");
   assert.equal(routeGameMessage("guest", "request-dungeon"), "host");
+  assert.equal(routeGameMessage("guest", "request-boat"), "host");
+  assert.equal(routeGameMessage("guest", "boat-input"), "host");
+  assert.equal(routeGameMessage("guest", "player-profile"), "host");
   assert.equal(routeGameMessage("guest", "chat"), "broadcast");
   assert.equal(routeGameMessage("guest", "death"), "broadcast");
   assert.equal(routeGameMessage("guest", "block"), "reject");
@@ -526,8 +637,10 @@ test("dungeon entrances are sparse and instance plans are deterministic but vari
   assert.deepEqual(createDungeonPlan(origins[0], world.seed), plans[0]);
   assert.ok(new Set(plans.map((plan) => plan.id)).size === plans.length);
   assert.ok(new Set(plans.map((plan) => plan.theme)).size >= 2);
-  assert.ok(plans.every((plan) => plan.rooms.length >= 3 && plan.rooms.length <= 5));
-  assert.ok(plans.every((plan) => isDungeonCoordinate(plan.destination.z)));
+  assert.ok(plans.every((plan) => plan.rooms.length >= 8 && plan.rooms.length <= 11));
+  assert.ok(plans.every((plan) => isDungeonCoordinate(plan.destination.x, plan.destination.z)));
+  assert.ok(plans.every((plan) => plan.rooms.at(-1)?.kind === "vault"));
+  assert.ok(plans.every((plan) => plan.rooms.some((room) => room.radius >= 14 && room.height >= 14)));
   assert.ok(plans.every((plan) => Math.hypot(
     plan.destination.x - (plan.returnPosition.x + 0.5),
     plan.destination.z - (plan.returnPosition.z + 0.5),
@@ -673,6 +786,38 @@ test("plants, circuits, lights, logistics, and builders use distinct partial sha
   assert.equal(BLOCKS[BlockId.GlassPane].shape, "pane");
 });
 
+test("the rebuilt Fluxstone set and boats all have survival recipes", () => {
+  const required = [
+    BlockId.FluxWire,
+    BlockId.Toggle,
+    BlockId.InverterTorch,
+    BlockId.PulseRepeater,
+    BlockId.FluxComparator,
+    BlockId.Hopper,
+    BlockId.Ram,
+    BlockId.AdhesiveRam,
+    BlockId.Observer,
+    BlockId.Dispenser,
+    BlockId.Dropper,
+    BlockId.PulseButton,
+    BlockId.PressurePlate,
+    BlockId.DaylightSensor,
+    BlockId.TargetBlock,
+    BlockId.NoteEmitter,
+    BlockId.FluxLamp,
+  ];
+  for (const block of required) {
+    assert.ok(RECIPES.some((recipe) => recipe.output.item === itemForBlock(block)), `missing survival recipe for ${BLOCKS[block].name}`);
+  }
+  const boat = RECIPES.find((recipe) => recipe.output.item === "vehicle:boat");
+  assert.ok(boat);
+  for (const planks of [BlockId.EmberwoodPlanks, BlockId.FrostpinePlanks, BlockId.RiftwoodPlanks]) {
+    assert.ok(matchingRecipeInputs(boat, { [itemForBlock(planks)]: 5 }), `boat rejected ${BLOCKS[planks].name}`);
+  }
+  assert.equal(BLOCKS[BlockId.Dispenser].automation, "storage");
+  assert.equal(BLOCKS[BlockId.Dropper].automation, "storage");
+});
+
 test("recognizable livestock and complete home-building recipes are available", () => {
   for (const kind of ["sheep", "cow", "pig", "chicken"] as const) {
     assert.equal(MOB_DEFINITIONS[kind].name.toLowerCase(), kind);
@@ -711,6 +856,29 @@ test("expanded cave fields create substantial deterministic underground voids", 
   }
 });
 
+test("some cave shafts visibly break through the natural surface", () => {
+  const world = new VoxelWorld("surface cave survey");
+  let opening: { x: number; y: number; z: number } | null = null;
+  outer: for (let regionX = -20; regionX <= 20; regionX += 1) {
+    for (let regionZ = -20; regionZ <= 20; regionZ += 1) {
+      const entrance = surfaceCaveEntranceForRegion(regionX, regionZ, world.seed);
+      if (!entrance) continue;
+      const x = entrance.x;
+      const z = entrance.z;
+      const y = world.getHeight(x, z);
+      if (
+        y > SEA_LEVEL + 7
+        && world.getBlock(x, y, z) === BlockId.Air
+        && world.getBlock(x, y - 5, z) === BlockId.Air
+      ) {
+        opening = { x, y, z };
+        break outer;
+      }
+    }
+  }
+  assert.ok(opening, "the survey should find at least one cave mouth open to the sky");
+});
+
 test("directional repeaters delay, restore, and emit only toward their facing side", () => {
   const world = new VoxelWorld("repeater bench");
   world.setBlock(0, 42, 1, BlockId.Toggle);
@@ -725,6 +893,62 @@ test("directional repeaters delay, restore, and emit only toward their facing si
   automation.tick(world, [], 0.5);
   assert.equal(world.machines.get("0,42,-1")!.signal, 14);
   assert.equal(world.machines.get("1,42,0")!.signal, 0);
+});
+
+test("wire-fed Fluxstone logic powers on and clears cleanly when its source turns off", () => {
+  const world = new VoxelWorld("wire-fed repeater bench");
+  world.setBlock(0, 42, 0, BlockId.Toggle);
+  world.setBlock(1, 42, 0, BlockId.FluxWire);
+  world.setBlock(2, 42, 0, BlockId.PulseRepeater);
+  world.setBlock(3, 42, 0, BlockId.FluxWire);
+  const toggle = world.machines.get("0,42,0")!;
+  const repeater = world.machines.get("2,42,0")!;
+  repeater.orientation = 1;
+  repeater.delayTicks = 1;
+  const automation = new AutomationSystem();
+  toggle.enabled = true;
+  automation.tick(world, [], 0.5);
+  assert.equal(world.machines.get("1,42,0")!.signal, 14);
+  assert.equal(repeater.signal, 15);
+  assert.equal(world.machines.get("3,42,0")!.signal, 14);
+  toggle.enabled = false;
+  automation.tick(world, [], 0.5);
+  assert.equal(world.machines.get("1,42,0")!.signal, 0);
+  assert.equal(repeater.signal, 0);
+  assert.equal(world.machines.get("3,42,0")!.signal, 0);
+});
+
+test("dispensers fire projectiles and droppers eject exactly once per rising signal", () => {
+  const world = new VoxelWorld("dispenser bench");
+  world.setBlock(0, 42, 0, BlockId.Toggle);
+  world.setBlock(1, 42, 0, BlockId.Dispenser);
+  const toggle = world.machines.get("0,42,0")!;
+  const dispenser = world.machines.get("1,42,0")!;
+  dispenser.storage["ammo:aether-bolt"] = 2;
+  dispenser.storageSlots![0] = "ammo:aether-bolt";
+  toggle.enabled = true;
+  const automation = new AutomationSystem();
+  automation.tick(world, [], 0.5);
+  assert.equal(world.projectiles.length, 1);
+  assert.equal(dispenser.storage["ammo:aether-bolt"], 1);
+  automation.tick(world, [], 0.5);
+  assert.equal(world.projectiles.length, 1, "a held-high signal must not repeatedly fire");
+  toggle.enabled = false;
+  automation.tick(world, [], 0.5);
+  toggle.enabled = true;
+  automation.tick(world, [], 0.5);
+  assert.equal(world.projectiles.length, 2);
+  assert.equal(dispenser.storage["ammo:aether-bolt"] ?? 0, 0);
+
+  world.setBlock(5, 42, 0, BlockId.Toggle);
+  world.setBlock(5, 42, -1, BlockId.Dropper);
+  const dropper = world.machines.get("5,42,-1")!;
+  dropper.storage[itemForBlock(BlockId.Stone)] = 1;
+  dropper.storageSlots![0] = itemForBlock(BlockId.Stone);
+  world.machines.get("5,42,0")!.enabled = true;
+  automation.tick(world, [], 0.5);
+  assert.ok(world.drops.some((drop) => drop.item === itemForBlock(BlockId.Stone)));
+  assert.equal(dropper.storage[itemForBlock(BlockId.Stone)] ?? 0, 0);
 });
 
 test("rams push block lines and collector funnels transfer physical drops", () => {
