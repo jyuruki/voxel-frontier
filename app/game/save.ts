@@ -39,6 +39,45 @@ function validItemSlot(value: unknown): boolean {
   return value === null || (typeof value === "string" && value.length > 0 && value.length <= 80);
 }
 
+function validDurabilityValue(value: unknown): value is number {
+  return Number.isInteger(value) && finiteNumber(value, 1, 100_000);
+}
+
+function validateDurabilityRecord(
+  value: unknown,
+  inventory: Record<string, unknown>,
+  label: string,
+  allowLegacySingleValue = false,
+): void {
+  if (!isRecord(value) || Object.keys(value).length > 32) throw new Error(`${label} durability state is invalid.`);
+  for (const [item, stored] of Object.entries(value)) {
+    if (!item.startsWith("tool:") || item.length > 80) throw new Error(`${label} contains invalid tool durability.`);
+    if (allowLegacySingleValue && validDurabilityValue(stored)) continue;
+    const count = inventory[item];
+    if (!Array.isArray(stored)
+      || stored.length > 4_096
+      || typeof count !== "number"
+      || !Number.isInteger(count)
+      || stored.length > count
+      || !stored.every(validDurabilityValue)) {
+      throw new Error(`${label} contains invalid tool durability.`);
+    }
+  }
+}
+
+function validateTransferredDurability(value: unknown, item: unknown, count: unknown, label: string): void {
+  if (value === undefined) return;
+  if (typeof item !== "string"
+    || !item.startsWith("tool:")
+    || !Number.isInteger(count)
+    || typeof count !== "number"
+    || !Array.isArray(value)
+    || value.length > Math.min(count, 4_096)
+    || !value.every(validDurabilityValue)) {
+    throw new Error(`${label} contains invalid tool durability.`);
+  }
+}
+
 function validatePlayerState(value: unknown, label: string): asserts value is PlayerSaveState {
   if (!isRecord(value)) throw new Error(`${label} is incomplete.`);
   validatePoint(value.position, `${label} position`);
@@ -51,6 +90,9 @@ function validatePlayerState(value: unknown, label: string): asserts value is Pl
     || value.inventorySlots.length > 36
     || !value.inventorySlots.every(validItemSlot)
   )) throw new Error(`${label} inventory layout is invalid.`);
+  if (value.durability !== undefined) {
+    validateDurabilityRecord(value.durability, value.inventory as Record<string, unknown>, label, true);
+  }
   if (!Number.isInteger(value.selectedSlot) || !finiteNumber(value.selectedSlot, 0, 8)) {
     throw new Error(`${label} selected slot is invalid.`);
   }
@@ -160,6 +202,17 @@ function validateSave(value: unknown): asserts value is WorldSave {
   validatePlayerState(save.player, "The player state");
   if (!Array.isArray(save.mutations) || !Array.isArray(save.machines)) throw new Error("The terrain state is incomplete.");
   if (!Array.isArray(save.drops) || !Array.isArray(save.mobs)) throw new Error("The entity state is incomplete.");
+  for (const machine of save.machines) {
+    const state = Array.isArray(machine) ? machine[1] : undefined;
+    if (isRecord(state) && state.durability !== undefined) {
+      if (!isRecord(state.storage)) throw new Error("A saved machine durability state is invalid.");
+      validateDurabilityRecord(state.durability, state.storage, "A saved machine");
+    }
+  }
+  for (const drop of save.drops) {
+    if (!isRecord(drop)) continue;
+    validateTransferredDurability(drop.durability, drop.item, drop.count, "A saved drop");
+  }
   if (save.boats !== undefined && (!Array.isArray(save.boats) || save.boats.length > 1_024)) {
     throw new Error("The saved boat state is invalid.");
   }

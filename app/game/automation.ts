@@ -1,5 +1,6 @@
 import { BLOCKS, blockForItem, itemForBlock } from "./blocks";
-import { BlockId, DroppedItemState, ItemId, MachineState, Vec3Data, WORLD_MIN_Y } from "./types";
+import { addItemDurability, cloneItemDurability, normalizeDurability, takeItemDurability } from "./durability";
+import { BlockId, DroppedItemState, ItemDurability, ItemId, MachineState, Vec3Data, WORLD_MIN_Y } from "./types";
 import { parseWorldKey, worldKey } from "./prng";
 import { realmForPosition } from "./realms";
 import { SMELTING_RECIPES, ensureFurnaceSlots, smeltingRecipeFor } from "./smelting";
@@ -41,6 +42,30 @@ const itemCount = (storage: Record<string, number>, item: ItemId): number =>
 function addItem(storage: Record<string, number>, item: ItemId, count: number): void {
   storage[item] = Math.max(0, (storage[item] ?? 0) + count);
   if (storage[item] === 0) delete storage[item];
+}
+
+function stateDurability(state: MachineState): ItemDurability {
+  const durability = normalizeDurability(state.storage, state.durability);
+  state.durability = Object.keys(durability).length > 0 ? durability : undefined;
+  return durability;
+}
+
+function addStoredDurability(
+  state: MachineState,
+  item: ItemId,
+  count: number,
+  transferred?: readonly number[],
+): void {
+  const durability = stateDurability(state);
+  addItemDurability(durability, item, count, transferred);
+  state.durability = Object.keys(durability).length > 0 ? durability : undefined;
+}
+
+function takeStoredDurability(state: MachineState, item: ItemId, count: number): number[] | undefined {
+  const durability = stateDurability(state);
+  const transferred = takeItemDurability(durability, item, count);
+  state.durability = Object.keys(durability).length > 0 ? durability : undefined;
+  return transferred;
 }
 
 function adjacentKeys(key: string): string[] {
@@ -310,7 +335,10 @@ function spawnDrop(
   count: number,
   position: Vec3Data,
   velocity: Vec3Data = { x: 0, y: 0.8, z: 0 },
+  transferredDurability?: readonly number[],
 ): DroppedItemState {
+  const durability: ItemDurability = {};
+  addItemDurability(durability, item, count, transferredDurability);
   const drop: DroppedItemState = {
     id: `drop-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     item,
@@ -318,6 +346,7 @@ function spawnDrop(
     position: { ...position },
     velocity: { ...velocity },
     pickupDelay: 0.28,
+    durability: durability[item] ? [...durability[item]!] : undefined,
   };
   world.drops.push(drop);
   return drop;
@@ -436,6 +465,7 @@ function runHopper(world: VoxelWorld, key: string, state: MachineState): void {
     const drop = world.drops[index];
     if (Math.hypot(drop.position.x - (x + 0.5), drop.position.y - (y + 0.65), drop.position.z - (z + 0.5)) < 1.2) {
       addItem(state.storage, drop.item, drop.count);
+      addStoredDurability(state, drop.item, drop.count, drop.durability);
       world.drops.splice(index, 1);
     }
   }
@@ -443,8 +473,10 @@ function runHopper(world: VoxelWorld, key: string, state: MachineState): void {
   const entry = Object.entries(state.storage).find(([, count]) => count > 0);
   if (!entry) return;
   const [item] = entry as [ItemId, number];
+  const transferredDurability = takeStoredDurability(state, item, 1);
   addItem(state.storage, item, -1);
   addItem(output.storage, item, 1);
+  addStoredDurability(output, item, 1, transferredDurability);
 }
 
 function firstStoredItem(state: MachineState): ItemId | null {
@@ -454,11 +486,13 @@ function firstStoredItem(state: MachineState): ItemId | null {
   return entry ? entry[0] as ItemId : null;
 }
 
-function removeStoredItem(state: MachineState, item: ItemId): void {
+function removeStoredItem(state: MachineState, item: ItemId): number[] | undefined {
+  const durability = takeStoredDurability(state, item, 1);
   addItem(state.storage, item, -1);
   if ((state.storage[item] ?? 0) <= 0 && state.storageSlots) {
     state.storageSlots = state.storageSlots.map((slot) => slot === item ? null : slot);
   }
+  return durability;
 }
 
 function runDispenserOrDropper(
@@ -475,10 +509,10 @@ function runDispenserOrDropper(
   const [x, y, z] = parseWorldKey(key);
   const facing = FACING[state.orientation];
   const mouth = { x: x + 0.5 + facing.x * 0.72, y: y + 0.58, z: z + 0.5 + facing.z * 0.72 };
-  removeStoredItem(state, item);
+  const durability = removeStoredItem(state, item);
 
   if (id === BlockId.Dropper) {
-    spawnDrop(world, item, 1, mouth, { x: facing.x * 2.4, y: 0.65, z: facing.z * 2.4 });
+    spawnDrop(world, item, 1, mouth, { x: facing.x * 2.4, y: 0.65, z: facing.z * 2.4 }, durability);
     events.push({ type: "dropped", position: { x, y, z }, item });
     return;
   }
@@ -507,7 +541,7 @@ function movable(id: BlockId): boolean {
 }
 
 function cloneMachine(state: MachineState | undefined): MachineState | undefined {
-  return state ? { ...state, storage: { ...state.storage } } : undefined;
+  return state ? { ...state, storage: { ...state.storage }, durability: cloneItemDurability(state.durability) } : undefined;
 }
 
 function pushLine(world: VoxelWorld, key: string, state: MachineState): boolean {

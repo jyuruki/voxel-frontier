@@ -2,9 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 import { AutomationSystem } from "../app/game/automation";
+import { thrownItemLaunch } from "../app/game/aiming";
 import { ALL_ITEMS, BLOCKS, RECIPES, isLeafBlock, itemForBlock, matchingRecipeInputs } from "../app/game/blocks";
 import { boatIntersectsSolid, canPlaceBoat, updateBoatPhysics } from "../app/game/boats";
 import { CRITICAL_DAMAGE_MULTIPLIER, isCriticalHit, weaponStats } from "../app/game/combat";
+import { craftingGridCells, recipeFitsGrid, RECIPE_BOOK_PAGE_SIZE } from "../app/game/crafting";
+import {
+  TOOL_MAX_DURABILITY,
+  addItemDurability,
+  currentItemDurability,
+  damageItemDurability,
+  durabilityPercent,
+  maxItemDurability,
+  normalizeDurability,
+  takeItemDurability,
+} from "../app/game/durability";
 import { itemSalePoints } from "../app/game/economy";
 import { createDungeonPlan, isDungeonCoordinate, isDungeonEntranceChunk } from "../app/game/dungeons";
 import { clearCombatLine, damageIndicatorAngle, mobCanMeleeHit, mobCanShootPlayer } from "../app/game/encounters";
@@ -24,17 +36,17 @@ import {
   touchMovedBeyondHoldSlop,
 } from "../app/game/input";
 import { MOB_DEFINITIONS, mobIntersectsSolid, mobWaterImmersion, moveMobWithCollision, resolveMobPenetration } from "../app/game/mobs";
-import { blockRenderLayer } from "../app/game/mesher";
+import { blockRenderLayer, buildChunkGeometries } from "../app/game/mesher";
 import { buildLocatorMarkers, compassHeading } from "../app/game/locator";
 import { configuredMultiplayerServer, generateRoomCode, normalizeRoomCode } from "../app/game/network";
-import { PlayerPhysics } from "../app/game/physics";
+import { fallDamageForDistance, PlayerPhysics } from "../app/game/physics";
 import { createRandomWorldSeed } from "../app/game/prng";
 import { voxelRaycast } from "../app/game/raycast";
 import { decodeWorldKey, encodeWorldKey } from "../app/game/save";
 import { blockLightLevel, canNaturalMobSpawn, NATURAL_DESPAWN_DISTANCE, NATURAL_SPAWN_MAX_DISTANCE, NATURAL_SPAWN_MIN_DISTANCE } from "../app/game/spawning";
 import { depositFurnaceItem, ensureFurnaceSlots, furnaceSlotItem, withdrawFurnaceItem } from "../app/game/smelting";
 import { DOUBLE_CHEST_SLOTS, SINGLE_CHEST_SLOTS, clearStorageItem, moveStorageSlot, placeStorageItem, reconcileStorageSlots, storageCanAccept } from "../app/game/storage";
-import { BlockId, BoatState, CHUNK_SIZE, InputFrame, MobState, PlayerSnapshot, SAVE_VERSION, SEA_LEVEL, WORLD_GENERATION_VERSION, WORLD_MAX_Y, WORLD_MIN_Y, WorldSave } from "../app/game/types";
+import { BlockId, BoatState, CHUNK_SIZE, DAY_LENGTH_SECONDS, InputFrame, ItemDurability, ItemId, MobState, PlayerSnapshot, SAVE_VERSION, SEA_LEVEL, WORLD_GENERATION_VERSION, WORLD_MAX_Y, WORLD_MIN_Y, WorldSave } from "../app/game/types";
 import { EMBERDEEP_OFFSET, createVillagePlan, isVillageChunk, surfaceCaveEntranceForRegion, VoxelWorld } from "../app/game/world";
 import { NETWORK_PROTOCOL_VERSION, isValidRoomCode, routeGameMessage } from "../shared/room-protocol";
 
@@ -250,6 +262,69 @@ test("boats float, steer, respect speed limits, and stop at shore obstacles", ()
   assert.equal(boatIntersectsSolid(groundWorld, fallingBoat.position), false);
 });
 
+test("boat steering stays bounded and frame-rate independent", () => {
+  const world = new VoxelWorld("stable boat steering bench");
+  prepareArena(world, -20, 20, -20, 20, 40, 5);
+  for (let x = -20; x <= 20; x += 1) {
+    for (let z = -20; z <= 20; z += 1) world.setBlock(x, 41, z, BlockId.Water);
+  }
+  const simulate = (fps: number): BoatState => {
+    const boat: BoatState = {
+      id: `stable-${fps}`,
+      position: { x: 0.5, y: 41.72, z: 0.5 },
+      velocity: { x: 0, y: 0, z: 0 },
+      yaw: 0,
+      angularVelocity: 0,
+      wood: "emberwood",
+      realm: "frontier",
+    };
+    for (let frame = 0; frame < fps * 4; frame += 1) {
+      updateBoatPhysics(world, boat, { forward: 1, turn: 0.55 }, 1 / fps);
+    }
+    return boat;
+  };
+  const at30 = simulate(30);
+  const at60 = simulate(60);
+  const at120 = simulate(120);
+  for (const boat of [at30, at60, at120]) {
+    assert.ok(Math.abs(boat.angularVelocity) <= 1.551, `angular speed escaped its bound: ${boat.angularVelocity}`);
+    assert.ok(Math.hypot(boat.velocity.x, boat.velocity.z) <= 6.61, "boat exceeded its water speed cap");
+  }
+  assert.ok(Math.hypot(at30.position.x - at120.position.x, at30.position.z - at120.position.z) < 0.75, "30 and 120 FPS boat paths diverged");
+  const yawDelta = Math.abs(Math.atan2(Math.sin(at30.yaw - at120.yaw), Math.cos(at30.yaw - at120.yaw)));
+  assert.ok(yawDelta < 0.12, `boat yaw became frame dependent: ${yawDelta}`);
+  assert.ok(Math.hypot(at60.position.x - at120.position.x, at60.position.z - at120.position.z) < 0.4);
+});
+
+test("teleports reset stale fall history and small knock-ups remain safe", () => {
+  const world = new VoxelWorld("dungeon fall reset bench");
+  prepareArena(world, -2, 2, -2, 2, 40, 8);
+  const player = new PlayerPhysics({ x: 0.5, y: 96, z: 0.5 });
+  player.teleport({ x: 0.5, y: 41.01, z: 0.5 });
+  player.velocity.y = 7.2;
+  let landedDistance = 0;
+  const idle: InputFrame = {
+    forward: 0, strafe: 0, lookX: 0, lookY: 0, jump: false, sprint: false,
+    crouch: false, mine: false, place: false, interact: false,
+  };
+  for (let frame = 0; frame < 150; frame += 1) player.update(1 / 60, idle, world, (distance) => { landedDistance = distance; });
+  assert.equal(landedDistance, 0, "an ordinary post-teleport jump was treated as an overworld-height fall");
+  assert.equal(fallDamageForDistance(4), 0);
+  assert.ok(Math.abs(fallDamageForDistance(4.8) - 4) < 1e-9);
+  assert.equal(fallDamageForDistance(8), 20);
+});
+
+test("thrown items follow both camera yaw and vertical pitch", () => {
+  const level = thrownItemLaunch({ x: 2, y: 40, z: 3 }, 0, 0);
+  const upward = thrownItemLaunch({ x: 2, y: 40, z: 3 }, 0, Math.PI / 4);
+  const downward = thrownItemLaunch({ x: 2, y: 40, z: 3 }, -Math.PI / 2, -Math.PI / 4);
+  assert.ok(level.velocity.z < -4.3 && Math.abs(level.velocity.x) < 0.001);
+  assert.ok(upward.velocity.y > 3.5, "looking up did not produce an upward throw");
+  assert.ok(Math.abs(upward.velocity.z) < Math.abs(level.velocity.z), "vertical aim did not reduce horizontal velocity");
+  assert.ok(downward.velocity.y < -2.5, "looking down did not produce a downward throw");
+  assert.ok(downward.velocity.x > 3, "yaw was not included in the throw direction");
+});
+
 test("the 36-slot inventory keeps items unique and supports pick/place plus shift transfer", () => {
   const inventory = {
     "tool:rough-pick": 1,
@@ -311,15 +386,32 @@ test("portable world keys round-trip and detect corruption", () => {
       health: 87,
       hunger: 65,
       stamina: 99,
-      inventory: { [itemForBlock(BlockId.CopperOre)]: 12 },
+      inventory: { [itemForBlock(BlockId.CopperOre)]: 12, "tool:rough-pick": 1 },
       hotbar: ["tool:rough-pick"],
+      durability: { "tool:rough-pick": 73 },
       selectedSlot: 0,
     },
     timeOfDay: 0.72,
     dayCount: 4,
     mutations: [[2, 22, 3, BlockId.FluxWire]],
-    machines: [],
-    drops: [],
+    machines: [["1,21,-2", {
+      orientation: 0,
+      enabled: true,
+      signal: 0,
+      energy: 0,
+      progress: 0,
+      delay: 0,
+      storage: { "tool:rough-pick": 1 },
+      durability: { "tool:rough-pick": [61] },
+    }]],
+    drops: [{
+      id: "saved-damaged-tool",
+      item: "tool:rough-pick",
+      count: 1,
+      durability: [49],
+      position: { x: 2.5, y: 21.4, z: -1.5 },
+      velocity: { x: 0, y: 0.2, z: 0 },
+    }],
     mobs: [],
   };
   save.player.spawnPoint = { x: 4.5, y: 22.01, z: -8.5 };
@@ -365,6 +457,11 @@ test("portable world keys round-trip and detect corruption", () => {
     ])),
   };
   assert.throws(() => decodeWorldKey(encodeWorldKey(tooManyProfiles)), /player profiles/i);
+  const invalidDropDurability = {
+    ...save,
+    drops: [{ ...save.drops[0], durability: [0] }],
+  };
+  assert.throws(() => decodeWorldKey(encodeWorldKey(invalidDropDurability)), /durability/i);
 });
 
 test("mobile auto-jump clears a full one-block rise", () => {
@@ -621,17 +718,13 @@ test("natural spawning follows proximity and block-light rules", () => {
 });
 
 test("all native timber crafts core utility blocks and torches cast light", () => {
-  for (const [wood, suffix] of [
-    [BlockId.EmberwoodPlanks, ""],
-    [BlockId.FrostpinePlanks, "-frostpine"],
-    [BlockId.RiftwoodPlanks, "-riftwood"],
-  ] as const) {
-    const bench = RECIPES.find((recipe) => recipe.id === `workbench${suffix}`);
-    const chest = RECIPES.find((recipe) => recipe.id === `chest${suffix}`);
-    const torch = RECIPES.find((recipe) => recipe.id === `trail-torch${suffix}`);
-    assert.ok(bench?.inputs[itemForBlock(wood)], `missing Tinker Bench recipe for ${BLOCKS[wood].name}`);
-    assert.ok(chest?.inputs[itemForBlock(wood)], `missing chest recipe for ${BLOCKS[wood].name}`);
-    assert.ok(torch?.inputs[itemForBlock(wood)], `missing torch recipe for ${BLOCKS[wood].name}`);
+  const bench = RECIPES.find((recipe) => recipe.id === "workbench")!;
+  const chest = RECIPES.find((recipe) => recipe.id === "chest")!;
+  const torch = RECIPES.find((recipe) => recipe.id === "trail-torch")!;
+  for (const wood of [BlockId.EmberwoodPlanks, BlockId.FrostpinePlanks, BlockId.RiftwoodPlanks]) {
+    assert.ok(matchingRecipeInputs(bench, { [itemForBlock(wood)]: 4 }), `missing Tinker Bench recipe for ${BLOCKS[wood].name}`);
+    assert.ok(matchingRecipeInputs(chest, { [itemForBlock(wood)]: 8 }), `missing chest recipe for ${BLOCKS[wood].name}`);
+    assert.ok(matchingRecipeInputs(torch, { [itemForBlock(wood)]: 1, "part:coal": 1 }), `missing torch recipe for ${BLOCKS[wood].name}`);
   }
   assert.equal(BLOCKS[BlockId.GlowRod].shape, "torch");
   assert.ok((BLOCKS[BlockId.GlowRod].emissive ?? 0) >= 0.9);
@@ -831,6 +924,117 @@ test("plants, circuits, lights, logistics, and builders use distinct partial sha
   assert.equal(BLOCKS[BlockId.GlassPane].shape, "pane");
 });
 
+test("crossed flowers, mushrooms, and spikes render from both sides", () => {
+  const control = new VoxelWorld("double-sided plant mesh");
+  const planted = new VoxelWorld("double-sided plant mesh");
+  control.setBlock(1, WORLD_MAX_Y - 3, 1, BlockId.Air);
+  planted.setBlock(1, WORLD_MAX_Y - 3, 1, BlockId.StarBloom);
+  const before = buildChunkGeometries(control, 0, 0);
+  const after = buildChunkGeometries(planted, 0, 0);
+  const addedIndices = (after.solid.getIndex()?.count ?? 0) - (before.solid.getIndex()?.count ?? 0);
+  assert.equal(addedIndices, 24, "a crossed plant should contain four visible quad faces");
+  before.solid.dispose();
+  before.translucent.dispose();
+  before.liquid.dispose();
+  after.solid.dispose();
+  after.translucent.dispose();
+  after.liquid.dispose();
+});
+
+test("the recipe book fits every recipe into its 2x2 or 3x3 grid and pages by 25", () => {
+  assert.equal(RECIPE_BOOK_PAGE_SIZE, 25);
+  const directRecipes = RECIPES.filter((recipe) => recipe.station === "hand" || recipe.station === "workbench");
+  assert.ok(directRecipes.length > RECIPE_BOOK_PAGE_SIZE, "recipe pagination needs more than one populated page");
+  for (const recipe of directRecipes) {
+    const size = recipe.station === "hand" ? 2 : 3;
+    assert.equal(recipeFitsGrid(recipe, size), true, `${recipe.id} does not fit its ${size}x${size} station`);
+    assert.equal(craftingGridCells(recipe, {}, size).length, size * size);
+  }
+  const outputs = directRecipes.map((recipe) => recipe.output.item);
+  assert.equal(new Set(outputs).size, outputs.length, "craftable items should have one compact recipe-book entry each");
+  const boat = RECIPES.find((recipe) => recipe.id === "boat");
+  assert.equal(boat?.station, "workbench", "the five-plank boat recipe requires a 3x3 bench");
+  const boatCells = craftingGridCells(boat!, { [itemForBlock(BlockId.FrostpinePlanks)]: 5 }, 3);
+  assert.equal(boatCells.filter((cell) => cell?.item === itemForBlock(BlockId.FrostpinePlanks)).length, 5);
+  assert.equal(boatCells.every((cell) => !cell || cell.available), true);
+  assert.deepEqual(boatCells.map((cell, index) => cell ? index : -1).filter((index) => index >= 0), [3, 5, 6, 7, 8]);
+
+  const aetherPick = RECIPES.find((recipe) => recipe.id === "aether-pick")!;
+  assert.equal(aetherPick.station, "workbench");
+  const frostpineAetherInputs = {
+    [itemForBlock(BlockId.AetherCrystal)]: 3,
+    "part:flux-coil": 1,
+    "part:diamond": 1,
+    [itemForBlock(BlockId.FrostpinePlanks)]: 2,
+  };
+  assert.ok(matchingRecipeInputs(aetherPick, frostpineAetherInputs), "Aether Pick rejected a native-timber handle");
+  const aetherCells = craftingGridCells(aetherPick, frostpineAetherInputs, 3);
+  assert.deepEqual(aetherCells.map((cell) => cell?.item ?? null), [
+    itemForBlock(BlockId.AetherCrystal), itemForBlock(BlockId.AetherCrystal), itemForBlock(BlockId.AetherCrystal),
+    "part:flux-coil", itemForBlock(BlockId.FrostpinePlanks), "part:diamond",
+    null, itemForBlock(BlockId.FrostpinePlanks), null,
+  ]);
+
+  for (const tool of Object.keys(TOOL_MAX_DURABILITY) as ItemId[]) {
+    assert.ok(directRecipes.some((recipe) => recipe.output.item === tool), `${tool} has durability but no survival recipe`);
+  }
+});
+
+test("tool durability increases by material tier and restores old saves safely", () => {
+  const wood = maxItemDurability("tool:wood-pick")!;
+  const rough = maxItemDurability("tool:rough-pick")!;
+  const copper = maxItemDurability("tool:copper-pick")!;
+  const iron = maxItemDurability("tool:iron-pick")!;
+  const diamond = maxItemDurability("tool:diamond-pick")!;
+  const crystal = maxItemDurability("tool:crystal-pick")!;
+  assert.ok(wood < rough && rough < copper && copper < iron && iron < diamond && diamond < crystal);
+  const restored = normalizeDurability({ "tool:wood-pick": 1, "tool:iron-pick": 1, "part:coal": 8 });
+  assert.equal(currentItemDurability(restored, "tool:wood-pick"), wood);
+  assert.equal(currentItemDurability(restored, "tool:iron-pick"), iron);
+  const earlyVersion112 = normalizeDurability({ "tool:wood-pick": 2 }, { "tool:wood-pick": 17 });
+  assert.deepEqual(earlyVersion112["tool:wood-pick"], [17]);
+  assert.equal(durabilityPercent("tool:iron-pick", iron / 2), 0.5);
+  assert.equal(maxItemDurability("part:coal"), null);
+});
+
+test("damaged tools keep exact durability through drops and storage without contaminating fresh crafts", () => {
+  const item: ItemId = "tool:iron-pick";
+  const maximum = maxItemDurability(item)!;
+  const carried = normalizeDurability({ [item]: 1 }, { [item]: [73] });
+
+  const dropped = takeItemDurability(carried, item, 1);
+  assert.deepEqual(dropped, [73]);
+  const pickedUp: ItemDurability = {};
+  addItemDurability(pickedUp, item, 1, dropped);
+  assert.equal(currentItemDurability(pickedUp, item), 73, "dropping and picking up repaired the tool");
+
+  const deposited = takeItemDurability(pickedUp, item, 1);
+  const chest: ItemDurability = {};
+  addItemDurability(chest, item, 1, deposited);
+  const withdrawn = takeItemDurability(chest, item, 1);
+  addItemDurability(pickedUp, item, 1, withdrawn);
+  assert.equal(currentItemDurability(pickedUp, item), 73, "chest storage repaired the tool");
+
+  addItemDurability(pickedUp, item, 1);
+  const lastDamagedUse = damageItemDurability(pickedUp, item, 73);
+  assert.equal(lastDamagedUse?.broke, true);
+  assert.equal(currentItemDurability(pickedUp, item), maximum, "a newly crafted replacement inherited the broken tool state");
+});
+
+test("durability transfer queues retain implicit full copies between damaged tools", () => {
+  const item: ItemId = "tool:iron-pick";
+  const maximum = maxItemDurability(item)!;
+  const carried: ItemDurability = { [item]: [10] };
+  addItemDurability(carried, item, 2, [20]);
+  assert.deepEqual(carried[item], [20, maximum, 10]);
+  assert.deepEqual(takeItemDurability(carried, item, 2), [20]);
+  assert.equal(currentItemDurability(carried, item), 10);
+});
+
+test("a full frontier day lasts twelve minutes", () => {
+  assert.equal(DAY_LENGTH_SECONDS, 720);
+});
+
 test("the rebuilt Fluxstone set and boats all have survival recipes", () => {
   const required = [
     BlockId.FluxWire,
@@ -988,12 +1192,14 @@ test("dispensers fire projectiles and droppers eject exactly once per rising sig
   world.setBlock(5, 42, 0, BlockId.Toggle);
   world.setBlock(5, 42, -1, BlockId.Dropper);
   const dropper = world.machines.get("5,42,-1")!;
-  dropper.storage[itemForBlock(BlockId.Stone)] = 1;
-  dropper.storageSlots![0] = itemForBlock(BlockId.Stone);
+  dropper.storage["tool:rough-pick"] = 1;
+  dropper.durability = { "tool:rough-pick": [23] };
+  dropper.storageSlots![0] = "tool:rough-pick";
   world.machines.get("5,42,0")!.enabled = true;
   automation.tick(world, [], 0.5);
-  assert.ok(world.drops.some((drop) => drop.item === itemForBlock(BlockId.Stone)));
-  assert.equal(dropper.storage[itemForBlock(BlockId.Stone)] ?? 0, 0);
+  const damagedDrop = world.drops.find((drop) => drop.item === "tool:rough-pick");
+  assert.deepEqual(damagedDrop?.durability, [23]);
+  assert.equal(dropper.storage["tool:rough-pick"] ?? 0, 0);
 });
 
 test("rams push block lines and collector funnels transfer physical drops", () => {
@@ -1018,15 +1224,17 @@ test("rams push block lines and collector funnels transfer physical drops", () =
   world.setBlock(5, 42, 0, BlockId.Hopper);
   world.setBlock(5, 42, -1, BlockId.Crate);
   world.drops.push({
-    id: "physical-stone-drop",
-    item: itemForBlock(BlockId.Stone),
+    id: "physical-damaged-tool-drop",
+    item: "tool:rough-pick",
     count: 1,
+    durability: [29],
     position: { x: 5.5, y: 42.7, z: 0.5 },
     velocity: { x: 0, y: 0, z: 0 },
   });
   automation.tick(world, [], 0.5);
   assert.equal(world.drops.length, 0);
-  assert.equal(world.machines.get("5,42,-1")!.storage[itemForBlock(BlockId.Stone)], 1);
+  assert.equal(world.machines.get("5,42,-1")!.storage["tool:rough-pick"], 1);
+  assert.deepEqual(world.machines.get("5,42,-1")!.durability?.["tool:rough-pick"], [29]);
 });
 
 test("the generic wooden tool tier accepts every native plank family", () => {

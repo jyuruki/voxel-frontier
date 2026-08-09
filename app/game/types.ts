@@ -3,6 +3,7 @@ export const WORLD_MIN_Y = -64;
 export const WORLD_MAX_Y = 320;
 export const WORLD_HEIGHT = WORLD_MAX_Y - WORLD_MIN_Y;
 export const SEA_LEVEL = 64;
+export const DAY_LENGTH_SECONDS = 12 * 60;
 export const SAVE_VERSION = 2;
 export const WORLD_GENERATION_VERSION = 5;
 
@@ -184,6 +185,15 @@ export type Inventory = Record<string, number>;
 
 export type InventoryLayout = Array<ItemId | null>;
 
+/**
+ * Ordered durability for carried/stored copies of an item. Missing trailing
+ * entries are full-durability copies, which keeps ordinary stacks compact.
+ */
+export type ItemDurability = Partial<Record<ItemId, number[]>>;
+
+/** Version 11.2 also accepts its early single-value profile representation. */
+export type SerializedItemDurability = Partial<Record<ItemId, number | number[]>>;
+
 export type VillagerProfession = "farmer" | "blacksmith" | "builder" | "riftwright";
 
 export interface MachineState {
@@ -210,6 +220,7 @@ export interface MachineState {
   furnaceOutput?: ItemId;
   link?: Vec3Data;
   storage: Inventory;
+  durability?: ItemDurability;
 }
 
 export interface DroppedItemState {
@@ -219,6 +230,7 @@ export interface DroppedItemState {
   position: Vec3Data;
   velocity: Vec3Data;
   pickupDelay?: number;
+  durability?: number[];
 }
 
 export interface MobState {
@@ -284,6 +296,7 @@ export interface PlayerSaveState {
   inventory: Inventory;
   hotbar: Array<ItemId | null>;
   inventorySlots?: InventoryLayout;
+  durability?: SerializedItemDurability;
   selectedSlot: number;
   tradeCredit?: number;
   spawnPoint?: Vec3Data;
@@ -361,6 +374,7 @@ export interface Recipe {
   station: "hand" | "workbench" | "furnace" | "fabricator";
   inputs: Inventory;
   inputOptions?: Inventory[];
+  gridPattern?: number[];
   output: { item: ItemId; count: number };
   description: string;
 }
@@ -411,6 +425,7 @@ export interface HudState {
   hotbar: Array<ItemId | null>;
   inventorySlots: InventoryLayout;
   inventory: Inventory;
+  durability: ItemDurability;
   targetedBlock: BlockId | null;
   miningProgress: number;
   timeOfDay: number;
