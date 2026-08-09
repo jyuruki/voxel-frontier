@@ -1,4 +1,4 @@
-export const NETWORK_PROTOCOL_VERSION = 8;
+export const NETWORK_PROTOCOL_VERSION = 9;
 export const ROOM_CODE_LENGTH = 6;
 export const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -36,6 +36,7 @@ const GUEST_REQUESTS = new Set([
   "request-rift",
   "request-drop",
   "request-chest",
+  "request-furnace",
   "request-cache",
   "request-dungeon",
 ]);
@@ -45,7 +46,7 @@ export type MessageRoute = "broadcast" | "host" | "snapshot" | "reject";
 /** The relay owns routing policy so a guest cannot impersonate world authority. */
 export function routeGameMessage(role: OnlineRole, type: string): MessageRoute {
   if (role === "guest") {
-    if (type === "player") return "broadcast";
+    if (type === "player" || type === "chat" || type === "death") return "broadcast";
     return GUEST_REQUESTS.has(type) ? "host" : "reject";
   }
   if (type === "snapshot") return "snapshot";

@@ -4,7 +4,7 @@ export const WORLD_MAX_Y = 320;
 export const WORLD_HEIGHT = WORLD_MAX_Y - WORLD_MIN_Y;
 export const SEA_LEVEL = 64;
 export const SAVE_VERSION = 1;
-export const WORLD_GENERATION_VERSION = 3;
+export const WORLD_GENERATION_VERSION = 4;
 
 export type GameMode = "survival" | "creative";
 
@@ -201,6 +201,9 @@ export interface MachineState {
   tradeStock?: Record<string, number>;
   tradeRestockDay?: number;
   storageSlots?: InventoryLayout;
+  furnaceInput?: ItemId;
+  furnaceFuel?: ItemId;
+  furnaceOutput?: ItemId;
   link?: Vec3Data;
   storage: Inventory;
 }
@@ -236,6 +239,8 @@ export interface MobState {
   maxHealth?: number;
   dungeonId?: string;
   lootPosition?: Vec3Data;
+  natural?: boolean;
+  spawnedAt?: number;
 }
 
 export type MutationTuple = [number, number, number, BlockId];
@@ -319,6 +324,7 @@ export interface Recipe {
   name: string;
   station: "hand" | "workbench" | "furnace" | "fabricator";
   inputs: Inventory;
+  inputOptions?: Inventory[];
   output: { item: ItemId; count: number };
   description: string;
 }
@@ -349,6 +355,15 @@ export interface GameSettings {
   touchOpacity: number;
   showFps: boolean;
   autoJump: boolean;
+  toggleSprint: boolean;
+}
+
+export interface ChatEntry {
+  id: string;
+  kind: "chat" | "death" | "system";
+  name?: string;
+  text: string;
+  timestamp: number;
 }
 
 export interface HudState {
@@ -376,6 +391,7 @@ export interface HudState {
   locatorHeading: string;
   locatorMarkers: LocatorMarker[];
   workbenchActive: boolean;
+  sprinting: boolean;
   toast?: string;
 }
 
@@ -424,4 +440,5 @@ export const DEFAULT_SETTINGS: GameSettings = {
   touchOpacity: 0.72,
   showFps: false,
   autoJump: false,
+  toggleSprint: true,
 };

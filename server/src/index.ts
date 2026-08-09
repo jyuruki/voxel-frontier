@@ -16,6 +16,7 @@ interface Env {
 
 interface ConnectionAttachment {
   playerId: string;
+  name: string;
   role: OnlineRole;
   joinedAt: number;
   roomCode: string;
@@ -103,8 +104,43 @@ function sanitizePlayerMessage(message: GameMessage, playerId: string): GameMess
   };
 }
 
+function cleanText(value: unknown, maximum: number): string | null {
+  if (typeof value !== "string") return null;
+  const cleaned = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, maximum);
+  return cleaned || null;
+}
+
+function sanitizeSocialMessage(message: GameMessage, attachment: ConnectionAttachment): GameMessage | null {
+  if (message.type === "chat") {
+    const text = cleanText(message.text, 180);
+    return text ? {
+      type: "chat",
+      id: `chat-${attachment.playerId}-${Date.now().toString(36)}`,
+      name: attachment.name,
+      text,
+      timestamp: Date.now(),
+    } : null;
+  }
+  if (message.type === "death") {
+    const source = cleanText(message.source, 80);
+    return source ? {
+      type: "death",
+      id: `death-${attachment.playerId}-${Date.now().toString(36)}`,
+      name: attachment.name,
+      source,
+      timestamp: Date.now(),
+    } : null;
+  }
+  return null;
+}
+
+function validSlot(value: unknown, maximum: number): boolean {
+  return Number.isInteger(value) && typeof value === "number" && value >= 0 && value < maximum;
+}
+
 function validGuestIntent(message: GameMessage): boolean {
   if (message.type === "player") return true;
+  if (message.type === "chat" || message.type === "death") return true;
   if (message.type === "request-snapshot" || message.type === "request-sleep") return true;
   if (message.type === "request-block") {
     return Number.isInteger(message.x) && Number.isInteger(message.y) && Number.isInteger(message.z)
@@ -121,10 +157,23 @@ function validGuestIntent(message: GameMessage): boolean {
       && Number.isInteger(message.count) && typeof message.count === "number" && message.count > 0 && message.count <= 999;
   }
   if (message.type === "request-chest") {
-    return typeof message.key === "string" && /^-?\d+,-?\d+,-?\d+$/.test(message.key)
-      && (message.direction === "deposit" || message.direction === "withdraw")
+    const validKey = typeof message.key === "string" && /^-?\d+,-?\d+,-?\d+$/.test(message.key);
+    if (!validKey) return false;
+    if (message.direction === "move") return validSlot(message.sourceSlot, 54) && validSlot(message.targetSlot, 54);
+    return (message.direction === "deposit" || message.direction === "withdraw")
       && typeof message.item === "string" && message.item.length <= 80
-      && Number.isInteger(message.count) && typeof message.count === "number" && message.count > 0 && message.count <= 999;
+      && Number.isInteger(message.count) && typeof message.count === "number" && message.count > 0 && message.count <= 999
+      && (message.sourceSlot === undefined || validSlot(message.sourceSlot, 54))
+      && (message.targetSlot === undefined || validSlot(message.targetSlot, 54));
+  }
+  if (message.type === "request-furnace") {
+    const validKey = typeof message.key === "string" && /^-?\d+,-?\d+,-?\d+$/.test(message.key);
+    const validDirection = message.direction === "deposit" || message.direction === "withdraw";
+    const validFurnaceSlot = message.slot === "input" || message.slot === "fuel" || message.slot === "output";
+    if (!validKey || !validDirection || !validFurnaceSlot || !Number.isInteger(message.count) || typeof message.count !== "number" || message.count < 1 || message.count > 999) return false;
+    if (message.direction === "deposit") return message.slot !== "output" && typeof message.item === "string" && message.item.length <= 80
+      && (message.sourceSlot === undefined || validSlot(message.sourceSlot, 36));
+    return message.targetSlot === undefined || validSlot(message.targetSlot, 36);
   }
   if (message.type === "request-cache" || message.type === "request-dungeon") {
     const origin = message.origin;
@@ -274,7 +323,7 @@ export class FrontierRoom extends DurableObject<Env> {
 
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
-    const attachment: ConnectionAttachment = { playerId, role, joinedAt: Date.now(), roomCode };
+    const attachment: ConnectionAttachment = { playerId, name: "Traveler", role, joinedAt: Date.now(), roomCode };
     server.serializeAttachment(attachment);
     this.ctx.acceptWebSocket(server, [`room:${roomCode}`, `player:${playerId}`, `role:${role}`]);
 
@@ -335,6 +384,16 @@ export class FrontierRoom extends DurableObject<Env> {
       const sanitized = sanitizePlayerMessage(packet.message, attachment.playerId);
       if (!sanitized) {
         send(socket, { kind: "error", code: "bad-player", message: "Ignored an invalid player update." });
+        return;
+      }
+      packet.message = sanitized;
+      const player = sanitized.player as Record<string, unknown>;
+      attachment.name = typeof player.name === "string" ? player.name : "Traveler";
+      socket.serializeAttachment(attachment);
+    } else if (packet.message.type === "chat" || packet.message.type === "death") {
+      const sanitized = sanitizeSocialMessage(packet.message, attachment);
+      if (!sanitized) {
+        send(socket, { kind: "error", code: "bad-social", message: "Ignored an empty or invalid chat update." });
         return;
       }
       packet.message = sanitized;

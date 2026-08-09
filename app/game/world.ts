@@ -384,11 +384,23 @@ export class VoxelWorld {
     const wormA = Math.abs(cavernDetail - 0.5);
     const wormB = Math.abs(valueNoise3(x / 17, y / 14, z / 17, this.seed ^ 0x165667b1) - 0.5);
     const fracture = Math.abs(caveRegion - 0.5);
-    const cavern = cavernField > 0.625 + Math.max(0, y - 118) * 0.0008 && caveRegion > 0.25;
+    const modernCaves = this.generation >= 4;
+    const cavern = cavernField > (modernCaves ? 0.632 : 0.625) + Math.max(0, y - 118) * 0.0008 && caveRegion > 0.25;
     const windingTunnel = wormA < 0.105 && wormB < 0.135 && caveRegion > 0.2;
-    const verticalRift = fracture < 0.038 && cavernDetail > 0.46 && y < 56;
-    if (y > WORLD_MIN_Y + 2 && y < height - 2 && (cavern || windingTunnel || verticalRift)) {
-      const aquifer = y < 22 && valueNoise3(x / 31, y / 19, z / 31, this.seed ^ 0x94d049bb) > 0.58;
+    const verticalRift = fracture < (modernCaves ? 0.018 : 0.038)
+      && cavernDetail > (modernCaves ? 0.54 : 0.46)
+      && y < (modernCaves ? 42 : 56);
+    // Version 9 preserves the broad caverns but leaves intermittent shelves at
+    // regular elevations. They break dangerous sheer drops into navigable
+    // routes without turning the underground back into narrow tunnels.
+    const terraceShelf = modernCaves
+      && cavern
+      && positiveMod(y, 9) === 0
+      && cavernField < 0.71
+      && hash3(Math.floor(x / 3), y, Math.floor(z / 3), this.seed ^ 0x8f1bbcdc) % 100 < 62;
+    if (y > WORLD_MIN_Y + 2 && y < height - 2 && (cavern || windingTunnel || verticalRift) && !terraceShelf) {
+      const aquiferThreshold = modernCaves ? 0.65 : 0.58;
+      const aquifer = y < 22 && valueNoise3(x / 31, y / 19, z / 31, this.seed ^ 0x94d049bb) > aquiferThreshold;
       return aquifer ? BlockId.Water : BlockId.Air;
     }
 

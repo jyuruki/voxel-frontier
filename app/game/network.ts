@@ -8,6 +8,7 @@ import {
   normalizeSharedRoomCode,
 } from "../../shared/room-protocol";
 import { BlockId, DroppedItemState, ItemId, MachineState, MobState, MutationTuple, PlayerSnapshot, Vec3Data, WorldSave } from "./types";
+import type { FurnaceSlot } from "./smelting";
 
 export type NetworkMessage =
   | { type: "snapshot"; save: WorldSave }
@@ -24,14 +25,20 @@ export type NetworkMessage =
   | { type: "request-mob-hit"; mobId: string; item: ItemId | null }
   | { type: "critical-hit"; mobId: string }
   | { type: "damage"; amount: number; source: string }
-  | { type: "give-item"; item: ItemId; count: number }
+  | { type: "give-item"; item: ItemId; count: number; targetSlot?: number }
   | { type: "request-drop"; item: ItemId; count: number }
-  | { type: "request-chest"; key: string; direction: "deposit" | "withdraw"; item: ItemId; count: number }
+  | { type: "request-chest"; key: string; direction: "deposit"; item: ItemId; count: number; sourceSlot?: number; targetSlot?: number }
+  | { type: "request-chest"; key: string; direction: "withdraw"; item: ItemId; count: number; sourceSlot?: number; targetSlot?: number }
+  | { type: "request-chest"; key: string; direction: "move"; sourceSlot: number; targetSlot: number }
+  | { type: "request-furnace"; key: string; direction: "deposit"; slot: Exclude<FurnaceSlot, "output">; item: ItemId; count: number; sourceSlot?: number }
+  | { type: "request-furnace"; key: string; direction: "withdraw"; slot: FurnaceSlot; count: number; targetSlot?: number }
   | { type: "request-cache"; origin: Vec3Data }
   | { type: "request-dungeon"; origin: Vec3Data }
   | { type: "request-sleep" }
   | { type: "request-rift"; origin: Vec3Data }
   | { type: "teleport"; position: Vec3Data; text: string }
+  | { type: "chat"; text: string; id?: string; name?: string; timestamp?: number }
+  | { type: "death"; source: string; id?: string; name?: string; timestamp?: number }
   | { type: "peer-left"; playerId: string }
   | { type: "toast"; text: string };
 

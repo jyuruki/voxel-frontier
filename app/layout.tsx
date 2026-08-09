@@ -4,9 +4,9 @@ import "./globals.css";
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
 export const metadata: Metadata = {
-  title: "Voxel Frontier — Expedition Exchange",
+  title: "Voxel Frontier — Living Frontier",
   description:
-    "An original voxel survival game with server-backed multiplayer, shared chests and items, party locator, procedural co-op delves, dynamic villages, combat, and automation.",
+    "An original voxel survival game with living light-aware creatures, server-backed chat and multiplayer, click-to-place storage, procedural co-op delves, combat, and automation.",
   applicationName: "Voxel Frontier",
   manifest: `${basePath}/manifest.webmanifest`,
   icons: {

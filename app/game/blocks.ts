@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BlockDefinition, BlockId, ItemId, Recipe } from "./types";
+import { BlockDefinition, BlockId, Inventory, ItemId, Recipe } from "./types";
 import { hash3 } from "./prng";
 
 const block = (
@@ -434,16 +434,16 @@ export function blockForItem(item: ItemId | null): BlockId | null {
 }
 
 export const ITEM_NAMES: Record<string, string> = {
-  "tool:wood-pick": "Emberwood Pick",
-  "tool:wood-hatchet": "Emberwood Hand Axe",
-  "tool:wood-spade": "Emberwood Spade",
-  "tool:wood-club": "Emberwood Club",
+  "tool:wood-pick": "Wooden Pickaxe",
+  "tool:wood-hatchet": "Wooden Axe",
+  "tool:wood-spade": "Wooden Shovel",
+  "tool:wood-club": "Wooden Club",
   "tool:rough-pick": "Roughstone Pick",
   "tool:copper-pick": "Copper Pick",
   "tool:crystal-pick": "Aether Pick",
   "tool:iron-pick": "Iron Pick",
   "tool:diamond-pick": "Diamond Pick",
-  "tool:hatchet": "Emberwood Hatchet",
+  "tool:hatchet": "Roughstone Axe",
   "tool:spade": "Field Spade",
   "tool:blade": "Frontier Blade",
   "tool:stone-spear": "Roughstone Spear",
@@ -529,9 +529,29 @@ export function itemDescription(item: ItemId): string {
   return ITEM_DESCRIPTIONS[item] ?? "A useful frontier resource.";
 }
 
+const NATIVE_PLANKS = [
+  itemForBlock(BlockId.EmberwoodPlanks),
+  itemForBlock(BlockId.FrostpinePlanks),
+  itemForBlock(BlockId.RiftwoodPlanks),
+] as const;
+
+function withAnyWood(base: Inventory, plankCount: number): Inventory[] {
+  return NATIVE_PLANKS.map((planks) => ({ ...base, [planks]: plankCount }));
+}
+
+export function recipeInputOptions(recipe: Recipe): Inventory[] {
+  return recipe.inputOptions?.length ? recipe.inputOptions : [recipe.inputs];
+}
+
+export function matchingRecipeInputs(recipe: Recipe, inventory: Inventory): Inventory | null {
+  return recipeInputOptions(recipe).find((option) => (
+    Object.entries(option).every(([item, count]) => (inventory[item] ?? 0) >= count)
+  )) ?? null;
+}
+
 export const RECIPES: Recipe[] = [
   { id: "planks", name: "Cut Planks", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodLog)]: 1 }, output: { item: itemForBlock(BlockId.EmberwoodPlanks), count: 4 }, description: "Shape one log into four building planks." },
-  { id: "stone-spear", name: "Roughstone Spear", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2, [itemForBlock(BlockId.Stone)]: 1 }, output: { item: "tool:stone-spear", count: 1 }, description: "An early reach weapon for surviving the first night." },
+  { id: "stone-spear", name: "Roughstone Spear", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2, [itemForBlock(BlockId.Stone)]: 1 }, inputOptions: withAnyWood({ [itemForBlock(BlockId.Stone)]: 1 }, 2), output: { item: "tool:stone-spear", count: 1 }, description: "An early reach weapon for surviving the first night." },
   { id: "workbench", name: "Tinker Bench", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 4 }, output: { item: itemForBlock(BlockId.Workbench), count: 1 }, description: "Required for engineered components." },
   { id: "workbench-frostpine", name: "Frostpine Tinker Bench", station: "hand", inputs: { [itemForBlock(BlockId.FrostpinePlanks)]: 4 }, output: { item: itemForBlock(BlockId.Workbench), count: 1 }, description: "Build the same full Tinker Bench from pale Frostpine boards." },
   { id: "workbench-riftwood", name: "Riftwood Tinker Bench", station: "hand", inputs: { [itemForBlock(BlockId.RiftwoodPlanks)]: 4 }, output: { item: itemForBlock(BlockId.Workbench), count: 1 }, description: "Build the same full Tinker Bench from Riftwood boards." },
@@ -541,17 +561,17 @@ export const RECIPES: Recipe[] = [
   { id: "trail-torch", name: "Trail Torches", station: "hand", inputs: { "part:coal": 1, [itemForBlock(BlockId.EmberwoodPlanks)]: 1 }, output: { item: itemForBlock(BlockId.GlowRod), count: 4 }, description: "Four warm lights for homes, caves, and expedition routes." },
   { id: "trail-torch-frostpine", name: "Frostpine Trail Torches", station: "hand", inputs: { "part:coal": 1, [itemForBlock(BlockId.FrostpinePlanks)]: 1 }, output: { item: itemForBlock(BlockId.GlowRod), count: 4 }, description: "Make four torches with Frostpine handles." },
   { id: "trail-torch-riftwood", name: "Riftwood Trail Torches", station: "hand", inputs: { "part:coal": 1, [itemForBlock(BlockId.RiftwoodPlanks)]: 1 }, output: { item: itemForBlock(BlockId.GlowRod), count: 4 }, description: "Make four torches with Riftwood handles." },
-  { id: "wood-pick", name: "Emberwood Pick", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 3 }, output: { item: "tool:wood-pick", count: 1 }, description: "The first mining tool; harvests roughstone, coal, limestone, and slate." },
-  { id: "wood-hatchet", name: "Emberwood Hand Axe", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 3 }, output: { item: "tool:wood-hatchet", count: 1 }, description: "A simple timber tool for faster logging." },
-  { id: "wood-spade", name: "Emberwood Spade", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, output: { item: "tool:wood-spade", count: 1 }, description: "An early tool for soil, clay, snow, and sand." },
-  { id: "wood-club", name: "Emberwood Club", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, output: { item: "tool:wood-club", count: 1 }, description: "Basic protection while preparing for the first night." },
-  { id: "rough-pick", name: "Roughstone Pick", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2, [itemForBlock(BlockId.Stone)]: 3 }, output: { item: "tool:rough-pick", count: 1 }, description: "Mines stone and basic ores efficiently." },
-  { id: "hatchet", name: "Emberwood Hatchet", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2, [itemForBlock(BlockId.Stone)]: 2 }, output: { item: "tool:hatchet", count: 1 }, description: "Fells timber and clears thornvine quickly." },
-  { id: "spade", name: "Field Spade", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2, [itemForBlock(BlockId.Stone)]: 1 }, output: { item: "tool:spade", count: 1 }, description: "Moves soil, sand and snow efficiently." },
-  { id: "frontier-blade", name: "Frontier Blade", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 1, [itemForBlock(BlockId.Stone)]: 2 }, output: { item: "tool:blade", count: 1 }, description: "A compact defensive blade." },
+  { id: "wood-pick", name: "Wooden Pickaxe", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 3 }, inputOptions: withAnyWood({}, 3), output: { item: "tool:wood-pick", count: 1 }, description: "A generic wooden pickaxe made from any native planks; harvests roughstone, coal, limestone, and slate." },
+  { id: "wood-hatchet", name: "Wooden Axe", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 3 }, inputOptions: withAnyWood({}, 3), output: { item: "tool:wood-hatchet", count: 1 }, description: "A wooden axe made from any native planks for faster logging." },
+  { id: "wood-spade", name: "Wooden Shovel", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, inputOptions: withAnyWood({}, 2), output: { item: "tool:wood-spade", count: 1 }, description: "A wooden shovel made from any native planks for soil, clay, snow, and sand." },
+  { id: "wood-club", name: "Wooden Club", station: "hand", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, inputOptions: withAnyWood({}, 2), output: { item: "tool:wood-club", count: 1 }, description: "Basic protection made from any native planks while preparing for the first night." },
+  { id: "rough-pick", name: "Roughstone Pick", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2, [itemForBlock(BlockId.Stone)]: 3 }, inputOptions: withAnyWood({ [itemForBlock(BlockId.Stone)]: 3 }, 2), output: { item: "tool:rough-pick", count: 1 }, description: "Mines stone and basic ores efficiently." },
+  { id: "hatchet", name: "Roughstone Axe", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2, [itemForBlock(BlockId.Stone)]: 2 }, inputOptions: withAnyWood({ [itemForBlock(BlockId.Stone)]: 2 }, 2), output: { item: "tool:hatchet", count: 1 }, description: "Fells timber and clears thornvine quickly." },
+  { id: "spade", name: "Field Spade", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 2, [itemForBlock(BlockId.Stone)]: 1 }, inputOptions: withAnyWood({ [itemForBlock(BlockId.Stone)]: 1 }, 2), output: { item: "tool:spade", count: 1 }, description: "Moves soil, sand and snow efficiently." },
+  { id: "frontier-blade", name: "Frontier Blade", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 1, [itemForBlock(BlockId.Stone)]: 2 }, inputOptions: withAnyWood({ [itemForBlock(BlockId.Stone)]: 2 }, 1), output: { item: "tool:blade", count: 1 }, description: "A compact defensive blade." },
   { id: "copper-ingot", name: "Smelt Copper", station: "furnace", inputs: { [itemForBlock(BlockId.CopperOre)]: 1 }, output: { item: "part:copper-ingot", count: 1 }, description: "Refine conductive copper." },
-  { id: "copper-pick", name: "Copper Pick", station: "workbench", inputs: { "part:copper-ingot": 3, [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, output: { item: "tool:copper-pick", count: 1 }, description: "Reaches crystal-bearing depths." },
-  { id: "copper-saber", name: "Copper Saber", station: "workbench", inputs: { "part:copper-ingot": 3, [itemForBlock(BlockId.EmberwoodPlanks)]: 1 }, output: { item: "tool:copper-saber", count: 1 }, description: "A balanced weapon with reliable stopping power." },
+  { id: "copper-pick", name: "Copper Pick", station: "workbench", inputs: { "part:copper-ingot": 3, [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, inputOptions: withAnyWood({ "part:copper-ingot": 3 }, 2), output: { item: "tool:copper-pick", count: 1 }, description: "Reaches crystal-bearing depths." },
+  { id: "copper-saber", name: "Copper Saber", station: "workbench", inputs: { "part:copper-ingot": 3, [itemForBlock(BlockId.EmberwoodPlanks)]: 1 }, inputOptions: withAnyWood({ "part:copper-ingot": 3 }, 1), output: { item: "tool:copper-saber", count: 1 }, description: "A balanced weapon with reliable stopping power." },
   { id: "moonshard", name: "Cut Moonshard", station: "workbench", inputs: { [itemForBlock(BlockId.MoonshardOre)]: 1 }, output: { item: "part:moonshard", count: 2 }, description: "Cut a deep crystal seam into usable shards." },
   { id: "aether-bolts", name: "Aether Bolts", station: "workbench", inputs: { "part:moonshard": 1, "part:copper-ingot": 1 }, output: { item: "ammo:aether-bolt", count: 8 }, description: "Bright, fast ammunition for an Aether Repeater." },
   { id: "aether-repeater", name: "Aether Repeater", station: "workbench", inputs: { "part:moonshard": 3, "part:flux-coil": 2, "part:gear": 1 }, output: { item: "tool:aether-repeater", count: 1 }, description: "A long-range crystal launcher built for dangerous ruins." },
@@ -591,8 +611,8 @@ export const RECIPES: Recipe[] = [
   { id: "gold-ingot", name: "Smelt Gold", station: "furnace", inputs: { [itemForBlock(BlockId.GoldOre)]: 1, "part:coal": 1 }, output: { item: "part:gold-ingot", count: 1 }, description: "Refine deep gold ore in a Hearth Furnace." },
   { id: "clear-glass", name: "Smelt Clearglass", station: "furnace", inputs: { [itemForBlock(BlockId.Sand)]: 1, "part:coal": 1 }, output: { item: itemForBlock(BlockId.Glass), count: 1 }, description: "Smelt sand in a Hearth Furnace to make clear window glass." },
   { id: "fired-brick", name: "Fire Clay", station: "furnace", inputs: { [itemForBlock(BlockId.Clay)]: 1, "part:coal": 1 }, output: { item: itemForBlock(BlockId.FiredBrick), count: 2 }, description: "Fire river clay into durable brick." },
-  { id: "iron-pick", name: "Iron Pick", station: "workbench", inputs: { "part:iron-ingot": 3, [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, output: { item: "tool:iron-pick", count: 1 }, description: "A durable pick that can harvest gold, diamond, and Riftstone." },
-  { id: "diamond-pick", name: "Diamond Pick", station: "workbench", inputs: { "part:diamond": 3, [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, output: { item: "tool:diamond-pick", count: 1 }, description: "The strongest conventional mining tool." },
+  { id: "iron-pick", name: "Iron Pick", station: "workbench", inputs: { "part:iron-ingot": 3, [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, inputOptions: withAnyWood({ "part:iron-ingot": 3 }, 2), output: { item: "tool:iron-pick", count: 1 }, description: "A durable pick that can harvest gold, diamond, and Riftstone." },
+  { id: "diamond-pick", name: "Diamond Pick", station: "workbench", inputs: { "part:diamond": 3, [itemForBlock(BlockId.EmberwoodPlanks)]: 2 }, inputOptions: withAnyWood({ "part:diamond": 3 }, 2), output: { item: "tool:diamond-pick", count: 1 }, description: "The strongest conventional mining tool." },
   { id: "frontier-bed", name: "Frontier Bed", station: "workbench", inputs: { [itemForBlock(BlockId.EmberwoodPlanks)]: 3, "part:soft-fiber": 3 }, output: { item: itemForBlock(BlockId.FrontierBed), count: 1 }, description: "Sleep through the dangerous hours and wake at dawn." },
   { id: "woven-fleece", name: "Woven Fleece", station: "workbench", inputs: { "part:soft-fiber": 4 }, output: { item: itemForBlock(BlockId.WovenWool), count: 1 }, description: "Compress soft fiber into a decorative building block." },
   { id: "iron-block", name: "Iron Block", station: "workbench", inputs: { "part:iron-ingot": 9 }, output: { item: itemForBlock(BlockId.IronBlock), count: 1 }, description: "Store refined iron in compact block form." },

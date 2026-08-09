@@ -1,6 +1,7 @@
 import { BLOCKS, itemForBlock } from "./blocks";
 import { BlockId, DroppedItemState, ItemId, MachineState, Vec3Data, WORLD_MIN_Y } from "./types";
 import { parseWorldKey, worldKey } from "./prng";
+import { SMELTING_RECIPES, ensureFurnaceSlots, smeltingRecipeFor } from "./smelting";
 import { VoxelWorld } from "./world";
 
 const NEIGHBORS: Vec3Data[] = [
@@ -345,25 +346,23 @@ function runConveyor(world: VoxelWorld, key: string, state: MachineState): void 
   }
 }
 
-const SMELTING_RECIPES: Array<{ input: ItemId; output: ItemId; count?: number }> = [
-  { input: itemForBlock(BlockId.IronOre), output: "part:iron-ingot" },
-  { input: itemForBlock(BlockId.GoldOre), output: "part:gold-ingot" },
-  { input: itemForBlock(BlockId.CopperOre), output: "part:copper-ingot" },
-  { input: itemForBlock(BlockId.Clay), output: itemForBlock(BlockId.FiredBrick), count: 2 },
-  { input: itemForBlock(BlockId.Sand), output: itemForBlock(BlockId.Glass) },
-];
-
 function runFurnace(
   state: MachineState,
   position: Vec3Data,
   events: AutomationEvent[],
   coalFired: boolean,
 ): void {
-  const recipe = SMELTING_RECIPES.find((candidate) => itemCount(state.storage, candidate.input) > 0);
-  const coalItem: ItemId = itemCount(state.storage, "part:coal") > 0
-    ? "part:coal"
-    : itemForBlock(BlockId.CoalOre);
-  if (!recipe || (coalFired && itemCount(state.storage, coalItem) <= 0)) {
+  if (coalFired) ensureFurnaceSlots(state);
+  const recipe = coalFired
+    ? smeltingRecipeFor(state.furnaceInput)
+    : SMELTING_RECIPES.find((candidate) => itemCount(state.storage, candidate.input) > 0);
+  const coalItem: ItemId = coalFired && state.furnaceFuel
+    ? state.furnaceFuel
+    : itemCount(state.storage, "part:coal") > 0
+      ? "part:coal"
+      : itemForBlock(BlockId.CoalOre);
+  const outputBlocked = Boolean(coalFired && state.furnaceOutput && recipe && state.furnaceOutput !== recipe.output);
+  if (!recipe || outputBlocked || (coalFired && itemCount(state.storage, coalItem) <= 0)) {
     state.progress = 0;
     return;
   }
@@ -372,7 +371,12 @@ function runFurnace(
   state.progress = 0;
   addItem(state.storage, recipe.input, -1);
   if (coalFired) addItem(state.storage, coalItem, -1);
-  addItem(state.storage, recipe.output, recipe.count ?? 1);
+  addItem(state.storage, recipe.output, recipe.count);
+  if (coalFired) {
+    if (itemCount(state.storage, recipe.input) <= 0) delete state.furnaceInput;
+    if (itemCount(state.storage, coalItem) <= 0) delete state.furnaceFuel;
+    state.furnaceOutput = recipe.output;
+  }
   events.push({ type: "smelted", position, item: recipe.output });
 }
 

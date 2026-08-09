@@ -10,6 +10,7 @@ import {
   itemName,
   isLeafBlock,
   tileUv,
+  matchingRecipeInputs,
 } from "./blocks";
 import { AutomationSystem } from "./automation";
 import { FrontierAudio } from "./audio";
@@ -37,14 +38,33 @@ import { FirstPersonViewModel } from "./viewmodel";
 import { createDungeonPlan, DungeonPlan, isDungeonCoordinate } from "./dungeons";
 import { buildLocatorMarkers, compassHeading } from "./locator";
 import {
+  NATURAL_DESPAWN_DISTANCE,
+  chooseNaturalMobKind,
+  findNaturalSpawnSite,
+  naturalMobCap,
+  naturalMobCount,
+  nearestPlayerDistance,
+} from "./spawning";
+import {
+  type FurnaceSlot,
+  depositFurnaceItem,
+  ensureFurnaceSlots,
+  furnaceCanDeposit,
+  furnaceSlotItem,
+  withdrawFurnaceItem,
+} from "./smelting";
+import {
   clearStorageItem,
+  moveStorageSlot,
   placeStorageItem,
   reconcileStorageSlots,
   SINGLE_CHEST_SLOTS,
   storageCanAccept,
+  storageCanAcceptAt,
 } from "./storage";
 import {
   BlockId,
+  ChatEntry,
   CHUNK_SIZE,
   GameMode,
   GameSettings,
@@ -109,6 +129,8 @@ export interface GameEngineCallbacks {
   onMachine: (data: MachinePanelData) => void;
   onChest: (data: ChestPanelData) => void;
   onTrade: (data: TradePanelData) => void;
+  onChatOpen: () => void;
+  onChat: (entry: ChatEntry) => void;
   onToast: (message: string) => void;
 }
 
@@ -485,6 +507,7 @@ export class GameEngine {
   private placeCooldown = 0;
   private attackCooldown = 0;
   private riftCooldown = 0;
+  private portalReleaseRequired = false;
   private hazardCooldown = 0;
   private interactLatch = false;
   private jumpNutritionLatch = false;
@@ -532,6 +555,14 @@ export class GameEngine {
   };
   private readonly onMouseDown = (event: MouseEvent) => {
     if (event.button === 2) event.preventDefault();
+    // Pointer capture can be lost whenever a browser-native menu is open.
+    // The recapture gesture must never leak through as a mining/placement
+    // action, especially in Creative where that action is instantaneous.
+    if (document.pointerLockElement !== this.canvas) {
+      void this.canvas.requestPointerLock().catch(() => undefined);
+      void this.audio.unlock();
+      return;
+    }
     if (event.button === 0) {
       this.input.mine = true;
       this.viewModel.swing("attack");
@@ -541,7 +572,6 @@ export class GameEngine {
       event.preventDefault();
       this.assignInventorySlot(HOTBAR_START + this.selectedSlot, itemForBlock(this.currentHit.id));
     }
-    if (document.pointerLockElement !== this.canvas) void this.canvas.requestPointerLock();
     void this.audio.unlock();
   };
   private readonly onMouseUp = (event: MouseEvent) => {
@@ -556,7 +586,7 @@ export class GameEngine {
   private readonly onKeyDown = (event: KeyboardEvent) => {
     const target = event.target as HTMLElement | null;
     if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
-    if (event.repeat && ["KeyE", "KeyF", "KeyG", "KeyQ", "KeyV", "KeyX", "Escape"].includes(event.code)) return;
+    if (event.repeat && ["KeyE", "KeyF", "KeyG", "KeyQ", "KeyR", "KeyT", "KeyV", "KeyX", "Enter", "Escape"].includes(event.code)) return;
     if (event.code === "KeyW") this.input.forward = 1;
     if (event.code === "KeyS") this.input.forward = -1;
     if (event.code === "KeyA") this.input.strafe = -1;
@@ -569,7 +599,7 @@ export class GameEngine {
       }
       this.input.jump = true;
     }
-    if (event.code === "KeyR") this.input.sprint = true;
+    if (event.code === "KeyR") this.input.sprint = this.settings.toggleSprint ? !this.input.sprint : true;
     if (event.code === "ShiftLeft" || event.code === "ShiftRight" || event.code === "ControlLeft" || event.code === "KeyC") this.input.crouch = true;
     if (event.code === "KeyF") this.tapInteract();
     if (event.code === "KeyE") {
@@ -582,6 +612,10 @@ export class GameEngine {
       this.dropSelectedItem(event.shiftKey);
     }
     if (event.code === "KeyG") this.callbacks.onGuide();
+    if (event.code === "KeyT" || event.code === "Enter") {
+      event.preventDefault();
+      this.openChat();
+    }
     if (event.code === "KeyX") this.rotateTargetedMachine();
     if (event.code === "KeyV") this.toggleCreativeFlight();
     if (event.code === "Escape") this.callbacks.onPause();
@@ -593,7 +627,7 @@ export class GameEngine {
     if (event.code === "KeyA" && this.input.strafe < 0) this.input.strafe = 0;
     if (event.code === "KeyD" && this.input.strafe > 0) this.input.strafe = 0;
     if (event.code === "Space") this.input.jump = false;
-    if (event.code === "KeyR") this.input.sprint = false;
+    if (event.code === "KeyR" && !this.settings.toggleSprint) this.input.sprint = false;
     if (event.code === "ShiftLeft" || event.code === "ShiftRight" || event.code === "ControlLeft" || event.code === "KeyC") this.input.crouch = false;
   };
   private readonly onVisibility = () => {
@@ -617,7 +651,13 @@ export class GameEngine {
         this.world.machines.set(key, cloneMachineState(state));
       }
       this.world.drops.push(...loaded.drops.map((drop) => ({ ...drop, position: { ...drop.position }, velocity: { ...drop.velocity } })));
-      this.world.mobs.push(...loaded.mobs.map((mob) => ({ ...mob, position: { ...mob.position }, velocity: { ...mob.velocity } })));
+      this.world.mobs.push(...loaded.mobs.map((mob) => ({
+        ...mob,
+        natural: mob.natural ?? (!mob.boss && mob.kind !== "wayfarer"),
+        spawnedAt: mob.spawnedAt ?? Date.now(),
+        position: { ...mob.position },
+        velocity: { ...mob.velocity },
+      })));
       this.inventory = cloneInventory(loaded.player.inventory);
       this.inventorySlots = createInventoryLayout(this.inventory, loaded.player.inventorySlots, loaded.player.hotbar);
       this.hotbar = hotbarFromLayout(this.inventorySlots);
@@ -672,8 +712,8 @@ export class GameEngine {
     this.sun.shadow.camera.top = 32;
     this.sun.shadow.camera.bottom = -32;
     this.scene.add(this.hemisphere, this.ambient, this.sun, this.sun.target);
-    for (let index = 0; index < 8; index += 1) {
-      const light = new THREE.PointLight(0xffbd73, 0, 12, 1.65);
+    for (let index = 0; index < 10; index += 1) {
+      const light = new THREE.PointLight(0xffbd73, 0, 19, 1.25);
       light.visible = false;
       this.localLights.push(light);
       this.scene.add(light);
@@ -878,8 +918,8 @@ export class GameEngine {
     }
     this.mobSpawnTimer -= dt;
     if (this.mobSpawnTimer <= 0) {
-      this.mobSpawnTimer = 3.5;
-      if (this.network.role !== "guest") this.spawnNightMob();
+      this.mobSpawnTimer = 2.8;
+      if (this.network.role !== "guest") this.spawnNaturalMob();
     }
     this.syncEntityMeshes(dt);
     this.updateRemotePlayerMeshes();
@@ -993,11 +1033,15 @@ export class GameEngine {
       this.miningProgress = 0;
       this.breakOverlay.visible = false;
     }
-    if (this.input.place && this.placeCooldown <= 0) {
+    if (this.portalReleaseRequired && !this.input.place && !this.input.interact) {
+      this.portalReleaseRequired = false;
+      this.interactLatch = false;
+    }
+    if (!this.portalReleaseRequired && this.input.place && this.placeCooldown <= 0) {
       this.placeCooldown = 0.19;
       this.placeSelected();
     }
-    if (this.input.interact && !this.interactLatch) {
+    if (!this.portalReleaseRequired && this.input.interact && !this.interactLatch) {
       this.interactLatch = true;
       this.interactTarget();
     }
@@ -1086,12 +1130,12 @@ export class GameEngine {
         ? "A Copper Pick or better is required to harvest that crystal."
         : [BlockId.CopperOre, BlockId.IronOre, BlockId.FluxstoneOre, BlockId.Cinnabar, BlockId.SulfurStone].includes(id)
           ? "A Roughstone Pick or better is required to harvest that ore."
-          : "An Emberwood Pick or better is required to collect that block.";
+          : "A Wooden Pickaxe or better is required to collect that block.";
       this.callbacks.onToast(requirement);
     }
     this.audio.play("break");
     if (this.mode === "survival" && id === BlockId.EmberwoodLog) {
-      this.objective = "Cut planks, build a Tinker Bench, then craft an Emberwood Pick.";
+      this.objective = "Cut planks, build a Tinker Bench, then craft a Wooden Pickaxe.";
     }
     this.miningProgress = 0;
     this.miningKey = "";
@@ -1476,7 +1520,13 @@ export class GameEngine {
       } else this.openRelicCache({ x, y, z });
       return;
     }
-    const inspection = this.automation.inspect(this.world, key);
+    const consoleBlocks = [
+      BlockId.HearthFurnace,
+      BlockId.ThermalGenerator,
+      BlockId.ArcFurnace,
+      BlockId.Fabricator,
+    ];
+    const inspection = consoleBlocks.includes(id) ? this.automation.inspect(this.world, key) : null;
     if (inspection) {
       this.callbacks.onMachine({ key, ...inspection, state: cloneMachineState(inspection.state) });
     }
@@ -1535,6 +1585,7 @@ export class GameEngine {
     const destination = this.riftDestination(origin);
     this.physics.position.set(destination.x, destination.y, destination.z);
     this.physics.velocity.set(0, 0, 0);
+    this.portalReleaseRequired = true;
     this.queueNearbyChunks(true);
     const entering = isEmberdeepCoordinate(destination.x);
     this.audio.play("rift");
@@ -1659,6 +1710,7 @@ export class GameEngine {
     if (inStagingArea(this.physics.position)) {
       this.physics.position.set(plan.destination.x, plan.destination.y, plan.destination.z);
       this.physics.velocity.set(0, 0, 0);
+      this.portalReleaseRequired = true;
       this.queueNearbyChunks(true);
       travelers += 1;
     }
@@ -1684,6 +1736,7 @@ export class GameEngine {
     else {
       this.physics.position.set(state.link.x, state.link.y, state.link.z);
       this.physics.velocity.set(0, 0, 0);
+      this.portalReleaseRequired = true;
       this.queueNearbyChunks(true);
       this.audio.play("rift");
       this.objective = `Day ${this.dayCount}: returned from a frontier delve.`;
@@ -1842,9 +1895,9 @@ export class GameEngine {
     const originY = Math.floor(this.physics.position.y + 1);
     const originZ = Math.floor(this.physics.position.z);
     const candidates: Array<{ x: number; y: number; z: number; id: BlockId; distance: number }> = [];
-    for (let x = originX - 12; x <= originX + 12; x += 1) {
-      for (let y = originY - 7; y <= originY + 8; y += 1) {
-        for (let z = originZ - 12; z <= originZ + 12; z += 1) {
+    for (let x = originX - 18; x <= originX + 18; x += 1) {
+      for (let y = originY - 10; y <= originY + 11; y += 1) {
+        for (let z = originZ - 18; z <= originZ + 18; z += 1) {
           const id = this.world.peekBlock(x, y, z);
           const emissive = BLOCKS[id].emissive ?? 0;
           if (emissive < 0.48) continue;
@@ -1853,7 +1906,7 @@ export class GameEngine {
             if (!state || state.signal <= 0) continue;
           }
           const distance = Math.hypot(x + 0.5 - this.physics.position.x, y + 0.5 - originY, z + 0.5 - this.physics.position.z);
-          if (distance <= 15) candidates.push({ x, y, z, id, distance });
+          if (distance <= 22) candidates.push({ x, y, z, id, distance });
         }
       }
     }
@@ -1870,8 +1923,9 @@ export class GameEngine {
       const warmth = new THREE.Color(definition.color).lerp(new THREE.Color(0xffc277), 0.45);
       light.color.copy(warmth);
       light.position.set(candidate.x + 0.5, candidate.y + 0.65, candidate.z + 0.5);
-      light.intensity = 0.8 + (definition.emissive ?? 0.5) * 1.9;
-      light.distance = candidate.id === BlockId.DeepLantern ? 15 : 11.5;
+      light.intensity = 1.05 + (definition.emissive ?? 0.5) * 2.15;
+      light.distance = candidate.id === BlockId.DeepLantern ? 23 : 18.5;
+      light.decay = candidate.id === BlockId.DeepLantern ? 1.18 : 1.28;
       light.visible = true;
     }
   }
@@ -1929,80 +1983,81 @@ export class GameEngine {
   }
 
   private spawnInitialMobs(): void {
-    const random = seededRandom(hashString(`mobs:${this.world.seedText}`));
-    const spawn = this.world.findSpawn();
-    for (let index = 0; index < 12; index += 1) {
-      const angle = random() * Math.PI * 2;
-      const distance = 10 + random() * 32;
-      const x = Math.floor(spawn.x + Math.cos(angle) * distance) + 0.5;
-      const z = Math.floor(spawn.z + Math.sin(angle) * distance) + 0.5;
-      const y = this.world.getHeight(x, z) + 1;
-      const biome = this.world.getBiome(x, z);
-      const livestock: Array<MobState["kind"]> = ["sheep", "cow", "pig", "chicken"];
-      const kind: MobState["kind"] = biome === "Cinder Reach" && index % 4 === 0
-        ? "cinderling"
-        : livestock[index % livestock.length];
-      const mob: MobState = {
-        id: `mob-${index}-${Math.floor(random() * 1e7).toString(36)}`,
-        kind,
-        position: { x, y, z },
-        velocity: { x: 0, y: 0, z: 0 },
-        health: MOB_DEFINITIONS[kind].maxHealth,
-        yaw: random() * Math.PI * 2,
-        targetTimer: random() * 4,
-        attackTimer: random() * 2,
-        hurtTimer: 0,
-      };
-      resolveMobPenetration(this.world, mob);
-      this.world.mobs.push(mob);
+    const spawn = this.physics.position;
+    for (let index = 0; index < 6; index += 1) {
+      const position = findNaturalSpawnSite(
+        this.world,
+        "passive",
+        spawn,
+        [spawn],
+        this.timeOfDay,
+        this.wildlifeRandom,
+        20,
+      );
+      if (!position) break;
+      this.addNaturalMob("passive", position, `initial-${index}`);
     }
   }
 
-  private spawnNightMob(): void {
-    const night = this.timeOfDay < 0.22 || this.timeOfDay > 0.78;
-    const anchors = [
-      { x: this.physics.position.x, z: this.physics.position.z },
-      ...Array.from(this.remotePeerPlayers.values(), (player) => ({ x: player.position.x, z: player.position.z })),
-    ].filter((position) => night || isEmberdeepCoordinate(position.x));
-    if (anchors.length === 0 || this.world.mobs.length >= 30) return;
-    const anchor = anchors[Math.floor(this.wildlifeRandom() * anchors.length)];
-    const emberdeep = isEmberdeepCoordinate(anchor.x);
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      const angle = this.wildlifeRandom() * Math.PI * 2;
-      const distance = 18 + this.wildlifeRandom() * 14;
-      const x = Math.floor(anchor.x + Math.cos(angle) * distance) + 0.5;
-      const z = Math.floor(anchor.z + Math.sin(angle) * distance) + 0.5;
-      const y = this.world.getHeight(x, z) + 1.01;
-      const biome = this.world.getBiome(x, z);
-      const roll = this.wildlifeRandom();
-      const kind: MobState["kind"] = emberdeep
-        ? roll < 0.62
-          ? "cinderling"
-          : roll < 0.86
-            ? "nightwisp"
-            : "thornback"
-        : biome === "Cinder Reach"
-        ? "cinderling"
-        : roll < 0.46
-          ? "nightwisp"
-          : roll < 0.74
-            ? "mireling"
-            : "thornback";
-      const mob: MobState = {
-        id: `night-${this.dayCount}-${Date.now().toString(36)}-${Math.floor(this.wildlifeRandom() * 1e6).toString(36)}`,
-        kind,
-        position: { x, y, z },
-        velocity: { x: 0, y: 0, z: 0 },
-        health: MOB_DEFINITIONS[kind].maxHealth,
-        yaw: angle + Math.PI,
-        targetTimer: 1 + this.wildlifeRandom() * 3,
-        attackTimer: 1.2,
-        hurtTimer: 0,
-      };
-      if (!this.world.isSolid(x, y - 0.08, z) || mobIntersectsSolid(this.world, mob)) continue;
-      this.world.mobs.push(mob);
-      if (this.mode === "survival" && this.world.mobs.filter((candidate) => !MOB_DEFINITIONS[candidate.kind].passive).length === 1) {
-        this.callbacks.onToast("Nightfall stirs hostile creatures. Ready a weapon or find shelter.");
+  private addNaturalMob(category: "passive" | "hostile", position: Vec3Data, prefix = "natural"): void {
+    const kind = chooseNaturalMobKind(this.world, category, position, this.wildlifeRandom);
+    const mob: MobState = {
+      id: `${prefix}-${this.dayCount}-${Date.now().toString(36)}-${Math.floor(this.wildlifeRandom() * 1e6).toString(36)}`,
+      kind,
+      position: { ...position },
+      velocity: { x: 0, y: 0, z: 0 },
+      health: MOB_DEFINITIONS[kind].maxHealth,
+      yaw: this.wildlifeRandom() * Math.PI * 2,
+      targetTimer: 1 + this.wildlifeRandom() * 3,
+      attackTimer: 1.2,
+      hurtTimer: 0,
+      natural: true,
+      spawnedAt: Date.now(),
+    };
+    if (mobIntersectsSolid(this.world, mob)) return;
+    resolveMobPenetration(this.world, mob);
+    this.world.mobs.push(mob);
+  }
+
+  private spawnNaturalMob(): void {
+    const players = [
+      { x: this.physics.position.x, y: this.physics.position.y, z: this.physics.position.z },
+      ...Array.from(this.remotePeerPlayers.values(), (player) => player.position),
+    ];
+    const now = Date.now();
+    for (let index = this.world.mobs.length - 1; index >= 0; index -= 1) {
+      const mob = this.world.mobs[index];
+      if (!mob.natural || mob.boss || now - (mob.spawnedAt ?? now) < 25_000) continue;
+      if (nearestPlayerDistance(mob.position, players) > NATURAL_DESPAWN_DISTANCE) this.world.mobs.splice(index, 1);
+    }
+
+    const passiveCount = naturalMobCount(this.world.mobs, "passive");
+    const hostileCount = naturalMobCount(this.world.mobs, "hostile");
+    const passiveRoom = passiveCount < naturalMobCap("passive", players.length);
+    const hostileRoom = hostileCount < naturalMobCap("hostile", players.length);
+    if (!passiveRoom && !hostileRoom) return;
+    const preferred: "passive" | "hostile" = passiveRoom && (!hostileRoom || this.wildlifeRandom() < 0.38)
+      ? "passive"
+      : "hostile";
+    const categories: Array<"passive" | "hostile"> = preferred === "passive"
+      ? ["passive", "hostile"]
+      : ["hostile", "passive"];
+    const anchor = players[Math.floor(this.wildlifeRandom() * players.length)];
+    for (const category of categories) {
+      if (category === "passive" ? !passiveRoom : !hostileRoom) continue;
+      const position = findNaturalSpawnSite(
+        this.world,
+        category,
+        anchor,
+        players,
+        this.timeOfDay,
+        this.wildlifeRandom,
+      );
+      if (!position) continue;
+      const firstHostile = category === "hostile" && hostileCount === 0;
+      this.addNaturalMob(category, position);
+      if (firstHostile && this.mode === "survival") {
+        this.callbacks.onToast("Dark, unlit ground can now attract hostile creatures. Torches suppress nearby spawns.");
       }
       return;
     }
@@ -2202,7 +2257,6 @@ export class GameEngine {
   }
 
   private updateMobs(dt: number): void {
-    const night = this.timeOfDay < 0.22 || this.timeOfDay > 0.78;
     for (const mob of this.world.mobs) {
       const definition = MOB_DEFINITIONS[mob.kind];
       resolveMobPenetration(this.world, mob);
@@ -2219,7 +2273,7 @@ export class GameEngine {
       }
       const dx = targetPosition.x - mob.position.x;
       const dz = targetPosition.z - mob.position.z;
-      const hostile = !definition.passive && (mob.boss || night || mob.kind === "cinderling" || isEmberdeepCoordinate(mob.position.x));
+      const hostile = !definition.passive;
       mob.targetTimer -= dt;
       mob.attackTimer = Math.max(0, (mob.attackTimer ?? 0) - dt);
       mob.hurtTimer = Math.max(0, (mob.hurtTimer ?? 0) - dt);
@@ -2548,6 +2602,7 @@ export class GameEngine {
     this.audio.play("hurt");
     this.callbacks.onToast(`${source} · −${Math.round(amount)} health`);
     if (this.health <= 0) {
+      this.publishDeath(source);
       const spawn = this.world.findSpawn();
       this.physics.position.set(spawn.x, spawn.y, spawn.z);
       this.physics.velocity.set(0, 0, 0);
@@ -2707,6 +2762,12 @@ export class GameEngine {
       this.showCriticalHit();
     } else if (message.type === "give-item" && this.network.role === "guest") {
       if (this.collectItem(message.item, message.count)) {
+        if (
+          message.targetSlot !== undefined
+          && message.targetSlot >= 0
+          && message.targetSlot < INVENTORY_SLOT_COUNT
+          && (this.inventorySlots[message.targetSlot] === null || this.inventorySlots[message.targetSlot] === message.item)
+        ) this.assignInventorySlot(message.targetSlot, message.item);
         this.audio.play("click");
         this.callbacks.onToast(`Collected ${message.count} × ${itemName(message.item)}.`);
       } else {
@@ -2728,16 +2789,48 @@ export class GameEngine {
       }, 1.15);
     } else if (message.type === "request-chest" && this.network.role === "host") {
       const player = this.remotePeerPlayers.get(peerId);
-      if (!player || !ALL_ITEMS.includes(message.item) || !this.chestInRange(message.key, player)) return;
+      if (!player || !this.chestInRange(message.key, player)) return;
+      if (message.direction === "move") {
+        this.moveChestSlotAuthoritative(message.key, message.sourceSlot, message.targetSlot);
+        return;
+      }
+      if (!ALL_ITEMS.includes(message.item)) return;
       if (message.direction === "deposit") {
-        if (!this.addToChest(message.key, message.item, Math.min(999, message.count))) {
+        if (!this.addToChest(message.key, message.item, Math.min(999, message.count), message.targetSlot)) {
           this.network.send({ type: "toast", text: "That chest has no open slots; the deposit was rejected." }, peerId);
-          this.network.send({ type: "give-item", item: message.item, count: Math.min(999, message.count) }, peerId);
+          this.network.send({ type: "give-item", item: message.item, count: Math.min(999, message.count), targetSlot: message.sourceSlot }, peerId);
         }
       } else {
-        const taken = this.takeFromChest(message.key, message.item, Math.min(999, message.count));
-        if (taken > 0) this.network.send({ type: "give-item", item: message.item, count: taken }, peerId);
+        const taken = message.sourceSlot === undefined
+          ? (() => {
+            const count = this.takeFromChest(message.key, message.item, Math.min(999, message.count));
+            return count > 0 ? { item: message.item, count } : null;
+          })()
+          : this.takeFromChestSlot(message.key, message.sourceSlot, Math.min(999, message.count));
+        if (taken) this.network.send({ type: "give-item", item: taken.item, count: taken.count, targetSlot: message.targetSlot }, peerId);
       }
+    } else if (message.type === "request-furnace" && this.network.role === "host") {
+      const player = this.remotePeerPlayers.get(peerId);
+      const state = this.world.machines.get(message.key);
+      const [x, y, z] = parseWorldKey(message.key);
+      const inRange = player && this.world.getBlock(x, y, z) === BlockId.HearthFurnace && Math.hypot(
+        player.position.x - (x + 0.5),
+        player.position.y + 0.8 - (y + 0.5),
+        player.position.z - (z + 0.5),
+      ) <= 7.5;
+      if (!state || !inRange) return;
+      if (message.direction === "deposit") {
+        const count = Math.min(999, message.count);
+        if (!ALL_ITEMS.includes(message.item) || !depositFurnaceItem(state, message.slot, message.item, count)) {
+          this.network.send({ type: "toast", text: "That item does not belong in the selected furnace slot." }, peerId);
+          this.network.send({ type: "give-item", item: message.item, count, targetSlot: message.sourceSlot }, peerId);
+          return;
+        }
+      } else {
+        const taken = withdrawFurnaceItem(state, message.slot, Math.min(999, message.count));
+        if (taken) this.network.send({ type: "give-item", item: taken.item, count: taken.count, targetSlot: message.targetSlot }, peerId);
+      }
+      this.broadcastMachine(message.key, state);
     } else if (message.type === "request-cache" && this.network.role === "host") {
       const player = this.remotePeerPlayers.get(peerId);
       const closeEnough = player && Math.hypot(
@@ -2791,6 +2884,7 @@ export class GameEngine {
     } else if (message.type === "teleport" && this.network.role === "guest") {
       this.physics.position.set(message.position.x, message.position.y, message.position.z);
       this.physics.velocity.set(0, 0, 0);
+      this.portalReleaseRequired = true;
       this.queueNearbyChunks(true);
       this.audio.play("rift");
       this.objective = isDungeonCoordinate(message.position.z)
@@ -2799,6 +2893,24 @@ export class GameEngine {
         ? "The Emberdeep: gather Riftwood, rare ores, and Ember Glowstone—avoid the molten currents."
         : `Day ${this.dayCount}: returned from the Emberdeep.`;
       this.callbacks.onToast(message.text);
+    } else if (message.type === "chat") {
+      const text = message.text.trim().slice(0, 180);
+      if (text) this.callbacks.onChat({
+        id: message.id ?? `chat-${peerId}-${Date.now().toString(36)}`,
+        kind: "chat",
+        name: message.name?.trim().slice(0, 18) || "Traveler",
+        text,
+        timestamp: message.timestamp ?? Date.now(),
+      });
+    } else if (message.type === "death") {
+      const source = message.source.trim().slice(0, 80) || "the frontier";
+      this.callbacks.onChat({
+        id: message.id ?? `death-${peerId}-${Date.now().toString(36)}`,
+        kind: "death",
+        name: message.name?.trim().slice(0, 18) || "Traveler",
+        text: `was defeated by ${source}.`,
+        timestamp: message.timestamp ?? Date.now(),
+      });
     } else if (message.type === "player") {
       this.remotePlayers.set(message.player.id, message.player);
       this.remotePeerPlayers.set(peerId, message.player);
@@ -2826,7 +2938,13 @@ export class GameEngine {
       this.world.machines.set(key, cloneMachineState(state));
     }
     this.world.drops.push(...save.drops.map((drop) => ({ ...drop, position: { ...drop.position }, velocity: { ...drop.velocity } })));
-    this.world.mobs.push(...save.mobs.map((mob) => ({ ...mob, position: { ...mob.position }, velocity: { ...mob.velocity } })));
+    this.world.mobs.push(...save.mobs.map((mob) => ({
+      ...mob,
+      natural: mob.natural ?? (!mob.boss && mob.kind !== "wayfarer"),
+      spawnedAt: mob.spawnedAt ?? Date.now(),
+      position: { ...mob.position },
+      velocity: { ...mob.velocity },
+    })));
     this.timeOfDay = save.timeOfDay;
     this.dayCount = save.dayCount ?? this.dayCount;
     this.mode = save.mode ?? this.mode;
@@ -2893,6 +3011,7 @@ export class GameEngine {
       locatorHeading: compassHeading(this.physics.yaw),
       locatorMarkers,
       workbenchActive: this.stationAvailable("workbench"),
+      sprinting: this.input.sprint && (this.mode === "creative" || this.hunger > 10),
     });
   }
 
@@ -2910,7 +3029,12 @@ export class GameEngine {
   }
 
   getRecipes(): Recipe[] {
-    return RECIPES.map((recipe) => ({ ...recipe, inputs: { ...recipe.inputs }, output: { ...recipe.output } }));
+    return RECIPES.map((recipe) => ({
+      ...recipe,
+      inputs: { ...recipe.inputs },
+      inputOptions: recipe.inputOptions?.map((option) => ({ ...option })),
+      output: { ...recipe.output },
+    }));
   }
 
   craft(recipeId: string): boolean {
@@ -2920,19 +3044,20 @@ export class GameEngine {
       this.callbacks.onToast(recipe.station === "workbench" ? "Interact with a placed Tinker Bench to use that recipe." : "That recipe runs inside a machine.");
       return false;
     }
-    if (this.mode === "survival" && !Object.entries(recipe.inputs).every(([item, count]) => (this.inventory[item] ?? 0) >= count)) {
+    const recipeInputs = matchingRecipeInputs(recipe, this.inventory);
+    if (this.mode === "survival" && !recipeInputs) {
       this.callbacks.onToast("You are missing ingredients.");
       return false;
     }
     if (this.mode === "survival") {
-      for (const [item, count] of Object.entries(recipe.inputs)) changeItem(this.inventory, item as ItemId, -count);
+      for (const [item, count] of Object.entries(recipeInputs ?? recipe.inputs)) changeItem(this.inventory, item as ItemId, -count);
       this.clearDepletedHotbar();
       this.collectItem(recipe.output.item, recipe.output.count);
     }
     this.audio.play("craft");
     if (this.mode === "survival") {
       this.objective = recipe.output.item === "tool:wood-pick"
-        ? "Your Emberwood Pick can harvest stone and coal. Upgrade before mining copper."
+        ? "Your Wooden Pickaxe can harvest stone and coal. Upgrade before mining copper."
         : recipe.output.item === "tool:stone-spear"
           ? "You are armed. Explore by day; hostile creatures emerge after dusk."
           : this.objective;
@@ -3009,13 +3134,33 @@ export class GameEngine {
       && Math.hypot(position.x - (x + 0.5), position.y + 0.8 - (y + 0.5), position.z - (z + 0.5)) <= 7.5;
   }
 
-  private addToChest(key: string, item: ItemId, count: number): boolean {
+  private machineInRange(key: string, expected: BlockId, peer?: PlayerSnapshot): boolean {
+    const [x, y, z] = parseWorldKey(key);
+    const position = peer?.position ?? this.physics.position;
+    return this.world.getBlock(x, y, z) === expected
+      && Math.hypot(position.x - (x + 0.5), position.y + 0.8 - (y + 0.5), position.z - (z + 0.5)) <= 7.5;
+  }
+
+  private chestSlotLocation(key: string, slot: number): { key: string; state: MachineState; localSlot: number } | null {
+    const keys = this.chestKeys(key);
+    if (!Number.isInteger(slot) || slot < 0 || slot >= keys.length * SINGLE_CHEST_SLOTS) return null;
+    const chestIndex = Math.floor(slot / SINGLE_CHEST_SLOTS);
+    const chestKey = keys[chestIndex];
+    const state = this.ensureChestState(chestKey);
+    return state ? { key: chestKey, state, localSlot: slot % SINGLE_CHEST_SLOTS } : null;
+  }
+
+  private addToChest(key: string, item: ItemId, count: number, targetSlot?: number): boolean {
     const keys = this.chestKeys(key);
     const states = keys.map((chestKey) => ({ key: chestKey, state: this.ensureChestState(chestKey)! }));
+    const requested = targetSlot === undefined ? null : this.chestSlotLocation(key, targetSlot);
+    if (targetSlot !== undefined && (!requested || !storageCanAcceptAt(requested.state.storageSlots ?? [], item, requested.localSlot))) return false;
     const destination = states.find(({ state }) => (state.storage[item] ?? 0) > 0)
+      ?? (requested ? { key: requested.key, state: requested.state } : null)
       ?? states.find(({ state }) => storageCanAccept(state.storageSlots ?? [], item));
     if (!destination || count <= 0) return false;
-    destination.state.storageSlots = placeStorageItem(destination.state.storageSlots ?? [], item);
+    const localTarget = requested?.key === destination.key ? requested.localSlot : undefined;
+    destination.state.storageSlots = placeStorageItem(destination.state.storageSlots ?? [], item, localTarget);
     changeItem(destination.state.storage, item, count);
     this.broadcastMachine(destination.key, destination.state);
     return true;
@@ -3039,13 +3184,59 @@ export class GameEngine {
     return taken;
   }
 
-  depositToChest(key: string, item: ItemId, requestedCount?: number): boolean {
+  private takeFromChestSlot(key: string, slot: number, count: number): { item: ItemId; count: number } | null {
+    const location = this.chestSlotLocation(key, slot);
+    const item = location?.state.storageSlots?.[location.localSlot] ?? null;
+    if (!location || !item) return null;
+    const amount = Math.min(location.state.storage[item] ?? 0, Math.max(0, Math.floor(count)));
+    if (amount <= 0) return null;
+    changeItem(location.state.storage, item, -amount);
+    if ((location.state.storage[item] ?? 0) <= 0) {
+      location.state.storageSlots = clearStorageItem(location.state.storageSlots ?? [], item);
+    }
+    this.broadcastMachine(location.key, location.state);
+    return { item, count: amount };
+  }
+
+  private moveChestSlotAuthoritative(key: string, sourceSlot: number, targetSlot: number): boolean {
+    const source = this.chestSlotLocation(key, sourceSlot);
+    const target = this.chestSlotLocation(key, targetSlot);
+    const sourceItem = source?.state.storageSlots?.[source.localSlot] ?? null;
+    if (!source || !target || !sourceItem || sourceSlot === targetSlot) return false;
+    const targetItem = target.state.storageSlots?.[target.localSlot] ?? null;
+    if (source.key === target.key) {
+      source.state.storageSlots = moveStorageSlot(source.state.storageSlots ?? [], source.localSlot, target.localSlot);
+      this.broadcastMachine(source.key, source.state);
+      return true;
+    }
+
+    const sourceCount = source.state.storage[sourceItem] ?? 0;
+    const targetCount = targetItem ? target.state.storage[targetItem] ?? 0 : 0;
+    delete source.state.storage[sourceItem];
+    if (targetItem) source.state.storage[targetItem] = targetCount;
+    delete target.state.storage[targetItem ?? ""];
+    target.state.storage[sourceItem] = sourceCount;
+    const sourceSlots = [...(source.state.storageSlots ?? [])];
+    const targetSlots = [...(target.state.storageSlots ?? [])];
+    sourceSlots[source.localSlot] = targetItem;
+    targetSlots[target.localSlot] = sourceItem;
+    source.state.storageSlots = sourceSlots;
+    target.state.storageSlots = targetSlots;
+    this.broadcastMachine(source.key, source.state);
+    this.broadcastMachine(target.key, target.state);
+    return true;
+  }
+
+  depositToChest(key: string, item: ItemId, requestedCount?: number, targetSlot?: number, sourceSlot?: number): boolean {
     if (!this.chestInRange(key)) return false;
     const available = this.mode === "creative" ? 1 : this.inventory[item] ?? 0;
     const count = Math.max(0, Math.min(available, Math.floor(requestedCount ?? available)));
     if (count <= 0) return false;
     const panel = this.getChest(key);
-    if (!panel || (!panel.slots.includes(item) && !panel.slots.includes(null))) {
+    const targetAvailable = targetSlot === undefined
+      ? Boolean(panel && (panel.slots.includes(item) || panel.slots.includes(null)))
+      : Boolean(panel && targetSlot >= 0 && targetSlot < panel.slots.length && (panel.slots[targetSlot] === null || panel.slots[targetSlot] === item));
+    if (!targetAvailable) {
       this.callbacks.onToast("That chest has no open slots.");
       return false;
     }
@@ -3053,14 +3244,14 @@ export class GameEngine {
       changeItem(this.inventory, item, -count);
       this.clearDepletedHotbar();
     }
-    if (this.network.role === "guest") this.network.send({ type: "request-chest", key, direction: "deposit", item, count });
-    else this.addToChest(key, item, count);
+    if (this.network.role === "guest") this.network.send({ type: "request-chest", key, direction: "deposit", item, count, targetSlot, sourceSlot });
+    else this.addToChest(key, item, count, targetSlot);
     this.audio.play("click");
     this.emitHud();
     return true;
   }
 
-  withdrawFromChest(key: string, slot: number, requestedCount?: number): boolean {
+  withdrawFromChest(key: string, slot: number, requestedCount?: number, targetSlot?: number): boolean {
     if (!this.chestInRange(key)) return false;
     const panel = this.getChest(key);
     const item = panel?.slots[slot] ?? null;
@@ -3071,11 +3262,76 @@ export class GameEngine {
       return false;
     }
     if (this.network.role === "guest") {
-      this.network.send({ type: "request-chest", key, direction: "withdraw", item, count });
+      this.network.send({ type: "request-chest", key, direction: "withdraw", item, count, sourceSlot: slot, targetSlot });
       return true;
     }
-    const taken = this.takeFromChest(key, item, count);
-    if (taken <= 0 || !this.collectItem(item, taken)) return false;
+    const taken = this.takeFromChestSlot(key, slot, count);
+    if (!taken || !this.collectItem(taken.item, taken.count)) return false;
+    if (targetSlot !== undefined && this.inventorySlots[targetSlot] === null) this.assignInventorySlot(targetSlot, taken.item);
+    this.audio.play("click");
+    this.emitHud();
+    return true;
+  }
+
+  moveChestSlot(key: string, sourceSlot: number, targetSlot: number): boolean {
+    if (!this.chestInRange(key)) return false;
+    if (this.network.role === "guest") {
+      this.network.send({ type: "request-chest", key, direction: "move", sourceSlot, targetSlot });
+      return true;
+    }
+    const moved = this.moveChestSlotAuthoritative(key, sourceSlot, targetSlot);
+    if (moved) this.audio.play("click");
+    return moved;
+  }
+
+  depositToFurnace(
+    key: string,
+    slot: Exclude<FurnaceSlot, "output">,
+    item: ItemId,
+    requestedCount?: number,
+    sourceSlot?: number,
+  ): boolean {
+    const [x, y, z] = parseWorldKey(key);
+    const state = this.world.machines.get(key);
+    if (!state || this.world.getBlock(x, y, z) !== BlockId.HearthFurnace || !this.machineInRange(key, BlockId.HearthFurnace)) return false;
+    ensureFurnaceSlots(state);
+    if (!furnaceCanDeposit(state, slot, item)) {
+      this.callbacks.onToast(slot === "fuel" ? "The lower slot accepts Coal fuel." : "The upper slot accepts raw ore, clay, or sand.");
+      return false;
+    }
+    const available = this.mode === "creative" ? 1 : this.inventory[item] ?? 0;
+    const count = Math.max(0, Math.min(available, Math.floor(requestedCount ?? available)));
+    if (count <= 0) return false;
+    if (this.mode === "survival") {
+      changeItem(this.inventory, item, -count);
+      this.clearDepletedHotbar();
+    }
+    if (this.network.role === "guest") {
+      this.network.send({ type: "request-furnace", key, direction: "deposit", slot, item, count, sourceSlot });
+    } else {
+      depositFurnaceItem(state, slot, item, count);
+      this.broadcastMachine(key, state);
+    }
+    this.audio.play("click");
+    this.emitHud();
+    return true;
+  }
+
+  withdrawFromFurnace(key: string, slot: FurnaceSlot, requestedCount?: number, targetSlot?: number): boolean {
+    const [x, y, z] = parseWorldKey(key);
+    const state = this.world.machines.get(key);
+    if (!state || this.world.getBlock(x, y, z) !== BlockId.HearthFurnace || !this.machineInRange(key, BlockId.HearthFurnace)) return false;
+    const item = furnaceSlotItem(state, slot);
+    if (!item || !this.canStoreItem(item)) return false;
+    const count = Math.max(1, Math.min(state.storage[item] ?? 0, Math.floor(requestedCount ?? (state.storage[item] ?? 0))));
+    if (this.network.role === "guest") {
+      this.network.send({ type: "request-furnace", key, direction: "withdraw", slot, count, targetSlot });
+      return true;
+    }
+    const taken = withdrawFurnaceItem(state, slot, count);
+    if (!taken || !this.collectItem(taken.item, taken.count)) return false;
+    if (targetSlot !== undefined && this.inventorySlots[targetSlot] === null) this.assignInventorySlot(targetSlot, taken.item);
+    this.broadcastMachine(key, state);
     this.audio.play("click");
     this.emitHud();
     return true;
@@ -3274,6 +3530,12 @@ export class GameEngine {
   }
 
   setAction(action: "jump" | "sprint" | "crouch" | "mine" | "place" | "interact", active: boolean): void {
+    if (action === "sprint" && this.settings.toggleSprint) {
+      if (active) this.input.sprint = !this.input.sprint;
+      if (active) void this.audio.unlock();
+      this.emitHud();
+      return;
+    }
     this.input[action] = active;
     if (action === "mine" && active) this.viewModel.swing("attack");
     if (active) void this.audio.unlock();
@@ -3302,8 +3564,58 @@ export class GameEngine {
     }, 80);
   }
 
+  private openChat(): void {
+    if (this.paused) return;
+    this.input.forward = 0;
+    this.input.strafe = 0;
+    this.input.mine = false;
+    this.input.place = false;
+    this.input.interact = false;
+    if (document.pointerLockElement === this.canvas) document.exitPointerLock();
+    this.callbacks.onChatOpen();
+  }
+
+  beginChat(): void {
+    this.openChat();
+  }
+
+  sendChat(value: string): boolean {
+    const text = value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 180);
+    if (!text) return false;
+    const entry: ChatEntry = {
+      id: `chat-${this.network.playerId}-${Date.now().toString(36)}`,
+      kind: "chat",
+      name: this.playerName,
+      text,
+      timestamp: Date.now(),
+    };
+    this.callbacks.onChat(entry);
+    if (this.network.role !== "offline") this.network.send({ type: "chat", text });
+    return true;
+  }
+
+  private publishDeath(sourceValue: string): void {
+    const source = sourceValue.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 80) || "the frontier";
+    this.callbacks.onChat({
+      id: `death-${this.network.playerId}-${Date.now().toString(36)}`,
+      kind: "death",
+      name: this.playerName,
+      text: `was defeated by ${source}.`,
+      timestamp: Date.now(),
+    });
+    if (this.network.role !== "offline") this.network.send({ type: "death", source });
+  }
+
+  resumeInputCapture(): void {
+    if (window.matchMedia("(pointer: fine)").matches && document.pointerLockElement !== this.canvas) {
+      void this.canvas.requestPointerLock().catch(() => undefined);
+    }
+    void this.audio.unlock();
+  }
+
   updateSettings(settings: GameSettings): void {
     const renderDistanceChanged = settings.renderDistance !== this.settings.renderDistance;
+    if (settings.toggleSprint !== this.settings.toggleSprint) this.input.sprint = false;
     this.settings = { ...settings };
     this.camera.fov = settings.fov;
     this.camera.updateProjectionMatrix();
@@ -3328,6 +3640,11 @@ export class GameEngine {
     this.activeChestKey = null;
     this.previousFrame = performance.now();
     void this.audio.unlock();
+    if (window.matchMedia("(pointer: fine)").matches && document.pointerLockElement !== this.canvas) {
+      // Resume is called directly by the menu button/key gesture, so browsers
+      // permit pointer capture here without a second click on the canvas.
+      void this.canvas.requestPointerLock().catch(() => undefined);
+    }
   }
 
   makeSave(): WorldSave {

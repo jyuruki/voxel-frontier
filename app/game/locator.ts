@@ -7,7 +7,8 @@ function wrapAngle(value: number): number {
 }
 
 export function compassHeading(yaw: number): string {
-  const degrees = ((yaw * 180 / Math.PI) % 360 + 360) % 360;
+  // Engine yaw increases toward west; compass bearings increase eastward.
+  const degrees = (((-yaw) * 180 / Math.PI) % 360 + 360) % 360;
   const headings = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
   return headings[Math.round(degrees / 45) % headings.length];
 }
@@ -32,7 +33,9 @@ export function buildLocatorMarkers(
       id: player.id,
       name: player.name,
       color: player.color,
-      offset: relative / LOCATOR_HALF_ARC,
+      // CSS left increases to the player's screen-right, opposite the signed
+      // yaw delta used by the engine.
+      offset: -relative / LOCATOR_HALF_ARC,
       distance,
       scale: distance < 24 ? 1 : distance < 72 ? 0.86 : distance < 192 ? 0.72 : 0.58,
       vertical: verticalDelta > 5 ? "above" : verticalDelta < -5 ? "below" : "level",

@@ -43,7 +43,7 @@ function trackedSocket(socket) {
 
 async function connect(miniflare, roomCode, role, playerId) {
   const response = await miniflare.dispatchFetch(
-    `http://localhost/room/${roomCode}?role=${role}&playerId=${playerId}&protocol=8`,
+    `http://localhost/room/${roomCode}?role=${role}&playerId=${playerId}&protocol=9`,
     { headers: { Upgrade: "websocket", Origin: ORIGIN } },
   );
   assert.equal(response.status, 101);
@@ -62,7 +62,7 @@ const miniflare = new Miniflare({
 try {
   const health = await miniflare.dispatchFetch("http://localhost/health");
   assert.equal(health.status, 200);
-  assert.equal((await health.json()).protocol, 8);
+  assert.equal((await health.json()).protocol, 9);
 
   const hostId = "traveler-host-12345678";
   const guestId = "traveler-guest-12345678";
@@ -83,6 +83,34 @@ try {
   assert.deepEqual(guestWelcome.peers, [hostId]);
   await host.next((packet) => packet.kind === "peer-joined" && packet.peerId === guestId, "peer join");
   await host.next((packet) => packet.kind === "need-checkpoint" && packet.peerId === guestId, "live snapshot request");
+
+  guest.send({
+    kind: "game",
+    message: {
+      type: "player",
+      player: {
+        id: "spoofed",
+        name: "Cave Friend",
+        position: { x: 2, y: 72, z: 3 },
+        yaw: 0,
+        pitch: 0,
+        color: "#55ddcc",
+      },
+    },
+  });
+  const guestPlayer = await host.next((packet) => packet.kind === "game" && packet.message?.type === "player", "sanitized guest player");
+  assert.equal(guestPlayer.message.player.id, guestId);
+  assert.equal(guestPlayer.message.player.name, "Cave Friend");
+
+  guest.send({ kind: "game", message: { type: "chat", text: "  found\u0000 diamonds!  " } });
+  const chat = await host.next((packet) => packet.kind === "game" && packet.message?.type === "chat", "room chat");
+  assert.equal(chat.message.name, "Cave Friend");
+  assert.equal(chat.message.text, "found diamonds!");
+
+  guest.send({ kind: "game", message: { type: "death", source: "a dark cave" } });
+  const death = await host.next((packet) => packet.kind === "game" && packet.message?.type === "death", "death message");
+  assert.equal(death.message.name, "Cave Friend");
+  assert.equal(death.message.source, "a dark cave");
 
   const liveSave = { seed: "integration frontier", marker: "live" };
   host.send({
@@ -119,6 +147,14 @@ try {
   assert.equal(chestRequest.peerId, guestId);
   assert.equal(chestRequest.message.direction, "deposit");
 
+  guest.send({ kind: "game", message: { type: "request-chest", key: "1,70,1", direction: "move", sourceSlot: 0, targetSlot: 26 } });
+  const chestMove = await host.next((packet) => packet.kind === "game" && packet.message?.type === "request-chest" && packet.message?.direction === "move", "guest chest rearrangement");
+  assert.equal(chestMove.message.targetSlot, 26);
+
+  guest.send({ kind: "game", message: { type: "request-furnace", key: "2,70,1", direction: "deposit", slot: "fuel", item: "part:coal", count: 3, sourceSlot: 5 } });
+  const furnaceRequest = await host.next((packet) => packet.kind === "game" && packet.message?.type === "request-furnace", "guest furnace transfer");
+  assert.equal(furnaceRequest.message.slot, "fuel");
+
   guest.send({ kind: "game", message: { type: "request-dungeon", origin: { x: 0, y: 70, z: 0 } } });
   const dungeonRequest = await host.next((packet) => packet.kind === "game" && packet.message?.type === "request-dungeon", "guest dungeon activation");
   assert.equal(dungeonRequest.peerId, guestId);
@@ -130,7 +166,7 @@ try {
   assert.deepEqual(promotion.checkpoint, liveSave);
   guest.raw.close(1000, "integration complete");
 
-  console.log("multiplayer integration: host, guest, authority, snapshot, and handoff passed");
+  console.log("multiplayer integration: host, guest, chat, storage, furnace, authority, snapshot, and handoff passed");
 } finally {
   await miniflare.dispose();
 }

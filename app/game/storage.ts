@@ -31,12 +31,27 @@ export function storageCanAccept(slots: InventoryLayout, item: ItemId): boolean 
   return slots.includes(item) || slots.includes(null);
 }
 
-export function placeStorageItem(slots: InventoryLayout, item: ItemId): InventoryLayout {
+export function storageCanAcceptAt(slots: InventoryLayout, item: ItemId, target?: number): boolean {
+  if (target === undefined) return storageCanAccept(slots, item);
+  if (target < 0 || target >= slots.length) return false;
+  return slots[target] === null || slots[target] === item || slots.includes(item);
+}
+
+export function placeStorageItem(slots: InventoryLayout, item: ItemId, target?: number): InventoryLayout {
   if (slots.includes(item)) return [...slots];
-  const open = slots.indexOf(null);
+  const open = target !== undefined && target >= 0 && target < slots.length && slots[target] === null
+    ? target
+    : slots.indexOf(null);
   if (open < 0) return [...slots];
   const next = [...slots];
   next[open] = item;
+  return next;
+}
+
+export function moveStorageSlot(slots: InventoryLayout, from: number, to: number): InventoryLayout {
+  if (from < 0 || to < 0 || from >= slots.length || to >= slots.length || from === to) return [...slots];
+  const next = [...slots];
+  [next[from], next[to]] = [next[to] ?? null, next[from] ?? null];
   return next;
 }
 

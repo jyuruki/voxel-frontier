@@ -72,8 +72,11 @@ export function createDungeonPlan(origin: Vec3Data, seed: number): DungeonPlan {
     baseY,
     rooms,
     origin: { x: Math.floor(origin.x), y: Math.floor(origin.y), z: Math.floor(origin.z) },
-    destination: { x: first.x + 0.5, y: baseY + 1.01, z: first.z + 0.5 },
-    returnPosition: { x: first.x, y: baseY + 1, z: first.z + 3 },
+    // Arrive on the opposite side of the first room from the return beacon.
+    // The separation prevents a held portal-use input from immediately finding
+    // the return beacon after the instance finishes streaming.
+    destination: { x: first.x + 0.5, y: baseY + 1.01, z: first.z - 2.5 },
+    returnPosition: { x: first.x, y: baseY + 1, z: first.z + 4 },
     sealPosition: { x: last.x, y: baseY + 1, z: last.z },
     bossPosition: { x: last.x + 0.5, y: baseY + 1.01, z: last.z - 2.5 },
   };

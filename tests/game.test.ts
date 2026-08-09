@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 import { AutomationSystem } from "../app/game/automation";
-import { ALL_ITEMS, BLOCKS, RECIPES, isLeafBlock, itemForBlock } from "../app/game/blocks";
+import { ALL_ITEMS, BLOCKS, RECIPES, isLeafBlock, itemForBlock, matchingRecipeInputs } from "../app/game/blocks";
 import { CRITICAL_DAMAGE_MULTIPLIER, isCriticalHit, weaponStats } from "../app/game/combat";
 import { itemSalePoints } from "../app/game/economy";
 import { createDungeonPlan, isDungeonCoordinate, isDungeonEntranceChunk } from "../app/game/dungeons";
@@ -22,7 +22,9 @@ import { PlayerPhysics } from "../app/game/physics";
 import { createRandomWorldSeed } from "../app/game/prng";
 import { voxelRaycast } from "../app/game/raycast";
 import { decodeWorldKey, encodeWorldKey } from "../app/game/save";
-import { DOUBLE_CHEST_SLOTS, SINGLE_CHEST_SLOTS, clearStorageItem, placeStorageItem, reconcileStorageSlots, storageCanAccept } from "../app/game/storage";
+import { blockLightLevel, canNaturalMobSpawn, NATURAL_DESPAWN_DISTANCE, NATURAL_SPAWN_MAX_DISTANCE, NATURAL_SPAWN_MIN_DISTANCE } from "../app/game/spawning";
+import { depositFurnaceItem, ensureFurnaceSlots, furnaceSlotItem, withdrawFurnaceItem } from "../app/game/smelting";
+import { DOUBLE_CHEST_SLOTS, SINGLE_CHEST_SLOTS, clearStorageItem, moveStorageSlot, placeStorageItem, reconcileStorageSlots, storageCanAccept } from "../app/game/storage";
 import { BlockId, CHUNK_SIZE, InputFrame, MobState, PlayerSnapshot, SAVE_VERSION, SEA_LEVEL, WORLD_GENERATION_VERSION, WORLD_MAX_Y, WORLD_MIN_Y, WorldSave } from "../app/game/types";
 import { EMBERDEEP_OFFSET, createVillagePlan, isVillageChunk, VoxelWorld } from "../app/game/world";
 import { NETWORK_PROTOCOL_VERSION, isValidRoomCode, routeGameMessage } from "../shared/room-protocol";
@@ -161,7 +163,7 @@ test("placement raycasts target water cells while mining raycasts through them",
   assert.equal(voxelRaycast(world, origin, direction, 6, true)?.id, BlockId.Water);
 });
 
-test("the 36-slot inventory keeps items unique and supports drag and shift transfer", () => {
+test("the 36-slot inventory keeps items unique and supports pick/place plus shift transfer", () => {
   const inventory = {
     "tool:rough-pick": 1,
     [itemForBlock(BlockId.Stone)]: 32,
@@ -370,12 +372,15 @@ test("server multiplayer uses normalized six-character room codes", () => {
 });
 
 test("room server policy preserves host authority and upgrades secure endpoints", () => {
-  assert.equal(NETWORK_PROTOCOL_VERSION, 8);
+  assert.equal(NETWORK_PROTOCOL_VERSION, 9);
   assert.equal(routeGameMessage("guest", "request-block"), "host");
   assert.equal(routeGameMessage("guest", "request-machine"), "host");
   assert.equal(routeGameMessage("guest", "request-drop"), "host");
   assert.equal(routeGameMessage("guest", "request-chest"), "host");
+  assert.equal(routeGameMessage("guest", "request-furnace"), "host");
   assert.equal(routeGameMessage("guest", "request-dungeon"), "host");
+  assert.equal(routeGameMessage("guest", "chat"), "broadcast");
+  assert.equal(routeGameMessage("guest", "death"), "broadcast");
   assert.equal(routeGameMessage("guest", "block"), "reject");
   assert.equal(routeGameMessage("guest", "player"), "broadcast");
   assert.equal(routeGameMessage("host", "snapshot"), "snapshot");
@@ -417,6 +422,11 @@ test("single and double chest layouts preserve unique item slots", () => {
   const chestWorld = new VoxelWorld("chest state bench");
   chestWorld.setBlock(0, 80, 0, BlockId.Crate);
   assert.equal(chestWorld.machines.get("0,80,0")?.storageSlots?.length, SINGLE_CHEST_SLOTS);
+  const targeted = placeStorageItem(Array(SINGLE_CHEST_SLOTS).fill(null), "part:diamond", 19);
+  assert.equal(targeted[19], "part:diamond");
+  const moved = moveStorageSlot(targeted, 19, 3);
+  assert.equal(moved[3], "part:diamond");
+  assert.equal(moved[19], null);
 });
 
 test("party locator uses a forward arc, distance scale, height cues, and crouch privacy", () => {
@@ -433,7 +443,25 @@ test("party locator uses a forward arc, distance scale, height cues, and crouch 
   assert.equal(markers.find((marker) => marker.id === "far")?.vertical, "below");
   assert.ok(markers.find((marker) => marker.id === "near")!.scale > markers.find((marker) => marker.id === "far")!.scale);
   assert.equal(compassHeading(0), "N");
-  assert.equal(compassHeading(Math.PI / 2), "E");
+  assert.equal(compassHeading(Math.PI / 2), "W");
+  assert.ok(markers.find((marker) => marker.id === "high")!.offset < 0, "a player west/left of north should render on the left");
+});
+
+test("natural spawning follows proximity and block-light rules", () => {
+  assert.ok(NATURAL_SPAWN_MIN_DISTANCE >= 16);
+  assert.ok(NATURAL_SPAWN_MAX_DISTANCE > NATURAL_SPAWN_MIN_DISTANCE);
+  assert.ok(NATURAL_DESPAWN_DISTANCE > NATURAL_SPAWN_MAX_DISTANCE);
+  const world = new VoxelWorld("spawn light bench");
+  prepareArena(world, -2, 23, -2, 2, 40, 4);
+  world.setBlock(0, 40, 0, BlockId.Turf);
+  const candidate = { x: 0.5, y: 41.01, z: 0.5 };
+  const players = [{ x: 20.5, y: 41.01, z: 0.5 }];
+  assert.equal(blockLightLevel(world, candidate), 0);
+  assert.equal(canNaturalMobSpawn(world, "hostile", candidate, 0.5, players), true, "a dark underground floor should permit hostiles even by day");
+  world.setBlock(3, 41, 0, BlockId.GlowRod);
+  assert.ok(blockLightLevel(world, candidate) >= 11, "a torch should propagate gameplay light well beyond one block");
+  assert.equal(canNaturalMobSpawn(world, "hostile", candidate, 0.5, players), false, "torch light should suppress hostile spawning");
+  assert.equal(canNaturalMobSpawn(world, "passive", candidate, 0.5, players), true, "bright Turf should permit passive animals");
 });
 
 test("all native timber crafts core utility blocks and torches cast light", () => {
@@ -500,6 +528,10 @@ test("dungeon entrances are sparse and instance plans are deterministic but vari
   assert.ok(new Set(plans.map((plan) => plan.theme)).size >= 2);
   assert.ok(plans.every((plan) => plan.rooms.length >= 3 && plan.rooms.length <= 5));
   assert.ok(plans.every((plan) => isDungeonCoordinate(plan.destination.z)));
+  assert.ok(plans.every((plan) => Math.hypot(
+    plan.destination.x - (plan.returnPosition.x + 0.5),
+    plan.destination.z - (plan.returnPosition.z + 0.5),
+  ) >= 6), "dungeon arrival must be safely separated from the return beacon");
 });
 
 test("Wayfarer ruins generate deterministically with an interactable Relic Cache", () => {
@@ -728,9 +760,16 @@ test("rams push block lines and collector funnels transfer physical drops", () =
   assert.equal(world.machines.get("5,42,-1")!.storage[itemForBlock(BlockId.Stone)], 1);
 });
 
-test("the Emberwood tool tier establishes early survival progression", () => {
+test("the generic wooden tool tier accepts every native plank family", () => {
   const woodenTools = ["wood-pick", "wood-hatchet", "wood-spade", "wood-club"];
-  for (const id of woodenTools) assert.ok(RECIPES.some((recipe) => recipe.id === id), `missing recipe ${id}`);
+  for (const id of woodenTools) {
+    const recipe = RECIPES.find((candidate) => candidate.id === id)!;
+    assert.ok(recipe, `missing recipe ${id}`);
+    for (const planks of [BlockId.EmberwoodPlanks, BlockId.FrostpinePlanks, BlockId.RiftwoodPlanks]) {
+      const count = id === "wood-spade" || id === "wood-club" ? 2 : 3;
+      assert.ok(matchingRecipeInputs(recipe, { [itemForBlock(planks)]: count }), `${id} rejected ${BLOCKS[planks].name}`);
+    }
+  }
   assert.ok(RECIPES.find((recipe) => recipe.id === "rough-pick")!.inputs[itemForBlock(BlockId.Stone)] > 0);
 });
 
@@ -825,13 +864,20 @@ test("a Hearth Furnace consumes coal and smelts raw ore into ingots", () => {
   const state = world.machines.get("0,42,0")!;
   state.storage["part:coal"] = 1;
   state.storage[itemForBlock(BlockId.IronOre)] = 1;
+  ensureFurnaceSlots(state);
+  assert.equal(furnaceSlotItem(state, "input"), itemForBlock(BlockId.IronOre));
+  assert.equal(furnaceSlotItem(state, "fuel"), "part:coal");
   const automation = new AutomationSystem();
   const events = [];
   for (let tick = 0; tick < 22; tick += 1) events.push(...automation.tick(world, [], 0.5));
   assert.equal(state.storage["part:coal"] ?? 0, 0);
   assert.equal(state.storage[itemForBlock(BlockId.IronOre)] ?? 0, 0);
   assert.equal(state.storage["part:iron-ingot"], 1);
+  assert.equal(furnaceSlotItem(state, "output"), "part:iron-ingot");
   assert.ok(events.some((event) => event.type === "smelted" && event.item === "part:iron-ingot"));
+  const output = withdrawFurnaceItem(state, "output", 1);
+  assert.deepEqual(output, { item: "part:iron-ingot", count: 1 });
+  assert.equal(depositFurnaceItem(state, "fuel", itemForBlock(BlockId.Stone), 1), false);
 });
 
 test("villages generate deterministically with homes, markets, and resident Wayfarers", () => {
