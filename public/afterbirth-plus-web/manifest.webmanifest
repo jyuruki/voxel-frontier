@@ -1,0 +1,17 @@
+{
+  "id": "./",
+  "name": "The Binding of Isaac: Afterbirth+",
+  "short_name": "Isaac",
+  "description": "A browser recreation with touch controls.",
+  "lang": "en",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#1c1919",
+  "background_color": "#1c1919",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
