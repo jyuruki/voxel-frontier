@@ -8,10 +8,13 @@ WoW Classic: Human Starting Zone Playthrough — Northshire Valley, Dave's Video
 Classic quests and objectives — https://www.wowhead.com/classic/quest=54/report-to-goldshire and https://classicdb.ch/?quest=1598
 
 Audio
-Interface Sounds by Kenney, Creative Commons Zero 1.0 — https://kenney.nl/assets/interface-sounds
-Original synthesized ambient score and combat cues.
+Sylvan Waltz by Otto Halmén; Dark World and Wild Confrontation by ietsu (CC BY 3.0).
+The Bard's Tale by RandomMind, Park ambiences by Thimras, RPG Sound Pack by artisticdude,
+RPG audio by Kenney, and Victory Fanfare by ARoachIFoundOnMyPillow (CC0).
+Fantasy SFX Pack Vol 1 by JC Sounds (CC BY 4.0).
+Full source links, licensing details and modifications: audio/CREDITS.txt.
 
 Artwork
 Northshire title painting and Home Screen artwork created for this project using OpenAI image generation.
-The playable landscape, structures, figures, materials and animations were authored for this browser edition. Character portraits are original generated paintings.
+The landscape, buildings, character portraits, class colors and heraldry were created or adapted for this browser edition. Character and creature models and skeletal animations are adapted from Kay Lousberg’s KayKit Adventurers and Quaternius’s CC0 animated models. Full model credits and source links: art/world/CREDITS.txt.
 Interface symbols by Lorc, Delapouite and sbed from Game-icons.net (CC BY 3.0); see art/ui/CREDITS.txt for the list of artists, alterations and icons. Cinzel and Barlow are distributed under the SIL Open Font License; both license texts are packaged with the fonts.

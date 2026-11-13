@@ -1,0 +1,54 @@
+Audio credits
+
+FIELD, ABBEY AND CHARACTER SELECTION
+Sylvan Waltz (loop main), written and produced by Otto Halmén.
+https://opengameart.org/node/39388
+CC BY 3.0 — https://creativecommons.org/licenses/by/3.0/
+valley.mp3 uses the author's loop version. Converted to MP3 and volume-adjusted.
+
+GOLDSHIRE AND THE LION'S PRIDE INN
+The Bard's Tale (loop version), by RandomMind.
+https://opengameart.org/content/medieval-the-bards-tale
+CC0 1.0 — https://creativecommons.org/publicdomain/zero/1.0/
+inn.mp3 uses the composer's full loop, converted to MP3 and volume-adjusted.
+
+ECHO RIDGE AND COMBAT
+Dark World and Wild Confrontation from A Journey's End, by ietsu.
+https://opengameart.org/node/66339
+CC BY 3.0 — https://creativecommons.org/licenses/by/3.0/
+mine.mp3 and combat.mp3 are the composer's tracks converted to MP3; volume adjusted for in-game transitions.
+
+AMBIENCE
+Park ambiences, field recordings by Thimras.
+https://opengameart.org/content/park-ambiences
+CC0 1.0 — https://creativecommons.org/publicdomain/zero/1.0/
+Bird and river excerpts volume-adjusted, filtered and crossfaded into stereo loops.
+
+MAGIC AND WEAPONS
+Fantasy SFX Pack Vol 1 by JC Sounds.
+https://opengameart.org/content/jc-sounds-fantasy-sfx-pack-vol-1
+CC BY 4.0 — https://creativecommons.org/licenses/by/4.0/
+Sword and dagger swings/metal impacts, fire, ice, electric spell windups/launches/impacts,
+healing chimes, magic shield, mana drain, Dark Necromancy Chant and teleport.
+Edited for length, normalized, downmixed, faded and converted to MP3.
+
+FOLEY AND CREATURES
+RPG Sound Pack by artisticdude.
+https://opengameart.org/content/rpg-sound-pack
+CC0 1.0 — https://creativecommons.org/publicdomain/zero/1.0/
+Wolf, kobold, Defias and imp reactions adapted from the Gutteral Beast, Ogre, Giant and Shade
+voices. Inventory sounds adapted from chainmail, wood, bottle and coin recordings.
+Trimmed, downmixed, level-adjusted and converted to MP3.
+
+50 RPG sound effects by Kenney.
+https://opengameart.org/content/50-rpg-sound-effects
+https://kenney.nl/assets/rpg-audio
+CC0 1.0 — https://creativecommons.org/publicdomain/zero/1.0/
+Footsteps, book flips, closing book, leather, chop, knife and belt handling.
+Trimmed, downmixed, level-adjusted and converted to MP3.
+
+LEVEL-UP
+Victory Fanfare by ARoachIFoundOnMyPillow.
+https://opengameart.org/content/victory-fanfare
+CC0 1.0 — https://creativecommons.org/publicdomain/zero/1.0/
+An excerpt of the church organ recording, trimmed, level-adjusted and encoded as MP3.

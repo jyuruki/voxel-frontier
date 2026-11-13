@@ -1,0 +1,18 @@
+Character models and animation credits
+
+Kay Lousberg — KayKit Character Pack: Adventurers 1.0.
+https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0
+https://kaylousberg.itch.io/kaykit-adventurers
+Knight, Mage, Rogue, Hooded Rogue and Barbarian. CC0 1.0 Universal.
+Included poses and skeletal animations by Kay Lousberg. Compact mesh groups, selected animations and equipment, game-specific color palettes and heraldry adapted for this release. The included original license is LICENSE-KayKit.txt.
+
+Quaternius — animated Wolf, Goblin, and Blue Demon. CC0 1.0 Universal.
+https://poly.pizza/m/P1gU3Qkr9r
+https://poly.pizza/m/OdCOFSmEhl
+https://poly.pizza/m/S7jYW6Amye
+https://quaternius.com/packs/ultimateanimatedanimals.html
+Selected meshes, materials and joint motion for the valley wolf, candle-bearing kobold and warlock imp. Compact files retain the authored idle, movement, attack and death clips. Goblin and demon colors adapted. Kobold tools, candle, combat timing and class devices original to this project.
+
+CC0 public domain dedication and license
+https://creativecommons.org/publicdomain/zero/1.0/
+The game bundles all models and textures for local and offline use.
