@@ -1,0 +1,8 @@
+{
+  "id":"./", "name":"Northshire Valley · Warcraft Classic", "short_name":"Northshire", "start_url":"./", "scope":"./", "display":"standalone", "orientation":"any",
+  "theme_color":"#171e1b", "background_color":"#162522", "icons":[
+    {"src":"./icons/icon-192.png", "sizes":"192x192", "type":"image/png", "purpose":"any"},
+    {"src":"./icons/icon-512.png", "sizes":"512x512", "type":"image/png", "purpose":"any"},
+    {"src":"./icons/icon-512.png", "sizes":"512x512", "type":"image/png", "purpose":"maskable"}
+  ]
+}

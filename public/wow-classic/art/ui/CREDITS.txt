@@ -1,0 +1,8 @@
+Class portraits: original AI-assisted digital paintings.
+Icon silhouettes by Lorc, Delapouite, and sbed, from https://game-icons.net/ under CC BY 3.0. https://creativecommons.org/licenses/by/3.0/
+Imported with background removed and foreground color made themeable.
+lorc: lion broadsword crossed-swords sword-wound cloak-dagger crystal-wand fireball fist heart-bottle holy-grail holy-symbol knapsack lightning-trio magic-swirl potion-ball skull-mask spiked-mace sunbeams tied-scroll treasure-map wolf-head compass sparkling-sabre wheat wizard-staff target-arrows hand
+delapouite: church coins dice-six-faces-five healing spell-book sword-brandish
+sbed: shield
+
+Typography: Cinzel and Barlow, SIL Open Font License. See font license files.
