@@ -13,6 +13,10 @@ https://poly.pizza/m/S7jYW6Amye
 https://quaternius.com/packs/ultimateanimatedanimals.html
 Selected meshes, materials and joint motion for the valley wolf, candle-bearing kobold and warlock imp. Compact files retain the authored idle, movement, attack and death clips. Goblin and demon colors adapted. Kobold tools, candle, combat timing and class devices original to this project.
 
+Quaternius — animated Pig from Low Poly Animals Animated. CC0 1.0 Universal.
+https://poly.pizza/m/u35l6uP5vj
+The farm boar uses the Pig skeleton and Quaternius’s original idle, walk, run, headbutt and death animations. The rounded body, bristled mane, ears, eyes, split hooves, curved tusks and chestnut vertex-painted coat were modeled for this game.
+
 CC0 public domain dedication and license
 https://creativecommons.org/publicdomain/zero/1.0/
 The game bundles all models and textures for local and offline use.
